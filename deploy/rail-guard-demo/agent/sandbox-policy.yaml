@@ -35,7 +35,5 @@ network_policies:
               method: DELETE
               path: /repos/local/production
     binaries:
-      - path: /opt/agent/bin/python3
       - path: /opt/agent/bin/python3.12
-      - path: /usr/bin/python3
       - path: /usr/bin/python3.12
