@@ -1,0 +1,39 @@
+# Sandbox policy for the NeMo Agent Toolkit agent on a cluster. Inference goes to NVIDIA's hosted API through the
+# `nvidia-nat` provider profile (narrow paths, only the agent's Python interpreter). Repository calls go to the
+# in-cluster fixture and are scored by Risk Guard. The static policy deliberately permits both fixture calls.
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only: [/usr, /lib, /lib64, /etc, /proc, /dev/urandom, /opt]
+  read_write: [/sandbox, /tmp, /dev/null]
+landlock:
+  compatibility: hard_requirement
+network_middlewares:
+  risk-guard:
+    middleware: risk-guard
+    order: 10
+    on_error: fail_closed
+    config:
+      task_profile: demo-repo-review
+      mode: enforce
+    endpoints:
+      include:
+        - risk-guard-fixture.openshell.svc.cluster.local
+network_policies:
+  fixture:
+    name: fixture-read-and-delete
+    endpoints:
+      - host: risk-guard-fixture.openshell.svc.cluster.local
+        port: 18081
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow:
+              method: GET
+              path: /repos/local/review/issues
+          - allow:
+              method: DELETE
+              path: /repos/local/production
+    binaries:
+      - path: /opt/agent/bin/python3.12
+      - path: /usr/bin/python3.12

@@ -69,6 +69,25 @@ Invoke-KubectlApply ($baselineYaml -join "`n")
 $apiYaml = Invoke-Native kubectl @('create', 'configmap', 'risk-guard-api', '-n', $ns, "--from-file=api_semantics.yaml=$ApiSemanticsPath", '--dry-run=client', '-o', 'yaml')
 Invoke-KubectlApply ($apiYaml -join "`n")
 
+# A probe edited by hand (for example switched to tcpSocket) would merge with the manifest's exec probe into two
+# handlers, which Kubernetes rejects. Clear the live probes so the manifest's probes are the only ones.
+$live = Invoke-Native kubectl @('get', 'deploy/risk-guard', '-n', $ns, '-o', 'json') -AllowFailure
+if ($live) {
+    $containers = ((($live | Out-String) | ConvertFrom-Json).spec.template.spec.containers)
+    for ($i = 0; $i -lt @($containers).Count; $i++) {
+        if (@($containers)[$i].name -ne 'risk-guard') { continue }
+        $ops = @()
+        foreach ($probe in 'readinessProbe', 'livenessProbe') {
+            if (@($containers)[$i].PSObject.Properties.Name -contains $probe) { $ops += @{ op = 'remove'; path = "/spec/template/spec/containers/$i/$probe" } }
+        }
+        if ($ops.Count) {
+            $f = Join-Path ([IO.Path]::GetTempPath()) 'rg-probe-clear.json'
+            Set-Content -Path $f -Encoding utf8 -Value (ConvertTo-Json -InputObject $ops -Depth 5)
+            try { Invoke-Native kubectl @('patch', 'deploy/risk-guard', '-n', $ns, '--type=json', '--patch-file', $f) | Out-Null } finally { Remove-Item -Force $f -ErrorAction SilentlyContinue }
+        }
+    }
+}
+
 Write-Step "Deploying $image"
 $manifest = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/risk-guard.yaml') -Raw).Replace('__IMAGE__', $image)
 Invoke-KubectlApply $manifest
