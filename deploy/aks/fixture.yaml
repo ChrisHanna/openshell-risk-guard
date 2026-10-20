@@ -1,0 +1,71 @@
+# A harmless, GitHub-like HTTP fixture for testing Risk Guard on a cluster. It has no real repository,
+# cloud API, deletion or upload capability: DELETE /repos/local/production only records a hit.
+# Rendered by scripts/aks/08-deploy-fixture.ps1, which fills __PYTHON_IMAGE__ and creates the
+# ConfigMap risk-guard-fixture-src from scripts/rail-guard-demo-fixture.py.
+apiVersion: v1
+kind: Service
+metadata:
+  name: risk-guard-fixture
+  namespace: openshell
+spec:
+  selector:
+    app.kubernetes.io/name: risk-guard-fixture
+  ports:
+    - name: http
+      port: 18081
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: risk-guard-fixture
+  namespace: openshell
+  labels:
+    app.kubernetes.io/name: risk-guard-fixture
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: risk-guard-fixture
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: risk-guard-fixture
+    spec:
+      containers:
+        - name: fixture
+          image: __PYTHON_IMAGE__
+          command: ["python", "/app/fixture.py", "serve", "--db", "/tmp/fixture.db", "--bind", "0.0.0.0", "--port", "18081"]
+          ports:
+            - name: http
+              containerPort: 18081
+          readinessProbe:
+            httpGet:
+              path: /_evidence
+              port: http
+            periodSeconds: 5
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          volumeMounts:
+            - name: src
+              mountPath: /app
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: src
+          configMap:
+            name: risk-guard-fixture-src
+        - name: tmp
+          emptyDir: {}

@@ -5,7 +5,8 @@
 # Build from the repository root (the directory that holds both `openshell-risk-guard/` and `OpenShell/`):
 #   docker build -f openshell-risk-guard/Dockerfile -t openshell-risk-guard:local .
 
-FROM rust:1.95-bookworm AS builder
+# OpenShell's prebuilt Z3 needs glibc 2.38+ and libstdc++ 13+, so build and run on Debian 13 (trixie).
+FROM rust:1.95-trixie AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
@@ -23,7 +24,7 @@ RUN cargo build \
     --release \
     --bin openshell-risk-guard
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \

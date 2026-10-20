@@ -1,0 +1,32 @@
+# Helm overlay that registers Risk Guard with an OpenShell gateway, following the pattern in OpenShell's
+# deploy/helm/openshell/ci/values-gateway-extensions.yaml. Apply with:
+#   helm upgrade openshell <chart> -n openshell --reuse-values -f deploy/aks/gateway-extensions-values.yaml
+#
+# The Risk Guard Deployment (deploy/aks/risk-guard.yaml) must already be running: the gateway calls
+# Describe on every registered service at startup. The CA ConfigMap holds only a public certificate.
+server:
+  extraVolumes:
+    - name: risk-guard-ca
+      configMap:
+        name: risk-guard-ca
+  extraVolumeMounts:
+    - name: risk-guard-ca
+      mountPath: /etc/openshell-extensions/risk-guard
+      readOnly: true
+
+gatewayConfig:
+  openshell.gateway.interceptors:
+    - name: risk-guard-governance
+      grpc_endpoint: https://risk-guard.openshell.svc.cluster.local:50061
+      tls_ca_cert_path: /etc/openshell-extensions/risk-guard/ca.crt
+      audience: urn:openshell:extension:risk-guard
+      order: 0
+      failure_policy: fail_closed
+      timeout: 2s
+  openshell.supervisor.middleware:
+    - name: risk-guard
+      grpc_endpoint: https://risk-guard.openshell.svc.cluster.local:50061
+      tls_ca_cert_path: /etc/openshell-extensions/risk-guard/ca.crt
+      audience: urn:openshell:extension:risk-guard
+      max_payload_bytes: 16384
+      timeout: 500ms

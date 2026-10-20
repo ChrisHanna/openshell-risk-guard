@@ -1,0 +1,183 @@
+# Risk Guard as an operator-run extension next to an OpenShell gateway installed from its Helm chart.
+# Rendered by scripts/deploy-aks.ps1, which fills __IMAGE__ and creates the Secrets and ConfigMaps this
+# file mounts (risk-guard-tls, risk-guard-hmac, risk-guard-baseline, risk-guard-api).
+#
+# One writer per SQLite file: replicas stay at 1 and the rollout is Recreate. The extension must be
+# running before the gateway is configured to register it, because the gateway validates Describe at start.
+apiVersion: v1
+kind: Service
+metadata:
+  name: risk-guard
+  namespace: openshell
+spec:
+  selector:
+    app.kubernetes.io/name: risk-guard
+  ports:
+    - name: grpc-extension
+      port: 50061
+      targetPort: grpc-extension
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: risk-guard-data
+  namespace: openshell
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: risk-guard
+  namespace: openshell
+  labels:
+    app.kubernetes.io/name: risk-guard
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: risk-guard
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: risk-guard
+    spec:
+      securityContext:
+        fsGroup: 65532
+      initContainers:
+        - name: baseline-import
+          image: __IMAGE__
+          args:
+            - baseline-import
+            - --db=/var/lib/openshell-risk-guard/risk-guard.db
+            - --profile=/etc/openshell-risk-guard/baseline/baseline.json
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/openshell-risk-guard
+            - name: baseline
+              mountPath: /etc/openshell-risk-guard/baseline
+              readOnly: true
+      containers:
+        - name: risk-guard
+          image: __IMAGE__
+          args:
+            - serve
+            - --listen=0.0.0.0:50061
+            - --db=/var/lib/openshell-risk-guard/risk-guard.db
+            - --gateway-id=openshell
+            - --audience=urn:openshell:extension:risk-guard
+            - --public-key-pem=/etc/openshell-ext-jwt/public.pem
+            - --default-task-profile=demo-repo-review
+            - --tls-cert=/etc/openshell-risk-guard/tls/tls.crt
+            - --tls-key=/etc/openshell-risk-guard/tls/tls.key
+            - --hmac-key-file=/etc/openshell-risk-guard/hmac/key
+            - --api-semantics=/etc/openshell-risk-guard/api/api_semantics.yaml
+            # Bind each sandbox to a workload derived from the workspace and the principal the
+            # gateway authenticated. OpenShell's unauthenticated local-dev user is never accepted.
+            - --workload-from-principal
+          ports:
+            - name: grpc-extension
+              containerPort: 50061
+          readinessProbe:
+            grpc:
+              port: 50061
+            periodSeconds: 10
+          livenessProbe:
+            grpc:
+              port: 50061
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/openshell-risk-guard
+            - name: ext-jwt
+              mountPath: /etc/openshell-ext-jwt
+              readOnly: true
+            - name: tls
+              mountPath: /etc/openshell-risk-guard/tls
+              readOnly: true
+            - name: hmac
+              mountPath: /etc/openshell-risk-guard/hmac
+              readOnly: true
+            - name: api
+              mountPath: /etc/openshell-risk-guard/api
+              readOnly: true
+        # Read-only operator console for the same database. It listens on the pod's loopback only, so it
+        # is reached with: kubectl port-forward -n openshell deploy/risk-guard 8791
+        - name: console
+          image: __IMAGE__
+          args:
+            - dashboard
+            - --listen=127.0.0.1:8791
+            - --db=/var/lib/openshell-risk-guard/risk-guard.db
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/openshell-risk-guard
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: risk-guard-data
+        # Only the gateway's PUBLIC key: the signing key in the same Secret is never projected.
+        - name: ext-jwt
+          secret:
+            secretName: openshell-jwt-keys
+            items:
+              - key: public.pem
+                path: public.pem
+        - name: tls
+          secret:
+            secretName: risk-guard-tls
+            defaultMode: 0440
+        - name: hmac
+          secret:
+            secretName: risk-guard-hmac
+            defaultMode: 0440
+        - name: baseline
+          configMap:
+            name: risk-guard-baseline
+        - name: api
+          configMap:
+            name: risk-guard-api

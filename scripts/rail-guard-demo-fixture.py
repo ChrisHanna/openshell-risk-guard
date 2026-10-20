@@ -128,6 +128,8 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     serve = commands.add_parser("serve")
     serve.add_argument("--db", required=True, type=Path)
+    serve.add_argument("--bind", default="127.0.0.1", help="listen address; the demo default is loopback only")
+    serve.add_argument("--port", default=18081, type=int)
     extract = commands.add_parser("sandbox-id")
     extract.add_argument("file", type=Path)
     check = commands.add_parser("verify")
@@ -144,7 +146,7 @@ def main():
     args = parser.parse_args()
     if args.command == "serve":
         initialize(args.db)
-        ThreadingHTTPServer(("127.0.0.1", 18081), handler(args.db)).serve_forever()
+        ThreadingHTTPServer((args.bind, args.port), handler(args.db)).serve_forever()
     elif args.command == "sandbox-id":
         print(sandbox_id(json.loads(args.file.read_text())))
     elif args.command == "verify":

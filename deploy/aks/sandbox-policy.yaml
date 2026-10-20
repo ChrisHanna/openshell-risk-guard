@@ -1,0 +1,37 @@
+# Sandbox policy for trying Risk Guard on a cluster. The static policy deliberately permits both calls to
+# the in-cluster fixture; Risk Guard's behavioral scoring is what stops the destructive one.
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only: [/usr, /lib, /lib64, /etc, /proc, /dev/urandom]
+  read_write: [/sandbox, /tmp, /dev/null]
+landlock:
+  compatibility: hard_requirement
+network_middlewares:
+  risk-guard:
+    middleware: risk-guard
+    order: 10
+    on_error: fail_closed
+    config:
+      task_profile: demo-repo-review
+      mode: enforce
+    endpoints:
+      include:
+        - risk-guard-fixture.openshell.svc.cluster.local
+network_policies:
+  fixture:
+    name: fixture-read-and-delete
+    endpoints:
+      - host: risk-guard-fixture.openshell.svc.cluster.local
+        port: 18081
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow:
+              method: GET
+              path: /repos/local/review/issues
+          - allow:
+              method: DELETE
+              path: /repos/local/production
+    binaries:
+      - path: /usr/bin/curl
