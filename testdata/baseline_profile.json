@@ -1,0 +1,28 @@
+{
+  "task_profile": "repo-triage-readonly",
+  "version": "1.0.0",
+  "approved_by": "operator@openshell.local",
+  "normalizer_version": "1.0.0",
+  "training_sessions": 25,
+  "training_requests": 350,
+  "expected_binaries": [
+    "/usr/bin/curl",
+    "/usr/bin/gh"
+  ],
+  "approved_resources": [
+    "org/docs-site",
+    "org/sdk-core"
+  ],
+  "allowed_action_classes": [
+    "GET /repos/{owner}/{repo}",
+    "GET /repos/{owner}/{repo}/contents/**",
+    "GET /repos/{owner}/{repo}/issues",
+    "POST /search/code"
+  ],
+  "forbidden_action_classes": [],
+  "forbid_unfamiliar_high_impact": false,
+  "max_req_1m_p95": 10,
+  "max_req_1m_p99": 15,
+  "max_distinct_resources_15m_p95": 3,
+  "max_distinct_resources_15m_p99": 5
+}

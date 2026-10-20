@@ -1,0 +1,44 @@
+# LOCAL DEMO ONLY: all listeners are host loopback. The gateway's own user
+# API is unauthenticated plaintext here. The Risk Guard extension channel is not:
+# it uses TLS (local test CA) and a gateway-signed EdDSA JWT on every call.
+[openshell]
+version = 2
+[openshell.gateway]
+name = "risk-guard-demo"
+bind_address = "127.0.0.1:17671"
+health_bind_address = "127.0.0.1:17672"
+compute_driver = "docker"
+disable_tls = true
+policy_validation_failure_mode = "fail_closed"
+[openshell.gateway.auth]
+allow_unauthenticated_users = true
+[openshell.gateway.gateway_jwt]
+signing_key_path = "@STATE_DIR@/tls/jwt/signing.pem"
+public_key_path = "@STATE_DIR@/tls/jwt/public.pem"
+kid_path = "@STATE_DIR@/tls/jwt/kid"
+gateway_id = "risk-guard-demo"
+[[openshell.gateway.interceptors]]
+name = "risk-guard-governance"
+grpc_endpoint = "https://127.0.0.1:50061"
+tls_ca_cert_path = "@STATE_DIR@/risk-guard-tls/ca.crt"
+audience = "urn:openshell:extension:risk-guard"
+failure_policy = "fail_closed"
+timeout = "2s"
+[[openshell.supervisor.middleware]]
+name = "risk-guard"
+grpc_endpoint = "https://127.0.0.1:50061"
+tls_ca_cert_path = "@STATE_DIR@/risk-guard-tls/ca.crt"
+audience = "urn:openshell:extension:risk-guard"
+max_payload_bytes = 16384
+timeout = "500ms"
+[openshell.drivers.docker]
+socket_path = "@DOCKER_SOCKET@"
+default_image = "@WORKLOAD_IMAGE@"
+image_pull_policy = "never"
+sandbox_runtime_image = "@SANDBOX_RUNTIME_IMAGE@"
+supervisor_image = "@SUPERVISOR_IMAGE@"
+supervisor_network_mode = "host"
+grpc_endpoint = "http://127.0.0.1:17671"
+sandbox_label = "risk-guard-demo"
+enable_bind_mounts = false
+app_armor_profile = "Unconfined"

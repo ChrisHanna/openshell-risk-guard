@@ -1,0 +1,219 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Christopher Hanna.
+# SPDX-License-Identifier: Apache-2.0
+#
+# UNVALIDATED Kubernetes integration sketch, NOT an installable deployment.
+# The final document is only a strategic-merge patch; do not kubectl apply this
+# file as a complete Deployment. It does not configure extension registrations.
+# Actual chart defaults may use a StatefulSet, not this Deployment target.
+# Requires a supplied namespace, gateway workload/labels, writable SQLite volume,
+# public signing key Secret, a TLS server certificate Secret whose SAN matches
+# the Service DNS name, a resource HMAC key Secret, a PersistentVolumeClaim,
+# baseline import and matching static gateway + supervisor registrations.
+# Registrations must use `grpc_endpoint = "https://openshell-risk-guard.openshell-system.svc:50061"`
+# with `tls_ca_cert_path` pointing at the CA that signed the certificate.
+# Risk Guard refuses plaintext on this non-loopback listener; the gateway's EdDSA
+# JWT remains the caller authentication on top of TLS.
+#
+# Intended topology once the missing prerequisites are supplied:
+# 1. Runs as a co-located sidecar container inside the `openshell-gateway` Pod:
+#    - `GatewayInterceptor` traffic (`CreateSandbox`, `UpdateConfig`, `ApproveDraftChunk`)
+#      travels to a TLS endpoint; no latency guarantee has been measured.
+# 2. Exposes an internal `ClusterIP` Service (`openshell-risk-guard.openshell-system.svc:50061`)
+#    restricted by a CNI-enforced `NetworkPolicy` so sandbox supervisors (`SupervisorMiddleware`
+#    at `PRE_CREDENTIALS`) can reach the same SQLite-backed instance ONLY if
+#    gateway replicas = 1. Multiple SQLite sidecars do not share risk state.
+# WARNING: this policy selects the entire gateway Pod and can block its API
+# ingress. Merge required gateway API ingress rules before using it.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: openshell-risk-guard
+  namespace: openshell-system
+  labels:
+    app.kubernetes.io/name: openshell-risk-guard
+    app.kubernetes.io/part-of: openshell
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: openshell-gateway
+  ports:
+    - name: grpc-extension
+      port: 50061
+      targetPort: 50061
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openshell-risk-guard-ingress
+  namespace: openshell-system
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openshell-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openshell-gateway
+        - namespaceSelector:
+            matchLabels:
+              openshell.nvidia.com/sandbox-namespace: "true"
+      ports:
+        - protocol: TCP
+          port: 50061
+---
+# Durable, single-writer volume for restrictions, rolling windows and evidence.
+# Choose a block-backed storage class; encrypt it (raw resource names are stored).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: openshell-risk-guard-data
+  namespace: openshell-system
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+---
+# Strategic merge patch adding `openshell-risk-guard` as a sidecar container
+# inside the `openshell-gateway` Pod.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openshell-gateway
+  namespace: openshell-system
+spec:
+  # Exactly one writer per SQLite file. Keep replicas at 1, and replace the Pod
+  # with Recreate: a rolling update would briefly run two sidecars against the
+  # same volume. Use node-local block storage (ReadWriteOnce), never NFS/SMB or
+  # other network filesystems, whose locking SQLite WAL cannot rely on.
+  replicas: 1
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  template:
+    spec:
+      # Group ownership lets the non-root sidecar (gid 65532) write the PVC and
+      # read its 0440 Secrets. Reconcile with any fsGroup the gateway already sets.
+      securityContext:
+        fsGroup: 65532
+      # Bootstrap: import the operator-approved baseline before the sidecar serves.
+      # Idempotent (content-addressed), so it is safe on every Pod start. Agents are
+      # registered once; the sandbox launcher calls run-create, then run-bind after
+      # CreateSandbox and BEFORE the workload sends traffic (unbound traffic fails closed).
+      initContainers:
+        - name: risk-guard-baseline-import
+          image: openshell-risk-guard:local
+          imagePullPolicy: IfNotPresent
+          args:
+            - baseline-import
+            - --db=/var/lib/openshell-risk-guard/risk-guard.db
+            - --profile=/etc/openshell-risk-guard/baseline/baseline.json
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: risk-guard-sqlite
+              mountPath: /var/lib/openshell-risk-guard
+            - name: risk-guard-baseline
+              mountPath: /etc/openshell-risk-guard/baseline
+              readOnly: true
+      containers:
+        - name: openshell-risk-guard
+          image: openshell-risk-guard:local
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+            - --listen=0.0.0.0:50061
+            - --db=/var/lib/openshell-risk-guard/risk-guard.db
+            - --gateway-id=cluster-gateway
+            - --audience=urn:openshell:extension:risk-guard
+            - --public-key-pem=/etc/openshell/ext-jwt/public.pem
+            - --default-task-profile=repo-triage-readonly
+            - --tls-cert=/etc/openshell-risk-guard/tls/tls.crt
+            - --tls-key=/etc/openshell-risk-guard/tls/tls.key
+            - --hmac-key-file=/etc/openshell-risk-guard/hmac/key
+            - --api-semantics=/etc/openshell-risk-guard/api/api_semantics.yaml
+          ports:
+            - name: grpc-extension
+              containerPort: 50061
+              protocol: TCP
+          # Native gRPC probes use grpc.health.v1; NOT_SERVING means the decision
+          # store is unavailable, in which case evaluations already fail closed.
+          readinessProbe:
+            grpc:
+              port: 50061
+            periodSeconds: 10
+          livenessProbe:
+            grpc:
+              port: 50061
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          volumeMounts:
+            - name: risk-guard-sqlite
+              mountPath: /var/lib/openshell-risk-guard
+            - name: gateway-jwt-public-key
+              mountPath: /etc/openshell/ext-jwt
+              readOnly: true
+            - name: risk-guard-tls
+              mountPath: /etc/openshell-risk-guard/tls
+              readOnly: true
+            - name: risk-guard-hmac
+              mountPath: /etc/openshell-risk-guard/hmac
+              readOnly: true
+            - name: risk-guard-api-semantics
+              mountPath: /etc/openshell-risk-guard/api
+              readOnly: true
+      volumes:
+        # Must be durable: restrictions, rolling windows and evidence live here.
+        # An emptyDir would silently reset every ratchet on Pod restart.
+        - name: risk-guard-sqlite
+          persistentVolumeClaim:
+            claimName: openshell-risk-guard-data
+        - name: gateway-jwt-public-key
+          secret:
+            secretName: openshell-gateway-jwt-pub
+        - name: risk-guard-tls
+          secret:
+            secretName: openshell-risk-guard-tls
+            defaultMode: 0440
+        - name: risk-guard-hmac
+          secret:
+            secretName: openshell-risk-guard-hmac
+            defaultMode: 0440
+            items:
+              - key: key
+                path: key
+        # Route templates for the APIs this deployment protects (host-scoped rules).
+        # Changing it is a reviewed change: impact classes feed Layer A constraints.
+        - name: risk-guard-api-semantics
+          configMap:
+            name: openshell-risk-guard-api-semantics
+        - name: risk-guard-baseline
+          configMap:
+            name: openshell-risk-guard-baseline

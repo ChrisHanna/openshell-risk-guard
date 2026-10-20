@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: Apache-2.0
+# Real supervisor HTTP middleware attachment; no public/cloud destinations.
+# Supply a harmless HTTP test server on the Linux host at port 18081.
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only: [/usr, /lib, /lib64, /etc, /proc, /dev/urandom]
+  read_write: [/sandbox, /tmp, /dev/null]
+landlock:
+  compatibility: hard_requirement
+network_middlewares:
+  local-risk:
+    middleware: risk-guard
+    order: 10
+    on_error: fail_closed
+    config:
+      task_profile: local-repo-review
+      mode: enforce
+    endpoints:
+      include:
+        - host.openshell.internal
+network_policies:
+  local-review:
+    name: local-read-only-review
+    endpoints:
+      - host: host.openshell.internal
+        port: 18081
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow:
+              method: GET
+              path: /repos/local/review/issues
+    binaries:
+      - path: /usr/bin/curl

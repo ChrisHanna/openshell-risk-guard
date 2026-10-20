@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: Apache-2.0
+# Schema v2, native Linux Docker host. Rendered by deploy-local-risk-guard.sh.
+# LOCAL TEST ONLY: the gateway user API is plaintext on host loopback. The Risk
+# Guard extension channel uses TLS (local test CA) plus gateway-signed JWTs.
+[openshell]
+version = 2
+
+[openshell.gateway]
+name = "risk-guard-local"
+bind_address = "127.0.0.1:17671"
+compute_driver = "docker"
+disable_tls = true
+policy_validation_failure_mode = "fail_closed"
+
+[openshell.gateway.auth]
+allow_unauthenticated_users = true
+
+# The signing bundle also mints the EdDSA JWTs sent to Risk Guard over TLS.
+[openshell.gateway.gateway_jwt]
+signing_key_path = "@STATE_DIR@/tls/jwt/signing.pem"
+public_key_path = "@STATE_DIR@/tls/jwt/public.pem"
+kid_path = "@STATE_DIR@/tls/jwt/kid"
+gateway_id = "risk-guard-local"
+
+[[openshell.gateway.interceptors]]
+name = "risk-guard-governance"
+grpc_endpoint = "https://127.0.0.1:50061"
+tls_ca_cert_path = "@STATE_DIR@/risk-guard-tls/ca.crt"
+audience = "urn:openshell:extension:risk-guard"
+failure_policy = "fail_closed"
+timeout = "2s"
+
+[[openshell.supervisor.middleware]]
+# Operator registration name, not the reserved service manifest name.
+name = "risk-guard"
+grpc_endpoint = "https://127.0.0.1:50061"
+tls_ca_cert_path = "@STATE_DIR@/risk-guard-tls/ca.crt"
+audience = "urn:openshell:extension:risk-guard"
+max_payload_bytes = 16384
+timeout = "500ms"
+
+[openshell.drivers.docker]
+socket_path = "@DOCKER_SOCKET@"
+default_image = "@WORKLOAD_IMAGE@"
+image_pull_policy = "never"
+sandbox_runtime_image = "@SANDBOX_RUNTIME_IMAGE@"
+supervisor_image = "@SUPERVISOR_IMAGE@"
+supervisor_network_mode = "host"
+grpc_endpoint = "http://127.0.0.1:17671"
+sandbox_label = "risk-guard-local"
+enable_bind_mounts = false
+app_armor_profile = "Unconfined"

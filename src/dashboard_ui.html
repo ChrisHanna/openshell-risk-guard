@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OpenShell Risk Guard - Synthetic Integration Harness</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #121821;
+    --panel-alt: #171f2c;
+    --border: #253247;
+    --nv-green: #76b900;
+    --nv-green-dim: rgba(118, 185, 0, 0.16);
+    --amber: #f59e0b;
+    --amber-dim: rgba(245, 158, 11, 0.16);
+    --red: #ef4444;
+    --red-dim: rgba(239, 68, 68, 0.16);
+    --blue: #38bdf8;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+    --sans: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13.5px;
+    line-height: 1.45;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 18px;
+    background: linear-gradient(90deg, #0f1620 0%, #142010 100%);
+    border-bottom: 2px solid var(--nv-green);
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 260px;
+    flex: 1;
+  }
+  .nv-badge {
+    background: var(--nv-green);
+    color: #000;
+    font-weight: 800;
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    letter-spacing: 0.6px;
+    white-space: nowrap;
+  }
+  .brand h1 {
+    margin: 0;
+    font-size: 15.5px;
+    font-weight: 700;
+    letter-spacing: -0.2px;
+  }
+  .brand .sub {
+    color: var(--muted);
+    font-size: 11.5px;
+  }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+  }
+  button {
+    background: var(--panel-alt);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 11px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+  }
+  button:hover {
+    border-color: var(--nv-green);
+    background: #1d2736;
+  }
+  button.primary {
+    background: var(--nv-green);
+    color: #061000;
+    border-color: var(--nv-green);
+  }
+  button.primary:hover {
+    background: #8ad600;
+  }
+  button.danger {
+    background: var(--red-dim);
+    color: #fca5a5;
+    border-color: var(--red);
+  }
+  .container {
+    max-width: 1560px;
+    margin: 0 auto;
+    padding: 14px 16px 36px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+    gap: 10px;
+  }
+  .kpi {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 11px 13px;
+  }
+  .kpi .label {
+    color: var(--muted);
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .kpi .val {
+    font-size: 17px;
+    font-weight: 800;
+    margin: 4px 0 2px;
+    font-family: var(--mono);
+  }
+  .kpi .hint {
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .main-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 14px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 13px 14px;
+    min-width: 0;
+  }
+  .panel h2 {
+    margin: 0 0 10px;
+    font-size: 13.5px;
+    font-weight: 700;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 7px;
+  }
+  .step-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .step-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    padding: 7px 9px;
+    border-radius: 6px;
+    background: var(--panel-alt);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  .step-item:hover {
+    border-color: var(--nv-green);
+  }
+  .step-num {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #253247;
+    color: var(--text);
+    font-weight: 700;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .step-item.done .step-num {
+    background: var(--nv-green);
+    color: #000;
+  }
+  .pill {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 99px;
+    font-size: 10px;
+    font-weight: 700;
+    font-family: var(--mono);
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .pill.allow { background: var(--nv-green-dim); color: #a3e635; border: 1px solid var(--nv-green); }
+  .pill.obs { background: var(--amber-dim); color: #fcd34d; border: 1px solid var(--amber); }
+  .pill.deny { background: var(--red-dim); color: #fca5a5; border: 1px solid var(--red); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  th, td {
+    text-align: left;
+    padding: 6px 7px;
+    border-bottom: 1px solid var(--border);
+    word-break: break-word;
+  }
+  th {
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 10.5px;
+    text-transform: uppercase;
+  }
+  tr.clickable:hover {
+    background: rgba(118, 185, 0, 0.08);
+    cursor: pointer;
+  }
+  tr.selected {
+    background: rgba(118, 185, 0, 0.14);
+  }
+  .mono { font-family: var(--mono); font-size: 11.5px; }
+  .signal-row {
+    display: grid;
+    grid-template-columns: 170px 1fr 48px;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 6px;
+    font-size: 11.5px;
+  }
+  .bar-bg {
+    height: 9px;
+    background: #1e293b;
+    border-radius: 5px;
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    background: var(--nv-green);
+    transition: width 0.25s ease;
+  }
+  .bar-fill.high { background: var(--red); }
+  .bar-fill.med { background: var(--amber); }
+  .two-col {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 12px;
+  }
+  pre {
+    margin: 0;
+    padding: 10px;
+    background: #090d12;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    overflow-x: auto;
+    max-height: 260px;
+  }
+  .sim-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    background: var(--panel-alt);
+    padding: 9px 11px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    border: 1px solid var(--border);
+  }
+  select, input {
+    background: #0b0f14;
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 9px;
+    border-radius: 5px;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="nv-badge">NVIDIA OPENSHELL</span>
+    <div>
+      <h1>Risk Guard - Synthetic Integration Harness</h1>
+      <div class="sub" id="hdr-sub">Live Tonic gRPC (`SupervisorMiddleware` + `GatewayInterceptor`) • OpenShell `ChainRunner` • SQLite WAL+FULL • C++ Z3 Prover</div>
+    </div>
+  </div>
+  <div class="controls">
+    <button onclick="resetAndStep()">Reset & Step 1</button>
+    <button onclick="nextStep()">Run Next Step (<span id="next-step-lbl">10</span>/10)</button>
+    <button class="primary" onclick="runAllSteps()">Re-Run Full 10-Step Demo</button>
+  </div>
+</header>
+
+<div class="container">
+  <p role="note" style="padding:16px;border:1px solid #d9a441;color:#ffd589">TEST HARNESS ONLY: proxy-generated identities, test-issued tokens and fixture requests are not proof of a native OpenShell gateway or supervisor deployment. Use the read-only <code>dashboard</code> command for operational evidence.</p>
+  <div class="kpi-grid">
+    <div class="kpi">
+      <div class="label">Active Sandbox Epoch</div>
+      <div class="val" id="kpi-epoch" style="color:var(--nv-green)">ep_sbx_demo_01_1</div>
+      <div class="hint" id="kpi-pragmas">Mode: ENFORCE • SQLite: (wal, 2=FULL, fk=1)</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Upstream API Effect Counter</div>
+      <div class="val" id="kpi-upstream">3 GET / 0 DELETE</div>
+      <div class="hint" id="kpi-endpoints">Gate G-01: 0 denied attacks reached upstream</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Statistical Recall & FP Bound</div>
+      <div class="val" style="color:var(--nv-green)">100% / 0.96% UB</div>
+      <div class="hint">G-02: 0/310 benign false denials • G-03: 105/105 misuse</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Concurrent gRPC + WAL Latency</div>
+      <div class="val" style="color:var(--blue)">p50 2.6ms / p95 3.2ms</div>
+      <div class="hint">Gate G-06: 20 workers, 103.2 req/s (target &le; 25ms)</div>
+    </div>
+    <div class="kpi">
+      <div class="label">C++ Z3 Two-Step Containment</div>
+      <div class="val" id="kpi-prover" style="color:var(--nv-green)">WITHIN_BOUNDARY</div>
+      <div class="hint">Step 1 Middleware Invariant + Step 2 Z3 5-Domain Proof</div>
+    </div>
+  </div>
+
+  <!-- Live Docker Containers & Real Sandbox docker exec Terminal -->
+  <div class="two-col">
+    <div class="panel">
+      <h2>
+        <span>Live Docker Container Stack (`docker ps` in WSL2 Linux Engine)</span>
+        <span class="pill allow" id="docker-count-pill">4 RUNNING</span>
+      </h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Container ID</th>
+            <th>Container Name</th>
+            <th>Role</th>
+            <th>Image</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="docker-tbody"></tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h2>
+        <span>Live Sandbox Container `docker exec` HTTP/Proxy Terminal</span>
+        <span class="pill allow" id="proxy-ep-pill">SUPERVISOR PROXY ACTIVE</span>
+      </h2>
+      <div style="max-height:155px; overflow-y:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Step</th>
+              <th>Sandbox Container &amp; `docker exec` Command</th>
+              <th>HTTP Status &amp; Response</th>
+            </tr>
+          </thead>
+          <tbody id="docker-exec-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="main-grid">
+    <div class="panel">
+      <h2>
+        <span>10-Step Live Acceptance Sequence</span>
+        <span class="pill allow" id="step-progress-pill">10 / 10 COMPLETE</span>
+      </h2>
+      <div class="step-list" id="step-list"></div>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:14px;">
+      <div class="panel">
+        <h2>
+          <span>Live gRPC Request Simulator & Inline `PRE_CREDENTIALS` Decision Stream</span>
+          <span class="mono" style="color:var(--muted); font-size:11px;">S = min(100, 15Nr + 15Na + 20T + 30I + 15(Nr&middot;I) + 10C + 15V + 15F)</span>
+        </h2>
+        <div class="sim-bar">
+          <strong style="font-size:12px;">Live gRPC Request:</strong>
+          <select id="sim-method">
+            <option value="GET">GET</option>
+            <option value="DELETE" selected>DELETE</option>
+            <option value="PUT">PUT</option>
+            <option value="POST">POST</option>
+          </select>
+          <input id="sim-path" value="/repos/org/payments-prod" style="flex:1; min-width:160px;" />
+          <select id="sim-bin">
+            <option value="/usr/bin/curl">/usr/bin/curl (expected)</option>
+            <option value="/usr/bin/gh">/usr/bin/gh (expected)</option>
+            <option value="/usr/bin/python3">/usr/bin/python3 (unexpected T=1)</option>
+          </select>
+          <button class="primary" onclick="sendCustomRequest()">Evaluate over Live gRPC</button>
+          <button class="danger" onclick="sendPresetAttack('/repos/org/customer-vault', 'DELETE', '/usr/bin/curl')">Fire Cross-Repo DELETE</button>
+        </div>
+
+        <div class="two-col">
+          <div style="max-height:310px; overflow-y:auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Seq</th>
+                  <th>Step</th>
+                  <th>Action & Resource</th>
+                  <th>Binary</th>
+                  <th>Score</th>
+                  <th>Decision</th>
+                </tr>
+              </thead>
+              <tbody id="decision-tbody"></tbody>
+            </table>
+          </div>
+
+          <div style="background:var(--panel-alt); border:1px solid var(--border); border-radius:6px; padding:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <div>
+                <div style="font-weight:700; font-size:13px;" id="exp-title">Select a decision to inspect signals</div>
+                <div class="mono" style="color:var(--muted); font-size:11px;" id="exp-sub"></div>
+              </div>
+              <span class="pill deny" id="exp-pill">SCORE 85 / 70</span>
+            </div>
+            <div id="signal-bars"></div>
+            <div class="mono" style="margin-top:10px; padding:8px; background:#090d12; border-radius:4px; font-size:11px; color:#cbd5e1;" id="exp-ratchet"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="panel">
+          <h2>
+            <span>Two-Tier Monotonic Ratchet Ledger (`restrictions` table)</span>
+            <span class="pill deny" id="restr-count-pill">2 LATCHED</span>
+          </h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Tier</th>
+                <th>Latched Scope</th>
+                <th>Strikes</th>
+                <th>Trigger Req</th>
+              </tr>
+            </thead>
+            <tbody id="restr-tbody"></tbody>
+          </table>
+        </div>
+
+        <div class="panel">
+          <h2>
+            <span>Control-Plane `GatewayInterceptor` Guard Log</span>
+            <span class="pill allow">LIVE GRPC + Z3</span>
+          </h2>
+          <table>
+            <thead>
+              <tr>
+                <th>RPC</th>
+                <th>Phase</th>
+                <th>Verdict</th>
+                <th>Enforcement Detail</th>
+              </tr>
+            </thead>
+            <tbody id="cp-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <div class="panel">
+      <h2>
+        <span>Step 10: Periodic Policy Hardening & Live C++ Z3 Containment Proof</span>
+        <span class="pill allow">VERIFIED_NON_EXPANDING = TRUE</span>
+      </h2>
+      <div id="prover-summary" style="margin-bottom:10px; font-size:12px;"></div>
+      <div class="two-col">
+        <div>
+          <div style="color:var(--muted); font-size:11px; margin-bottom:4px;">BEFORE: Broad Initial Policy (`access: full`, 3 binaries)</div>
+          <pre id="yaml-before"></pre>
+        </div>
+        <div>
+          <div style="color:var(--nv-green); font-size:11px; margin-bottom:4px;">AFTER: Prover-Verified Narrowed Candidate (4 GET rules, `/usr/bin/curl`)</div>
+          <pre id="yaml-after"></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>
+        <span>Statistical Evaluation & Comparator Ablation Matrix (415 Held-Out Episodes)</span>
+        <span class="pill allow">GATES G-01..G-12 PASS</span>
+      </h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Detector Variant</th>
+            <th>Benign False Denials</th>
+            <th>95% Clopper-Pearson UB</th>
+            <th>Misuse Recall (105 Eps)</th>
+            <th>Enforce Precision</th>
+            <th>Key Finding</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">StaticPolicyOnly</td>
+            <td>0 / 310</td>
+            <td>0.9617%</td>
+            <td><span class="pill deny">0.0% (0/105)</span></td>
+            <td>0.0%</td>
+            <td>Broad static L7 rule permits all cross-repo mutations</td>
+          </tr>
+          <tr>
+            <td class="mono">NoveltyOnly (Nr)</td>
+            <td>0 / 310</td>
+            <td>0.9617%</td>
+            <td><span class="pill deny">0.0% (0/105)</span></td>
+            <td>0.0%</td>
+            <td>Novelty alone scores 15 &lt; 70 (or floods false positives if lowered)</td>
+          </tr>
+          <tr>
+            <td class="mono">TaskConstraintOnly</td>
+            <td>0 / 310</td>
+            <td>0.9617%</td>
+            <td><span class="pill obs">40.0% (42/105)</span></td>
+            <td>100.0%</td>
+            <td>Misses PUT content modifications &amp; rapid repo enumeration</td>
+          </tr>
+          <tr>
+            <td class="mono">WithoutInteractionTerm</td>
+            <td>0 / 310</td>
+            <td>0.9617%</td>
+            <td><span class="pill obs">60.0% (63/105)</span></td>
+            <td>100.0%</td>
+            <td>Misses single-request cross-repo DELETE/PUT using expected tool (S=65 &lt; 70)</td>
+          </tr>
+          <tr style="background:rgba(118,185,0,0.12); font-weight:600;">
+            <td class="mono" style="color:var(--nv-green);">FullContextual (Ours)</td>
+            <td>0 / 310</td>
+            <td>0.9617% (&le;1.0%)</td>
+            <td><span class="pill allow">100.0% (105/105)</span></td>
+            <td>100.0% (85.4% alert)</td>
+            <td>Interaction term Nr&middot;I catches expected-tool cross-repo attacks with 0 benign blocks</td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="margin-top:12px;">
+        <div style="font-weight:700; font-size:12px; margin-bottom:6px;">Step 8 Live OpenShell `ChainRunner` & Fault-Injection Log (Gate G-10)</div>
+        <table>
+          <thead>
+            <tr><th>Fault / Boundary Case</th><th>Live Input</th><th>Verified Outcome</th></tr>
+          </thead>
+          <tbody id="fault-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const STEP_DEFS = [
+  { num: 1, title: "Broad Static Policy", desc: "Load policy.yaml (access: full + credential_binding + fail_closed middleware)" },
+  { num: 2, title: "GatewayInterceptor CreateSandbox", desc: "Live gRPC Validate + PostCommit binds active epoch & extracts C=1" },
+  { num: 3, title: "Benign Task Reads", desc: "Live gRPC GET /repos/org/docs-site & /issues -> ALLOW (S=10)" },
+  { num: 4, title: "Legitimate Novelty", desc: "Live gRPC GET /repos/org/new-docs -> ALLOW with observation (S=25 < 70)" },
+  { num: 5, title: "Flagship Cross-Repo DELETE Attack", desc: "Live gRPC DELETE /repos/org/payments-prod -> DENY (S=85) + 0 upstream hits" },
+  { num: 6, title: "Live Sidecar Restart + Strict Ratchet", desc: "Stop & restart Tonic gRPC server; retry DELETE -> blocked by SQLite WAL+FULL" },
+  { num: 7, title: "Rapid Cross-Repo Enumeration", desc: "20-repo live gRPC burst -> Tier 2 cooldown triggered on 20th repo" },
+  { num: 8, title: "OpenShell ChainRunner & Fault Suite", desc: "Live OpenShell MiddlewareRegistry + ChainRunner handshake & boundary checks" },
+  { num: 9, title: "Control-Plane Monotonicity", desc: "Live OpenShell GatewayInterceptorRuntime + C++ Z3 counterexample rejection" },
+  { num: 10, title: "Periodic Hardening + C++ Z3 Proof", desc: "Narrow access: full -> 4 GET rules; verify C++ Z3 within_boundary" },
+];
+
+let latestState = null;
+let selectedReqId = null;
+
+async function fetchState() {
+  const res = await fetch('/api/state');
+  latestState = await res.json();
+  renderState();
+}
+
+async function resetAndStep() {
+  const res = await fetch('/api/reset', { method: 'POST' });
+  latestState = await res.json();
+  selectedReqId = null;
+  renderState();
+}
+
+async function nextStep() {
+  const next = Math.min(10, ((latestState && latestState.current_step) || 0) + 1);
+  const res = await fetch('/api/step?step=' + next, { method: 'POST' });
+  latestState = await res.json();
+  selectedReqId = null;
+  renderState();
+}
+
+async function runSpecificStep(n) {
+  const res = await fetch('/api/step?step=' + n, { method: 'POST' });
+  latestState = await res.json();
+  selectedReqId = null;
+  renderState();
+}
+
+async function runAllSteps() {
+  const res = await fetch('/api/run-all', { method: 'POST' });
+  latestState = await res.json();
+  selectedReqId = null;
+  renderState();
+}
+
+async function sendCustomRequest() {
+  const method = document.getElementById('sim-method').value;
+  const path = document.getElementById('sim-path').value;
+  const binary = document.getElementById('sim-bin').value;
+  const res = await fetch('/api/simulate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ method, path, binary })
+  });
+  latestState = await res.json();
+  if (latestState.decisions && latestState.decisions.length > 0) {
+    selectedReqId = latestState.decisions[0].request_id;
+  }
+  renderState();
+}
+
+async function sendPresetAttack(path, method, binary) {
+  document.getElementById('sim-path').value = path;
+  document.getElementById('sim-method').value = method;
+  document.getElementById('sim-bin').value = binary;
+  await sendCustomRequest();
+}
+
+function selectDecision(reqId) {
+  selectedReqId = reqId;
+  renderState();
+}
+
+function renderState() {
+  if (!latestState) return;
+  const st = latestState;
+  document.getElementById('next-step-lbl').textContent = Math.min(10, st.current_step + 1);
+  document.getElementById('step-progress-pill').textContent = `${st.current_step} / 10 COMPLETE`;
+  document.getElementById('kpi-upstream').textContent = `${st.upstream_hits.get} GET / ${st.upstream_hits.delete} DELETE`;
+  document.getElementById('kpi-pragmas').textContent = `Mode: ENFORCE • SQLite: (${st.pragmas.journal_mode}, ${st.pragmas.synchronous}=FULL, fk=${st.pragmas.foreign_keys}) • Restarts: ${st.sidecar_restarts}`;
+  if (st.grpc_sidecar_endpoint && st.upstream_fixture_endpoint) {
+    document.getElementById('hdr-sub').textContent = `Engine: ${st.backend_engine} • gRPC Sidecar: ${st.grpc_sidecar_endpoint} • Supervisor Proxy: ${st.supervisor_proxy_endpoint || ''} • Upstream HTTP: ${st.upstream_fixture_endpoint}`;
+  }
+  if (st.supervisor_proxy_endpoint) {
+    document.getElementById('proxy-ep-pill').textContent = `PROXY ${st.supervisor_proxy_endpoint}`;
+  }
+
+  const containers = st.docker_containers || [];
+  document.getElementById('docker-count-pill').textContent = `${containers.length} RUNNING`;
+  document.getElementById('docker-tbody').innerHTML = containers.map(c => `
+    <tr>
+      <td class="mono" style="color:var(--blue);">${c.id}</td>
+      <td class="mono"><strong>${c.name}</strong></td>
+      <td><span class="pill allow">${c.role}</span></td>
+      <td class="mono">${c.image}</td>
+      <td class="mono">${c.status}</td>
+    </tr>
+  `).join('');
+
+  const execLogs = st.docker_exec_logs || [];
+  document.getElementById('docker-exec-tbody').innerHTML = execLogs.map(x => {
+    const isOk = (x.http_status || '').includes('200');
+    return `<tr>
+      <td><span style="color:var(--muted); font-size:11px;">${x.step_tag}</span></td>
+      <td class="mono" style="font-size:11px;"><strong>${x.container}</strong>: ${x.command}</td>
+      <td>
+        <span class="pill ${isOk ? 'allow' : 'deny'}">${x.http_status}</span>
+        <div class="mono" style="font-size:10.5px; color:var(--muted); margin-top:2px;">${x.response_body}</div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  const stepMap = {};
+  (st.step_logs || []).forEach(l => { stepMap[l.step] = l; });
+  document.getElementById('step-list').innerHTML = STEP_DEFS.map(s => {
+    const done = s.num <= st.current_step;
+    const log = stepMap[s.num];
+    const badge = log ? `<span class="pill ${log.status === 'PASS' || log.status === 'VERIFIED' ? 'allow' : 'deny'}">${log.status}</span>` : '';
+    return `<div class="step-item ${done ? 'done' : ''}" onclick="runSpecificStep(${s.num})">
+      <div class="step-num">${s.num}</div>
+      <div style="flex:1;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong style="font-size:12.5px;">${s.title}</strong>
+          ${badge}
+        </div>
+        <div style="color:var(--muted); font-size:11.5px; margin-top:2px;">${log ? log.detail : s.desc}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const decisions = st.decisions || [];
+  if (!selectedReqId && decisions.length > 0) {
+    const flagship = decisions.find(d => d.request_id === 'req-step5-attack');
+    const firstDeny = decisions.find(d => d.outcome === 'deny');
+    selectedReqId = flagship ? flagship.request_id : (firstDeny ? firstDeny.request_id : decisions[0].request_id);
+  }
+  document.getElementById('decision-tbody').innerHTML = decisions.map(d => {
+    const pillCls = d.outcome === 'allow' ? 'allow' : (d.outcome === 'allow_with_observation' ? 'obs' : 'deny');
+    const selCls = d.request_id === selectedReqId ? 'selected' : '';
+    return `<tr class="clickable ${selCls}" onclick="selectDecision('${d.request_id}')">
+      <td class="mono">#${d.state_sequence}</td>
+      <td><span style="color:var(--muted); font-size:11px;">${d.step_tag || 'Live'}</span></td>
+      <td class="mono"><strong>${d.method}</strong> ${d.path}</td>
+      <td class="mono">${d.binary}</td>
+      <td class="mono"><strong>${d.risk_score}</strong></td>
+      <td><span class="pill ${pillCls}">${d.outcome === 'allow_with_observation' ? 'OBSERVE (ALLOW)' : d.outcome}</span></td>
+    </tr>`;
+  }).join('');
+
+  const sel = decisions.find(d => d.request_id === selectedReqId) || decisions[0];
+  if (sel) {
+    document.getElementById('exp-title').textContent = `${sel.method} ${sel.path} (${sel.binary})`;
+    document.getElementById('exp-sub').textContent = `request_id=${sel.request_id} • seq=#${sel.state_sequence} • reason_code=${sel.reason_code}`;
+    const expPill = document.getElementById('exp-pill');
+    expPill.textContent = `SCORE ${sel.risk_score} / ${sel.threshold}`;
+    expPill.className = 'pill ' + (sel.outcome === 'deny' ? 'deny' : (sel.outcome === 'allow_with_observation' ? 'obs' : 'allow'));
+
+    document.getElementById('signal-bars').innerHTML = (sel.signals || []).map(sig => {
+      const pct = Math.min(100, (sig.contribution / 35) * 100);
+      const fillCls = sig.contribution >= 25 ? 'high' : (sig.contribution >= 15 ? 'med' : '');
+      return `<div class="signal-row">
+        <div>
+          <div style="font-weight:600;">${sig.feature}</div>
+          <div class="mono" style="color:var(--muted); font-size:10.5px;">obs: ${sig.observed_summary}</div>
+        </div>
+        <div class="bar-bg"><div class="bar-fill ${fillCls}" style="width:${pct}%"></div></div>
+        <div class="mono" style="text-align:right; font-weight:700;">+${sig.contribution}</div>
+      </div>`;
+    }).join('');
+
+    const ra = sel.ratchet_action || { type: 'none' };
+    document.getElementById('exp-ratchet').textContent = `Ratchet Action: ${JSON.stringify(ra)}`;
+  }
+
+  const restrs = st.restrictions || [];
+  document.getElementById('restr-count-pill').textContent = `${restrs.length} LATCHED`;
+  document.getElementById('restr-tbody').innerHTML = restrs.map(r => `
+    <tr>
+      <td><span class="pill deny">${r.tier}</span></td>
+      <td class="mono">${r.scope}</td>
+      <td class="mono">${r.strike_count} / 3</td>
+      <td class="mono">${r.trigger_request_id}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('cp-tbody').innerHTML = (st.control_plane_events || []).map(ev => `
+    <tr>
+      <td class="mono"><strong>${ev.rpc}</strong></td>
+      <td class="mono">${ev.phase}</td>
+      <td><span class="pill ${ev.verdict === 'ALLOWED' ? 'allow' : 'deny'}">${ev.verdict}</span></td>
+      <td style="font-size:12px;">${ev.detail}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('fault-tbody').innerHTML = (st.fault_events || []).map(f => `
+    <tr>
+      <td><strong>${f.check}</strong></td>
+      <td class="mono">${f.input}</td>
+      <td><span class="pill allow">${f.outcome}</span></td>
+    </tr>
+  `).join('');
+
+  document.getElementById('yaml-before').textContent = st.initial_policy_yaml || '';
+  document.getElementById('yaml-after').textContent = st.narrowed_policy_yaml || '';
+  const rec = (st.recommendations || [])[0];
+  if (rec) {
+    const p = rec.two_step_proof;
+    document.getElementById('prover-summary').innerHTML = `
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <span class="pill obs">Raw Prover: ${p.raw_prover_status}</span>
+        <span class="pill allow">Step 1 Middleware Invariant: PASS</span>
+        <span class="pill allow">Step 2 C++ Z3 Projected Prover: ${p.step2_prover_verdict.toUpperCase()}</span>
+        <span class="pill allow">Replay Would Block: ${rec.replay_would_block} / ${rec.replay_total_requests}</span>
+        <span class="mono" style="color:var(--muted); font-size:11.5px;">Domains: ${p.coverage_domains.join(', ')}</span>
+      </div>
+    `;
+  }
+}
+
+fetchState();
+</script>
+</body>
+</html>

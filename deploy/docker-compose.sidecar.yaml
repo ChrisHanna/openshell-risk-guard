@@ -1,0 +1,73 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Christopher Hanna.
+# SPDX-License-Identifier: Apache-2.0
+#
+# SERVICE-ONLY local-test example, NOT an OpenShell gateway/sandbox deployment.
+# Opt in with `docker compose -f <this-file> --profile local-test up`.
+# It deliberately disables extension authentication. Do not expose beyond a
+# trusted single-user machine. For real gateway registration use local/.
+# BASELINE_PROFILE must be an existing approved JSON artifact, TASK_PROFILE its
+# exact task_profile. This never seeds fixtures. Import runs before serve.
+
+services:
+  baseline-import:
+    profiles: ["local-test"]
+    build:
+      context: ../..
+      dockerfile: openshell-risk-guard/Dockerfile
+    image: openshell-risk-guard:local
+    user: "65532:65532"
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    network_mode: none
+    command:
+      - baseline-import
+      - --db=/var/lib/openshell-risk-guard/risk-guard.db
+      - --profile=/config/baseline.json
+    volumes:
+      - risk-guard-data:/var/lib/openshell-risk-guard
+      - type: bind
+        source: ${BASELINE_PROFILE:?Supply an existing operator-approved JSON baseline}
+        target: /config/baseline.json
+        read_only: true
+        bind:
+          create_host_path: false
+  openshell-risk-guard:
+    profiles: ["local-test"]
+    depends_on:
+      baseline-import:
+        condition: service_completed_successfully
+    build:
+      context: ../..
+      dockerfile: openshell-risk-guard/Dockerfile
+    image: openshell-risk-guard:local
+    container_name: openshell-risk-guard
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command:
+      - serve
+      - --listen=0.0.0.0:50061
+      - --db=/var/lib/openshell-risk-guard/risk-guard.db
+      - --gateway-id=local-gateway
+      - --audience=urn:openshell:extension:risk-guard
+      - --default-task-profile=${TASK_PROFILE:?Set the imported baseline task_profile}
+      - --allow-insecure-local-test
+    ports:
+      - "127.0.0.1:50061:50061"
+    volumes:
+      - risk-guard-data:/var/lib/openshell-risk-guard
+    networks:
+      - openshell-net
+
+volumes:
+  risk-guard-data:
+
+networks:
+  openshell-net:
+    name: openshell-net
+    driver: bridge

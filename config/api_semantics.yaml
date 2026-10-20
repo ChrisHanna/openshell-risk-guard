@@ -1,0 +1,165 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Christopher Hanna.
+# SPDX-License-Identifier: Apache-2.0
+
+version: "v1"
+routes:
+  # GitHub-like repository read endpoints
+  - method: GET
+    route_template: /repos/{owner}/{repo}
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "{owner}/{repo}"
+
+  - method: GET
+    route_template: /repos/{owner}/{repo}/issues
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "{owner}/{repo}"
+
+  - method: GET
+    route_template: /repos/{owner}/{repo}/issues/**
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "{owner}/{repo}"
+
+  - method: GET
+    route_template: /repos/{owner}/{repo}/contents/**
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "{owner}/{repo}"
+
+  - method: GET
+    route_template: /repos/{owner}/{repo}/releases
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "{owner}/{repo}"
+
+  - method: GET
+    route_template: /repos/{owner}/{repo}/releases/**
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "{owner}/{repo}"
+
+  - method: GET
+    route_template: /repos/{owner}/{repo}/pulls
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "{owner}/{repo}"
+
+  - method: GET
+    route_template: /repos/{owner}/{repo}/pulls/**
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "{owner}/{repo}"
+
+  # GraphQL multiplexes queries and mutations over one POST route and Risk Guard
+  # never reads bodies, so a destructive mutation is indistinguishable from a read.
+  # Treat it as high-impact; operators who rely on it approve the "/graphql"
+  # resource explicitly for that agent.
+  - method: POST
+    route_template: /graphql
+    semantic_category: opaque_rpc
+    high_impact: true
+    resource_template: "/graphql"
+
+  # Read-only query POST endpoints (POST is not blindly high-impact)
+
+  - method: POST
+    route_template: /search/code
+    semantic_category: read_only_query
+    high_impact: false
+    resource_template: "/search/code"
+
+  - method: POST
+    route_template: /search
+    semantic_category: read_only_query
+    high_impact: false
+    resource_template: "/search"
+
+  # Low-impact write mutations
+  - method: POST
+    route_template: /repos/{owner}/{repo}/issues
+    semantic_category: write_mutation
+    high_impact: false
+    resource_template: "{owner}/{repo}"
+
+  - method: POST
+    route_template: /repos/{owner}/{repo}/pulls
+    semantic_category: write_mutation
+    high_impact: false
+    resource_template: "{owner}/{repo}"
+
+  # High-impact write mutations
+  - method: PUT
+    route_template: /repos/{owner}/{repo}/contents/**
+    semantic_category: write_mutation
+    high_impact: true
+    resource_template: "{owner}/{repo}"
+
+  - method: POST
+    route_template: /repos/{owner}/{repo}/releases
+    semantic_category: write_mutation
+    high_impact: true
+    resource_template: "{owner}/{repo}"
+
+  # Destructive / administrative operations
+  - method: POST
+    route_template: /repos/{owner}/{repo}/hooks
+    semantic_category: destructive_admin
+    high_impact: true
+    resource_template: "{owner}/{repo}"
+
+  - method: POST
+    route_template: /repos/{owner}/{repo}/hooks/**
+    semantic_category: destructive_admin
+    high_impact: true
+    resource_template: "{owner}/{repo}"
+
+  - method: PATCH
+    route_template: /repos/{owner}/{repo}
+    semantic_category: destructive_admin
+    high_impact: true
+    resource_template: "{owner}/{repo}"
+
+  - method: DELETE
+    route_template: /repos/{owner}/{repo}
+    semantic_category: destructive_admin
+    high_impact: true
+    resource_template: "{owner}/{repo}"
+
+  - method: DELETE
+    route_template: /repos/{owner}/{repo}/issues/**
+    semantic_category: destructive_admin
+    high_impact: true
+    resource_template: "{owner}/{repo}"
+
+  - method: DELETE
+    route_template: /repos/{owner}/{repo}/hooks/**
+    semantic_category: destructive_admin
+    high_impact: true
+    resource_template: "{owner}/{repo}"
+
+  - method: DELETE
+    route_template: /repos/{owner}/{repo}/contents/**
+    semantic_category: destructive_admin
+    high_impact: true
+    resource_template: "{owner}/{repo}"
+
+  - method: DELETE
+    route_template: /repos/{owner}/{repo}/releases/**
+    semantic_category: destructive_admin
+    high_impact: true
+    resource_template: "{owner}/{repo}"
+
+  # Local test fixture endpoints
+  - method: GET
+    route_template: /clean
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "/clean"
+
+  - method: GET
+    route_template: /sensitive
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "/sensitive"

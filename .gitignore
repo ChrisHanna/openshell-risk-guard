@@ -1,0 +1,13 @@
+# Rust build artifacts
+/target/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.venv/
+
+# Local SQLite databases & temporary test directories
+*.db
+*.db-wal
+*.db-shm
+.demo-test-*
