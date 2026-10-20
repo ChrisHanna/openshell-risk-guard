@@ -42,8 +42,13 @@ gw() { timeout 180 "$CLI" --gateway-endpoint "$ENDPOINT" "$@"; }
 stack_ready() { curl -s -o /dev/null --max-time 3 --noproxy '*' http://127.0.0.1:17672/readyz; }
 
 setup() {
-  [[ -f "$KEY_FILE" ]] || { echo "missing $KEY_FILE (needs a line NVIDIA_API_KEY=..., mode 600)" >&2; return 1; }
-  [[ "$(stat -c %a "$KEY_FILE")" =~ ^[46]00$ ]] || { echo "$KEY_FILE must not be group/world readable (chmod 600)" >&2; return 1; }
+  # The key comes from $KEY_FILE (a line NVIDIA_API_KEY=..., mode 600) or, if the file is
+  # absent, from an NVIDIA_API_KEY environment variable that is already exported.
+  if [[ -f "$KEY_FILE" ]]; then
+    [[ "$(stat -c %a "$KEY_FILE")" =~ ^[46]00$ ]] || { echo "$KEY_FILE must not be group/world readable (chmod 600)" >&2; return 1; }
+  elif [[ -z "${NVIDIA_API_KEY:-}" ]]; then
+    echo "no key: create $KEY_FILE with a line NVIDIA_API_KEY=..., or export NVIDIA_API_KEY" >&2; return 1
+  fi
   $DOCKER image inspect "$IMAGE" >/dev/null 2>&1 || { echo "image $IMAGE not found; build deploy/rail-guard-demo/agent first" >&2; return 1; }
   gw provider profile import -f "$AGENT_DIR/nvidia-nat-provider.yaml" >/dev/null 2>&1 \
     || gw provider profile update -f "$AGENT_DIR/nvidia-nat-provider.yaml" >/dev/null \
@@ -52,7 +57,7 @@ setup() {
     log "provider $PROVIDER already exists"
   else
     # The key is exported only for this command and is never echoed.
-    ( set -a; . "$KEY_FILE"; set +a
+    ( set -a; [[ -f "$KEY_FILE" ]] && . "$KEY_FILE"; set +a
       [[ -n "${NVIDIA_API_KEY:-}" ]] || { echo "NVIDIA_API_KEY is empty in $KEY_FILE" >&2; exit 1; }
       gw provider create --name "$PROVIDER" --type "$PROVIDER" --from-existing >/dev/null ) \
       || { echo "could not create the provider" >&2; return 1; }
@@ -194,7 +199,7 @@ case "${1:-status}" in
   export) export_run "${2:-}" ;;
   status)
     stack_ready && echo "stack: ready" || echo "stack: not running"
-    [[ -f "$KEY_FILE" ]] && echo "key file: present" || echo "key file: missing ($KEY_FILE)"
+    if grep -qs "^NVIDIA_API_KEY=." "$KEY_FILE"; then echo "key file: filled in"; elif [[ -n "${NVIDIA_API_KEY:-}" ]]; then echo "key: from environment"; else echo "key file: empty or missing ($KEY_FILE)"; fi
     $DOCKER image inspect "$IMAGE" >/dev/null 2>&1 && echo "image: $IMAGE" || echo "image: missing"
     gw provider get "$PROVIDER" >/dev/null 2>&1 && echo "provider: $PROVIDER" || echo "provider: not created (run setup)"
     ls -1t "$OUT"/*.txt 2>/dev/null | head -3 | sed 's/^/run: /' ;;

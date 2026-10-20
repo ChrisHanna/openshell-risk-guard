@@ -11,3 +11,7 @@ __pycache__/
 *.db-wal
 *.db-shm
 .demo-test-*
+
+# Never commit API keys
+nvidia.env
+*.env
