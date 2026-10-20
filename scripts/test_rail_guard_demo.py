@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import unittest
 import urllib.error
@@ -188,6 +189,64 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("method: DELETE", policy)
         self.assertIn("/repos/local/production", policy)
         self.assertIn("path: /usr/bin/curl", policy)
+
+
+class SecretsHelperTests(unittest.TestCase):
+    """scripts/lib/secrets.sh, exercised with fake values only.
+
+    File modes are part of what is tested, so the files live under the home directory, whose
+    filesystem honors chmod, rather than a Windows-mounted workspace.
+    """
+
+    def setUp(self):
+        self.work = Path(tempfile.mkdtemp(prefix=".rg-secret-test-", dir=Path.home()))
+
+    def tearDown(self):
+        shutil.rmtree(self.work)
+
+    def run_helper(self, body, env=None):
+        script = f'. "{SCRIPTS / "lib" / "secrets.sh"}"\n{body}'
+        return subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                              env={"PATH": "/usr/bin:/bin", **(env or {})})
+
+    def key_file(self, text, mode=0o600):
+        path = self.work / "key.env"
+        path.write_text(text)
+        path.chmod(mode)
+        return path
+
+    def test_reads_a_value_without_printing_it(self):
+        path = self.key_file('# comment\nTOKEN="fake-value"\n')
+        done = self.run_helper(f'rg_secret_check "{path}" TOKEN && rg_secret_status "{path}" TOKEN')
+        self.assertEqual(done.returncode, 0)
+        self.assertEqual(done.stdout.strip(), "filled in")
+        self.assertNotIn("fake-value", done.stdout + done.stderr)
+
+    def test_passes_the_value_only_to_the_wrapped_command(self):
+        path = self.key_file("TOKEN=fake-value\n")
+        done = self.run_helper(f'rg_with_secret "{path}" TOKEN sh -c \'printf "%s" "$TOKEN"\'; echo "[${{TOKEN:-unset}}]"')
+        self.assertEqual(done.stdout, "fake-value[unset]\n")
+
+    def test_file_content_is_parsed_never_executed(self):
+        marker = self.work / "ran"
+        path = self.key_file(f"TOKEN=fake-value\ntouch {marker}\n")
+        self.run_helper(f'rg_with_secret "{path}" TOKEN true')
+        self.assertFalse(marker.exists())
+
+    def test_rejects_group_readable_empty_and_missing(self):
+        loose = self.key_file("TOKEN=fake-value\n", mode=0o644)
+        self.assertEqual(self.run_helper(f'rg_secret_check "{loose}" TOKEN').returncode, 1)
+        empty = self.key_file("TOKEN=\n")
+        done = self.run_helper(f'rg_secret_check "{empty}" TOKEN; rg_secret_status "{empty}" TOKEN')
+        self.assertIn("empty or missing", done.stdout)
+        missing = self.work / "absent.env"
+        self.assertEqual(self.run_helper(f'rg_secret_check "{missing}" TOKEN').returncode, 1)
+
+    def test_falls_back_to_an_exported_variable(self):
+        missing = self.work / "absent.env"
+        done = self.run_helper(f'rg_secret_check "{missing}" TOKEN && rg_secret_status "{missing}" TOKEN',
+                               env={"TOKEN": "fake-value"})
+        self.assertEqual(done.stdout.strip(), "from environment")
 
 
 if __name__ == "__main__":
