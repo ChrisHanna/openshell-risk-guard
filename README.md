@@ -71,7 +71,8 @@ proxies traffic, stores secrets, or writes OpenShell policy.
 | Term | Meaning |
 |---|---|
 | **Workload ID** | An operator-assigned label for a logical agent workload that persists across runs and ephemeral sandboxes. It selects which restrictions, baseline and learning history apply. It is **not** an authenticated identity and carries no credentials, so a sandboxed process can neither assert nor change it. Stored as `agent_id`; set with `--agent-id` or the `openshell.nvidia.com/agent-id` annotation. |
-| **Principal** | The authenticated operator or user OpenShell reports for a call. Allowlisted principals decide which sandboxes are bound to which workload ID. |
+| **Principal** | The authenticated operator or user OpenShell reports for a call. Allowlisted principals decide which sandboxes are bound to which workload ID. With `--workload-from-principal`, the workload is derived from the creating workspace and principal instead. |
+| **Workspace** | OpenShell's isolation boundary for sandboxes, providers and policies. Derived workloads are scoped to one. Not to be confused with a workload, or with the `/sandbox` directory. |
 | **Sandbox**, **epoch** | An ephemeral OpenShell sandbox and the policy epoch it runs under. |
 | **Run** | One execution of a workload, bound to its sandboxes. Many runs share one workload ID. |
 

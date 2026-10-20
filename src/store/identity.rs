@@ -40,6 +40,50 @@ impl SqliteRiskStore {
         Ok(())
     }
 
+    pub fn record_binding_audit(&self, entry: &BindingAudit) -> Result<()> {
+        self.lock_conn()?.execute(
+            "INSERT INTO workload_binding_audit
+             (sandbox_id, workspace, principal_kind, principal_subject, agent_id, source, outcome, reason, created_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                entry.sandbox_id,
+                entry.workspace,
+                entry.principal_kind,
+                entry.principal_subject,
+                entry.agent_id,
+                entry.source,
+                if entry.bound { "bound" } else { "refused" },
+                entry.reason,
+                current_time_ms()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Binding attempts for one sandbox, oldest first, as `(source, outcome, agent_id, principal)`.
+    pub fn list_binding_audit(&self, sandbox_id: &str) -> Result<Vec<BindingAudit>> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT sandbox_id, workspace, principal_kind, principal_subject, agent_id, source, outcome, reason
+             FROM workload_binding_audit WHERE sandbox_id = ?1 ORDER BY audit_id",
+        )?;
+        let rows = stmt.query_map(params![sandbox_id], |row| {
+            let source: String = row.get(5)?;
+            let outcome: String = row.get(6)?;
+            Ok(BindingAudit {
+                sandbox_id: row.get(0)?,
+                workspace: row.get(1)?,
+                principal_kind: row.get(2)?,
+                principal_subject: row.get(3)?,
+                agent_id: row.get(4)?,
+                source: if source == "principal" { "principal" } else { "label" },
+                bound: outcome == "bound",
+                reason: row.get(7)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     pub fn create_agent_run(
         &self,
         agent_id: &str,
@@ -223,6 +267,7 @@ impl SqliteRiskStore {
         agent_revision: &str,
         run_id: &str,
         auto_register: bool,
+        display_name: Option<&str>,
     ) -> Result<()> {
         identifier(agent_id, "agent_id")?;
         identifier(agent_revision, "agent_revision")?;
@@ -271,7 +316,7 @@ impl SqliteRiskStore {
             if !registered {
                 tx.execute(
                     "INSERT INTO agents (agent_id, display_name, created_at_ms) VALUES (?1, ?2, ?3)",
-                    params![agent_id, agent_id, current_time_ms()],
+                    params![agent_id, display_name.unwrap_or(agent_id), current_time_ms()],
                 )?;
             }
             tx.commit()?;

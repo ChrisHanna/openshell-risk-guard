@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{Result, RiskGuardError};
 use crate::types::{
-    BaselineProfile, DecisionOutcome, DetectorContext, EnforcementMode, EpochRecord,
+    BaselineProfile, BindingAudit, DecisionOutcome, DetectorContext, EnforcementMode, EpochRecord,
     HardeningCandidate, NativeObservationSource, NormalizedRequest, REASON_BEHAVIORAL_RISK_RESTRICTED, RatchetAction,
     RiskDetector, RiskEvaluation, RiskStore, SignalContribution, WindowSnapshot,
 };
@@ -29,6 +29,8 @@ const INITIAL_MIGRATION_SQL: &str = include_str!("../../migrations/0001_initial.
 const AGENT_MIGRATION_SQL: &str = include_str!("../../migrations/0002_agent_identity.sql");
 const GUARDRAIL_MIGRATION_SQL: &str = include_str!("../../migrations/0003_agent_guardrails.sql");
 const ADAPTIVE_MIGRATION_SQL: &str = include_str!("../../migrations/0004_adaptive_learning.sql");
+const BINDING_AUDIT_MIGRATION_SQL: &str =
+    include_str!("../../migrations/0005_workload_binding_audit.sql");
 const SIDECAR_MIGRATION_SQL: &str = include_str!("../../migrations/0005_sidecar_operations.sql");
 const MAX_BUCKET_RESOURCES: usize = crate::guardrails::MAX_FANOUT_ENVELOPE as usize;
 const WINDOW_RETENTION_MS: i64 = 3_600_000;
@@ -101,6 +103,7 @@ impl SqliteRiskStore {
         conn.execute_batch(AGENT_MIGRATION_SQL)?;
         conn.execute_batch(GUARDRAIL_MIGRATION_SQL)?;
         conn.execute_batch(ADAPTIVE_MIGRATION_SQL)?;
+        conn.execute_batch(BINDING_AUDIT_MIGRATION_SQL)?;
         conn.execute_batch(SIDECAR_MIGRATION_SQL)?;
 
         let read_conn = Connection::open(path_ref)?;
@@ -128,6 +131,7 @@ impl SqliteRiskStore {
         conn.execute_batch(AGENT_MIGRATION_SQL)?;
         conn.execute_batch(GUARDRAIL_MIGRATION_SQL)?;
         conn.execute_batch(ADAPTIVE_MIGRATION_SQL)?;
+        conn.execute_batch(BINDING_AUDIT_MIGRATION_SQL)?;
         conn.execute_batch(SIDECAR_MIGRATION_SQL)?;
 
         Ok(Self {
@@ -725,6 +729,7 @@ impl RiskStore for SqliteRiskStore {
         agent_revision: &str,
         run_id: &str,
         auto_register: bool,
+        display_name: Option<&str>,
     ) -> Result<()> {
         SqliteRiskStore::auto_bind_sandbox_epoch(
             self,
@@ -734,7 +739,12 @@ impl RiskStore for SqliteRiskStore {
             agent_revision,
             run_id,
             auto_register,
+            display_name,
         )
+    }
+
+    fn record_binding_audit(&self, entry: &BindingAudit) -> Result<()> {
+        SqliteRiskStore::record_binding_audit(self, entry)
     }
 
     fn close_sandbox_lifecycle(&self, sandbox_id: &str) -> Result<Option<String>> {

@@ -339,6 +339,21 @@ pub trait RiskDetector: Send + Sync {
 }
 
 /// Trait for the transactional SQLite state and audit store.
+/// One attempt to attach a sandbox to a workload, kept as evidence of who did it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindingAudit {
+    pub sandbox_id: String,
+    pub workspace: String,
+    pub principal_kind: String,
+    pub principal_subject: String,
+    pub agent_id: Option<String>,
+    /// `principal` when the workload was derived from the authenticated caller, `label`
+    /// when an allowlisted operator named it.
+    pub source: &'static str,
+    pub bound: bool,
+    pub reason: Option<String>,
+}
+
 pub trait RiskStore: Send + Sync {
     fn upsert_epoch(&self, epoch: &EpochRecord) -> Result<()>;
     fn get_active_epoch(&self, sandbox_id: &str) -> Result<Option<EpochRecord>>;
@@ -401,7 +416,12 @@ pub trait RiskStore: Send + Sync {
         _agent_revision: &str,
         _run_id: &str,
         _auto_register: bool,
+        _display_name: Option<&str>,
     ) -> Result<()> {
+        Ok(())
+    }
+    /// Append one workload-binding attempt (accepted or refused) to the audit trail.
+    fn record_binding_audit(&self, _entry: &BindingAudit) -> Result<()> {
         Ok(())
     }
     fn close_sandbox_lifecycle(&self, _sandbox_id: &str) -> Result<Option<String>> {

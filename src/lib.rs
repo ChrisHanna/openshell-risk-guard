@@ -22,6 +22,7 @@ pub mod operator_dashboard;
 mod operator_controls;
 pub mod store;
 pub mod types;
+pub mod workload_identity;
 
 pub use error::{Result, RiskGuardError};
 pub use types::*;

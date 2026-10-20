@@ -40,7 +40,7 @@ is what keeps the restriction ratchet linearizable.
    The first start records the HMAC key's fingerprint; a different key is refused later.
 2. `baseline-import` the operator-approved profile (an initContainer in Kubernetes).
    It is idempotent, and `serve` refuses to start until the default profile exists.
-3. **Provisioning & Lifecycle (two paths):**
+3. **Provisioning & Lifecycle (three paths):**
    - **Explicit CLI binding (default):** `agent-register` once per durable agent
      identity; then per sandbox in the provisioning path: `run-create` ->
      `CreateSandbox` (the gateway interceptor creates the epoch) -> `run-bind`
@@ -65,6 +65,23 @@ is what keeps the restriction ratchet linearizable.
 
      On `DeleteSandbox` or `StopSandbox` the interceptor closes the epoch and ends the
      bound run, which finalizes any learning window.
+   - **Principal-derived binding (opt-in):** start `serve` with
+     `--workload-from-principal`. A sandbox created without a workload label is bound to a
+     workload derived from the **workspace** it was created in and the **principal** the
+     gateway authenticated for the creating call, for example
+     `team-a.user.alice-example-com-<hash>`. Both parts come from OpenShell, so nobody can
+     choose, forge or squat the ID, and the same authenticated creator keeps one history
+     and one set of restrictions across all of its sandboxes. Use it when each agent has its
+     own service identity, or when one person launches one kind of agent.
+     - Only `operator` and `user` callers can own a workload. Anonymous, unknown, peer and
+       sandbox callers stay unbound, so their traffic fails closed.
+     - The workload is registered on first use. Different workspaces never share a workload.
+     - An explicit label still wins and still needs an allowlisted principal; derivation
+       never rescues a refused label.
+     - One principal that launches several different agents shares one workload across them,
+       so use a label (or separate service identities) when behavior differs.
+     - Every attempt, accepted or refused, is recorded in `workload_binding_audit` with the
+       workspace, principal and whether the workload came from the principal or a label.
 
 ## Protecting a new API
 

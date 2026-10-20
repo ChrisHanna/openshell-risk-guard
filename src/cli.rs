@@ -87,6 +87,11 @@ pub enum Commands {
         /// Register a workload ID that an allowlisted creator names but nobody registered.
         #[arg(long)]
         auto_register_agents: bool,
+        /// Bind sandboxes that carry no workload label to a workload derived from the
+        /// authenticated (workspace, principal) that created them. Operators and users
+        /// only; the ID cannot be chosen or forged from the request.
+        #[arg(long = "workload-from-principal", env = "RISK_GUARD_WORKLOAD_FROM_PRINCIPAL")]
+        workload_from_principal: bool,
     },
     /// Generate a local-test CA, server certificate/key and resource HMAC key (never overwrites).
     LocalSecretsGenerate {
@@ -403,6 +408,7 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             api_semantics,
             agent_binding_principals,
             auto_register_agents,
+            workload_from_principal,
         } => {
             if public_key_pem.is_none() && !allow_insecure_local_test {
                 return Err(RiskGuardError::InvalidArgument(
@@ -453,12 +459,14 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             let agent_binding = crate::interceptor_service::AgentBindingPolicy::new(
                 &agent_binding_principals,
                 auto_register_agents,
-            )?;
+            )?
+            .with_principal_derivation(workload_from_principal);
             if agent_binding.is_enabled() {
                 tracing::info!(
                     principals = agent_binding_principals.len(),
                     auto_register_agents,
-                    "workload binding from sandbox annotations is enabled for allowlisted principals"
+                    workload_from_principal,
+                    "workload binding is enabled"
                 );
             }
             let interceptor_service = RiskGuardInterceptorService::new(

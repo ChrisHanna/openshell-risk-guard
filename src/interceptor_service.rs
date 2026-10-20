@@ -24,7 +24,10 @@ use sha2::{Digest, Sha256};
 use tonic::{Request, Response, Status};
 
 use crate::error::RiskGuardError;
-use crate::types::{AuthVerifier, EnforcementMode, EpochRecord, HardeningEngine, RiskStore};
+use crate::types::{
+    AuthVerifier, BindingAudit, EnforcementMode, EpochRecord, HardeningEngine, RiskStore,
+};
+use crate::workload_identity::derive_workload;
 
 const INTERCEPTOR_MANIFEST_NAME: &str = "risk-guard-governance";
 const EXTENSION_IMPLEMENTATION_NAME: &str = "openshell/risk-guard-governance";
@@ -46,6 +49,9 @@ const RUN_ID_ANNOTATION: &str = "openshell.nvidia.com/run-id";
 pub struct AgentBindingPolicy {
     allowed_principals: BTreeSet<String>,
     auto_register_agents: bool,
+    /// Derive the workload from the authenticated `(workspace, principal)` when a sandbox
+    /// carries no explicit workload label.
+    derive_from_principal: bool,
 }
 
 impl AgentBindingPolicy {
@@ -84,13 +90,29 @@ impl AgentBindingPolicy {
         Ok(Self {
             allowed_principals: allowed,
             auto_register_agents,
+            derive_from_principal: false,
         })
+    }
+
+    /// Bind sandboxes that carry no workload label to a workload derived from the
+    /// authenticated `(workspace, principal)` that created them. Nothing in the request can
+    /// choose or forge that workload, so no allowlist is needed.
+    #[must_use]
+    pub fn with_principal_derivation(mut self, enabled: bool) -> Self {
+        self.derive_from_principal = enabled;
+        self
     }
 
     /// Whether any principal may bind at all.
     #[must_use]
     pub fn is_enabled(&self) -> bool {
-        !self.allowed_principals.is_empty()
+        !self.allowed_principals.is_empty() || self.derive_from_principal
+    }
+
+    /// Whether unlabeled sandboxes are bound to a principal-derived workload.
+    #[must_use]
+    pub fn derives_from_principal(&self) -> bool {
+        self.derive_from_principal
     }
 
     /// Whether the authenticated caller summary from OpenShell is allowlisted.
@@ -565,50 +587,123 @@ impl RiskGuardInterceptorService {
                 .insert("policy_hash".to_string(), policy_hash);
         }
 
-        if method == "CreateSandbox"
-            && let Some(agent_id) = extract_agent_id(committed_response)
-        {
-            if !self.agent_binding.permits(principal) {
-                // The sandbox exists but stays unbound, so its traffic fails closed.
-                tracing::warn!(%sandbox_id, "workload binding refused: creating principal is not allowlisted");
-                result
-                    .log_annotations
-                    .insert("agent_binding".to_string(), "refused_principal".to_string());
-            } else {
-                let agent_revision = extract_agent_revision(committed_response);
-                let run_id = extract_run_id(committed_response, &sandbox_id);
-                match self.store.auto_bind_sandbox_epoch(
-                    &sandbox_id,
-                    &self.gateway_id,
-                    &agent_id,
-                    &agent_revision,
-                    &run_id,
-                    self.agent_binding.auto_register_agents,
-                ) {
-                    Ok(()) => {
-                        result
-                            .log_annotations
-                            .insert("agent_id".to_string(), agent_id);
-                        result.log_annotations.insert("run_id".to_string(), run_id);
-                    }
-                    Err(
-                        error @ (RiskGuardError::PermissionDenied(_)
-                        | RiskGuardError::InvalidArgument(_)),
-                    ) => {
-                        tracing::warn!(%sandbox_id, %error, "workload binding refused");
-                        result
-                            .log_annotations
-                            .insert("agent_binding".to_string(), "refused".to_string());
-                        result
-                            .log_annotations
-                            .insert("agent_binding_reason".to_string(), error.to_string());
-                    }
-                    Err(error) => return Err(risk_guard_error_to_status(error)),
-                }
-            }
+        if method == "CreateSandbox" {
+            self.bind_created_sandbox(&sandbox_id, committed_response, principal, &mut result)?;
         }
 
         Ok(result)
+    }
+
+    /// Attach a newly created sandbox to a workload, if policy allows, and audit the attempt.
+    ///
+    /// An explicit `openshell.nvidia.com/agent-id` label wins and needs an allowlisted
+    /// principal. Without a label, and when principal derivation is on, the workload comes
+    /// from the authenticated `(workspace, principal)`. Anything else stays unbound, so its
+    /// traffic fails closed.
+    fn bind_created_sandbox(
+        &self,
+        sandbox_id: &str,
+        committed_response: &Value,
+        principal: &HashMap<String, String>,
+        result: &mut InterceptorResult,
+    ) -> std::result::Result<(), Status> {
+        let labeled = extract_agent_id(committed_response);
+        if labeled.is_none() && !self.agent_binding.derive_from_principal {
+            return Ok(());
+        }
+        let workspace = extract_workspace(committed_response);
+        let kind = principal.get("kind").map(String::as_str).unwrap_or("unknown");
+        let subject = principal
+            .get("subject")
+            .map(|subject| subject.trim())
+            .unwrap_or("");
+        let source = if labeled.is_some() { "label" } else { "principal" };
+        let mut audit = BindingAudit {
+            sandbox_id: sandbox_id.to_string(),
+            workspace: workspace.clone(),
+            principal_kind: kind.to_string(),
+            principal_subject: subject.to_string(),
+            agent_id: None,
+            source,
+            bound: false,
+            reason: None,
+        };
+
+        let (agent_id, display_name, auto_register) = match labeled {
+            Some(agent_id) => {
+                audit.agent_id = Some(agent_id.clone());
+                if !self.agent_binding.permits(principal) {
+                    // The sandbox exists but stays unbound, so its traffic fails closed.
+                    tracing::warn!(%sandbox_id, "workload binding refused: creating principal is not allowlisted");
+                    self.refuse_binding(result, &mut audit, "refused_principal", "creating principal is not allowlisted".into());
+                    return Ok(());
+                }
+                (agent_id, None, self.agent_binding.auto_register_agents)
+            }
+            None => match derive_workload(&workspace, kind, subject) {
+                Ok(derived) => (derived.agent_id, Some(derived.display_name), true),
+                Err(error) => {
+                    tracing::warn!(%sandbox_id, %error, "workload derivation refused");
+                    self.refuse_binding(result, &mut audit, "refused", error.to_string());
+                    return Ok(());
+                }
+            },
+        };
+        audit.agent_id = Some(agent_id.clone());
+
+        let agent_revision = extract_agent_revision(committed_response);
+        let run_id = extract_run_id(committed_response, sandbox_id);
+        match self.store.auto_bind_sandbox_epoch(
+            sandbox_id,
+            &self.gateway_id,
+            &agent_id,
+            &agent_revision,
+            &run_id,
+            auto_register,
+            display_name.as_deref(),
+        ) {
+            Ok(()) => {
+                result.log_annotations.insert("agent_id".to_string(), agent_id);
+                result.log_annotations.insert("run_id".to_string(), run_id);
+                result.log_annotations.insert("workspace".to_string(), workspace);
+                result.log_annotations.insert("agent_binding_source".to_string(), source.to_string());
+                audit.bound = true;
+                self.audit_binding(&audit);
+                Ok(())
+            }
+            Err(
+                error @ (RiskGuardError::PermissionDenied(_) | RiskGuardError::InvalidArgument(_)),
+            ) => {
+                tracing::warn!(%sandbox_id, %error, "workload binding refused");
+                self.refuse_binding(result, &mut audit, "refused", error.to_string());
+                Ok(())
+            }
+            Err(error) => Err(risk_guard_error_to_status(error)),
+        }
+    }
+
+    fn refuse_binding(
+        &self,
+        result: &mut InterceptorResult,
+        audit: &mut BindingAudit,
+        outcome: &str,
+        reason: String,
+    ) {
+        result
+            .log_annotations
+            .insert("agent_binding".to_string(), outcome.to_string());
+        result
+            .log_annotations
+            .insert("agent_binding_reason".to_string(), reason.clone());
+        audit.reason = Some(reason);
+        self.audit_binding(audit);
+    }
+
+    /// Audit failures must never block sandbox creation: the sandbox is already committed.
+    fn audit_binding(&self, entry: &BindingAudit) {
+        if let Err(error) = self.store.record_binding_audit(entry) {
+            tracing::warn!(sandbox_id = %entry.sandbox_id, %error, "could not record the workload binding audit");
+        }
     }
 
     /// Control-plane non-expansion does not depend on the data-plane scoring mode:
@@ -1103,6 +1198,23 @@ fn binding_annotations_present(val: &Value) -> bool {
     [AGENT_ID_ANNOTATION, AGENT_REVISION_ANNOTATION, RUN_ID_ANNOTATION]
         .into_iter()
         .any(|key| extract_annotation(val, key).is_some())
+}
+
+/// The workspace that owns a committed sandbox. OpenShell normalizes an empty workspace to
+/// `default`, so a missing field is treated the same way.
+fn extract_workspace(committed_response: &Value) -> String {
+    [
+        committed_response.pointer("/sandbox/metadata/workspace"),
+        committed_response.pointer("/metadata/workspace"),
+        committed_response.get("workspace"),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_str)
+    .map(str::trim)
+    .find(|workspace| !workspace.is_empty())
+    .unwrap_or("default")
+    .to_string()
 }
 
 fn extract_agent_id(committed_response: &Value) -> Option<String> {
@@ -2469,5 +2581,178 @@ network_policies:
             Some("run-delete-test")
         );
         assert!(store.get_active_epoch(sandbox_id_2).unwrap().is_none());
+    }
+
+    fn derive_service(base: &RiskGuardInterceptorService) -> RiskGuardInterceptorService {
+        base.clone().with_agent_binding(
+            AgentBindingPolicy::new(Vec::<String>::new(), false)
+                .unwrap()
+                .with_principal_derivation(true),
+        )
+    }
+
+    fn create_in_workspace(
+        service: &RiskGuardInterceptorService,
+        principal: HashMap<String, String>,
+        sandbox_id: &str,
+        workspace: &str,
+        annotations: Value,
+    ) -> InterceptorResult {
+        service
+            .post_commit_sandbox_mutation(
+                "CreateSandbox",
+                &json!({
+                    "sandbox": {
+                        "metadata": {
+                            "id": sandbox_id,
+                            "workspace": workspace,
+                            "annotations": annotations
+                        }
+                    }
+                }),
+                &principal,
+            )
+            .expect("create sandbox")
+    }
+
+    fn bound_workload(result: &InterceptorResult) -> Option<&str> {
+        result.log_annotations.get("agent_id").map(String::as_str)
+    }
+
+    #[test]
+    fn principal_derivation_binds_an_unlabeled_sandbox_to_its_workspace_and_principal() {
+        let (service, store, _token) = setup_service_with_jwt();
+        provision_baseline(&store);
+        let service = derive_service(&service);
+
+        let created = create_in_workspace(
+            &service, principal_of("user", "alice@example.com"), "sb-derive-1", "team-a", json!({}),
+        );
+        let workload = bound_workload(&created).expect("bound to a derived workload").to_string();
+        assert!(workload.starts_with("team-a.user.alice-example-com-"), "{workload}");
+        assert_eq!(created.log_annotations.get("agent_binding_source").map(String::as_str), Some("principal"));
+        assert_eq!(created.log_annotations.get("workspace").map(String::as_str), Some("team-a"));
+        assert!(store.operator_agent_detail(&workload, 1).unwrap().is_some(), "auto-registered");
+
+        let audit = store.list_binding_audit("sb-derive-1").unwrap();
+        assert_eq!(audit.len(), 1);
+        assert!(audit[0].bound);
+        assert_eq!(audit[0].source, "principal");
+        assert_eq!(audit[0].principal_subject, "alice@example.com");
+        assert_eq!(audit[0].workspace, "team-a");
+    }
+
+    #[test]
+    fn the_same_workspace_and_principal_share_one_workload_across_sandboxes() {
+        let (service, store, _token) = setup_service_with_jwt();
+        provision_baseline(&store);
+        let service = derive_service(&service);
+        let alice = || principal_of("user", "alice");
+
+        let first = create_in_workspace(&service, alice(), "sb-same-1", "team-a", json!({}));
+        let second = create_in_workspace(&service, alice(), "sb-same-2", "team-a", json!({}));
+        assert!(bound_workload(&first).is_some());
+        assert_eq!(bound_workload(&first), bound_workload(&second));
+    }
+
+    #[test]
+    fn a_different_principal_or_workspace_gets_a_different_workload() {
+        let (service, store, _token) = setup_service_with_jwt();
+        provision_baseline(&store);
+        let service = derive_service(&service);
+
+        let base = create_in_workspace(&service, principal_of("user", "alice"), "sb-diff-1", "team-a", json!({}));
+        let other_principal = create_in_workspace(&service, principal_of("user", "bob"), "sb-diff-2", "team-a", json!({}));
+        let other_workspace = create_in_workspace(&service, principal_of("user", "alice"), "sb-diff-3", "team-b", json!({}));
+        assert_ne!(bound_workload(&base), bound_workload(&other_principal));
+        assert_ne!(bound_workload(&base), bound_workload(&other_workspace), "workspace must scope the workload");
+    }
+
+    #[test]
+    fn an_empty_or_missing_workspace_is_the_default_workspace() {
+        let (service, store, _token) = setup_service_with_jwt();
+        provision_baseline(&store);
+        let service = derive_service(&service);
+
+        let explicit = create_in_workspace(&service, principal_of("user", "alice"), "sb-ws-1", "default", json!({}));
+        let empty = create_in_workspace(&service, principal_of("user", "alice"), "sb-ws-2", "", json!({}));
+        assert_eq!(bound_workload(&explicit), bound_workload(&empty));
+    }
+
+    #[test]
+    fn callers_without_a_durable_identity_stay_unbound_and_are_audited() {
+        let (service, store, _token) = setup_service_with_jwt();
+        provision_baseline(&store);
+        let service = derive_service(&service);
+
+        for (i, principal) in [principal_of("anonymous", ""), principal_of("sandbox", "sb-x"), HashMap::new()]
+            .into_iter()
+            .enumerate()
+        {
+            let sandbox = format!("sb-anon-{i}");
+            let created = create_in_workspace(&service, principal, &sandbox, "default", json!({}));
+            assert_eq!(binding_outcome(&created), Some("refused"), "{:?}", created.log_annotations);
+            assert!(bound_workload(&created).is_none());
+            let audit = store.list_binding_audit(&sandbox).unwrap();
+            assert_eq!(audit.len(), 1);
+            assert!(!audit[0].bound);
+            assert!(audit[0].reason.is_some());
+        }
+    }
+
+    #[test]
+    fn derivation_is_off_unless_enabled() {
+        let (service, store, _token) = setup_service_with_jwt();
+        provision_baseline(&store);
+        let created = create_in_workspace(&service, principal_of("user", "alice"), "sb-off-1", "default", json!({}));
+        assert!(bound_workload(&created).is_none());
+        assert!(binding_outcome(&created).is_none());
+        assert!(store.list_binding_audit("sb-off-1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_explicit_label_still_needs_an_allowlisted_principal_even_with_derivation_on() {
+        let (service, store, _token) = setup_service_with_jwt();
+        provision_baseline(&store);
+        let service = derive_service(&service);
+
+        let refused = create_in_workspace(
+            &service, principal_of("user", "mallory"), "sb-label-1", "team-a",
+            json!({ AGENT_ID_ANNOTATION: "someone-elses-agent" }),
+        );
+        assert_eq!(binding_outcome(&refused), Some("refused_principal"));
+        assert!(bound_workload(&refused).is_none(), "derivation must not rescue a refused label");
+        let audit = store.list_binding_audit("sb-label-1").unwrap();
+        assert_eq!(audit[0].source, "label");
+        assert!(!audit[0].bound);
+    }
+
+    #[test]
+    fn a_derived_sandbox_cannot_join_a_run_owned_by_another_workload() {
+        let (service, store, _token) = setup_service_with_jwt();
+        provision_baseline(&store);
+        let service = derive_service(&service);
+
+        let alice = create_in_workspace(
+            &service, principal_of("user", "alice"), "sb-run-1", "team-a",
+            json!({ RUN_ID_ANNOTATION: "shared-run" }),
+        );
+        assert!(bound_workload(&alice).is_some());
+        let bob = create_in_workspace(
+            &service, principal_of("user", "bob"), "sb-run-2", "team-a",
+            json!({ RUN_ID_ANNOTATION: "shared-run" }),
+        );
+        assert_eq!(binding_outcome(&bob), Some("refused"));
+        assert!(bob.log_annotations["agent_binding_reason"].contains("different workload"));
+    }
+
+    #[test]
+    fn the_cli_flag_enables_derivation_without_an_allowlist() {
+        let policy = AgentBindingPolicy::new(Vec::<String>::new(), false)
+            .unwrap()
+            .with_principal_derivation(true);
+        assert!(policy.is_enabled());
+        assert!(policy.derives_from_principal());
+        assert!(!policy.permits(&principal_of("user", "alice")), "labels still need the allowlist");
     }
 }
