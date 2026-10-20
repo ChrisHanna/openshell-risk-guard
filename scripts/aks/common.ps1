@@ -5,6 +5,8 @@
 # .aks/state.json, which is git-ignored.
 
 Set-StrictMode -Version Latest
+# Any error should stop the script; Invoke-Native handles native exit codes explicitly.
+$ErrorActionPreference = 'Stop'
 
 $script:RepoRoot = (Resolve-Path (Join-Path (Join-Path $PSScriptRoot '..') '..')).Path
 $script:StateDir = Join-Path $script:RepoRoot '.aks'
@@ -97,4 +99,41 @@ function Invoke-KubectlApply([string]$Manifest) {
     $code = $LASTEXITCODE
     $ErrorActionPreference = $previous
     if ($code -ne 0) { throw "kubectl apply failed (exit $code):`n$($output -join "`n")" }
+}
+
+# Read one value from saved state without tripping strict mode when the key is not there yet.
+function Get-StateValue([string]$Name, $Default = $null) {
+    $state = Get-State
+    if ($state -and ($state.PSObject.Properties.Name -contains $Name) -and $state.$Name) { return $state.$Name }
+    return $Default
+}
+
+# Run a shell command in a throwaway pod and return its output. The pod is started detached and polled,
+# because attaching (kubectl run -i) gives up while a node is still pulling the image for the first time.
+function Invoke-InCluster {
+    param([string]$Name, [string]$Namespace, [string]$Image, [string]$ShellCommand, [int]$TimeoutSeconds = 420)
+    Invoke-Native kubectl @('delete', 'pod', $Name, '-n', $Namespace, '--ignore-not-found', '--wait=true') | Out-Null
+    # The script travels base64-encoded: Windows PowerShell 5.1 strips embedded double quotes from native arguments.
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($ShellCommand))
+    Invoke-Native kubectl @('run', $Name, '-n', $Namespace, "--image=$Image", '--restart=Never', '--command', '--', 'sh', '-c', "echo $encoded | base64 -d | sh") | Out-Null
+    try {
+        $phase = ''
+        $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+        while ((Get-Date) -lt $deadline) {
+            $phase = (Invoke-Native kubectl @('get', 'pod', $Name, '-n', $Namespace, '-o', 'jsonpath={.status.phase}') -Retries 5 | Select-Object -First 1)
+            if ($phase -in 'Succeeded', 'Failed') { break }
+            $waiting = (Invoke-Native kubectl @('get', 'pod', $Name, '-n', $Namespace, '-o', 'jsonpath={.status.containerStatuses[0].state.waiting.reason}') -AllowFailure | Select-Object -First 1)
+            if ($waiting -in 'ErrImagePull', 'ImagePullBackOff', 'InvalidImageName', 'CreateContainerConfigError') { $phase = "stuck: $waiting"; break }
+            Start-Sleep -Seconds 3
+        }
+        $logs = Invoke-Native kubectl @('logs', $Name, '-n', $Namespace) -AllowFailure
+        if ($phase -ne 'Succeeded') {
+            $why = Invoke-Native kubectl @('describe', 'pod', $Name, '-n', $Namespace) -AllowFailure
+            throw "Pod $Name ended in phase '$phase'.`n$($logs -join "`n")`n$(($why | Select-Object -Last 12) -join "`n")"
+        }
+        return $logs
+    }
+    finally {
+        Invoke-Native kubectl @('delete', 'pod', $Name, '-n', $Namespace, '--ignore-not-found', '--wait=false') -AllowFailure | Out-Null
+    }
 }

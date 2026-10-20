@@ -35,7 +35,7 @@ spec:
       containers:
         - name: fixture
           image: __PYTHON_IMAGE__
-          command: ["python", "/app/fixture.py", "serve", "--db", "/tmp/fixture.db", "--bind", "0.0.0.0", "--port", "18081"]
+          command: ["python3", "/app/fixture.py", "serve", "--db", "/tmp/fixture.db", "--bind", "0.0.0.0", "--port", "18081"]
           ports:
             - name: http
               containerPort: 18081

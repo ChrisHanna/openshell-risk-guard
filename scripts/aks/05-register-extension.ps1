@@ -14,9 +14,9 @@ Assert-Tools
 Use-Cluster
 
 $state = Get-ClusterContext
-$ns = if ($state.namespace) { $state.namespace } else { 'openshell' }
-$release = if ($state.releaseName) { $state.releaseName } else { 'openshell' }
-$chart = if ($state.openshellChart) { $state.openshellChart } else { Join-Path (Get-OpenShellCheckout $OpenShellPath) 'deploy/helm/openshell' }
+$ns = Get-StateValue 'namespace' 'openshell'
+$release = Get-StateValue 'releaseName' 'openshell'
+$chart = Get-StateValue 'openshellChart' (Join-Path (Get-OpenShellCheckout $OpenShellPath) 'deploy/helm/openshell')
 
 Write-Step 'Confirming Risk Guard is ready before the gateway depends on it'
 Invoke-Native kubectl @('rollout', 'status', 'deploy/risk-guard', '-n', $ns, '--timeout=120s') | Out-Null

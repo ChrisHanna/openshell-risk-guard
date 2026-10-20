@@ -3,28 +3,25 @@
   Deploy the harmless test fixture and build a small workload image that has curl, for trying Risk Guard.
 
 .DESCRIPTION
-  * Imports python:3.12-alpine into your registry (one pull from Docker Hub) and runs the fixture from a ConfigMap.
+  * Runs the fixture from a ConfigMap on Microsoft's Python image (MCR, so no Docker Hub rate limit).
   * Builds the `workload` stage of scripts/rail-guard-demo-assets.Dockerfile (Ubuntu with curl) in your registry.
   Afterwards: openshell sandbox create --from <acr>/openshell-demo/workload:1 --policy deploy/aks/sandbox-policy.yaml ...
 #>
 [CmdletBinding()]
-param([string]$PythonSource = 'docker.io/library/python:3.12-alpine')
+param([string]$PythonImage = 'mcr.microsoft.com/azurelinux/base/python:3.12')
 . "$PSScriptRoot/common.ps1"
 Assert-Tools
 Use-Cluster
 
 $state = Get-ClusterContext
-$ns = if ($state.namespace) { $state.namespace } else { 'openshell' }
+$ns = Get-StateValue 'namespace' 'openshell'
 $acrServer = "$($state.acr).azurecr.io"
-
-Write-Step 'Importing the Python base image into your registry'
-Invoke-Native az @('acr', 'import', '-n', $state.acr, '--source', $PythonSource, '--image', 'python:3.12-alpine', '--force', '--only-show-errors') -Retries 2 | Out-Null
 
 Write-Step 'Deploying the fixture'
 $src = Invoke-Native kubectl @('create', 'configmap', 'risk-guard-fixture-src', '-n', $ns,
     "--from-file=fixture.py=$(Join-Path $script:RepoRoot 'scripts/rail-guard-demo-fixture.py')", '--dry-run=client', '-o', 'yaml')
 Invoke-KubectlApply ($src -join "`n")
-$manifest = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/fixture.yaml') -Raw).Replace('__PYTHON_IMAGE__', "$acrServer/python:3.12-alpine")
+$manifest = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/fixture.yaml') -Raw).Replace('__PYTHON_IMAGE__', $PythonImage)
 Invoke-KubectlApply $manifest
 Invoke-Native kubectl @('rollout', 'status', 'deploy/risk-guard-fixture', '-n', $ns, '--timeout=180s') | Out-Null
 

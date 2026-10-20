@@ -14,7 +14,7 @@ param([int]$LocalPort = 18791)
 Assert-Tools
 Use-Cluster
 $state = Get-ClusterContext
-$ns = if ($state.namespace) { $state.namespace } else { 'openshell' }
+$ns = Get-StateValue 'namespace' 'openshell'
 
 $pf = Start-Process -FilePath kubectl -ArgumentList @('port-forward', '-n', $ns, 'deploy/risk-guard', "${LocalPort}:8791") -PassThru -WindowStyle Hidden
 try {

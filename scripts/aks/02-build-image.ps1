@@ -25,7 +25,8 @@ New-Item -ItemType Directory $stage | Out-Null
 try {
     Write-Step "Staging build context in $stage"
     function Copy-Clean([string]$From, [string]$To, [string[]]$ExcludeDirs, [string[]]$ExcludeFiles) {
-        if ($IsLinux -or $IsMacOS) {
+        $onUnix = ($PSVersionTable.PSObject.Properties.Name -contains 'Platform') -and ($PSVersionTable.Platform -eq 'Unix')
+        if ($onUnix) {
             $excludes = @($ExcludeDirs + $ExcludeFiles | ForEach-Object { "--exclude=$_" })
             & rsync -a @excludes "$From/" "$To/"
             if ($LASTEXITCODE -ne 0) { throw 'rsync failed' }
@@ -42,8 +43,21 @@ try {
     Write-Note "context: $mb MB"
 
     Write-Step "Building openshell-risk-guard:$Tag in $($state.acr) (several minutes, runs in Azure)"
-    Invoke-Native az @('acr', 'build', '-r', $state.acr, '-t', "openshell-risk-guard:$Tag", '-t', 'openshell-risk-guard:latest',
-        '-f', 'openshell-risk-guard/Dockerfile', $stage, '--no-logs', '--only-show-errors') -Retries 1 | Out-Null
+    $queued = Invoke-Native az @('acr', 'build', '-r', $state.acr, '-t', "openshell-risk-guard:$Tag", '-t', 'openshell-risk-guard:latest',
+        '-f', (Join-Path $stage 'openshell-risk-guard/Dockerfile'), $stage, '--no-logs', '--no-wait', '--only-show-errors') -Retries 1
+    # --no-wait prints nothing useful with --only-show-errors, so read the newest run back instead.
+    $runId = (Invoke-Native az @('acr', 'task', 'list-runs', '-r', $state.acr, '--top', '1', '--query', '[0].runId', '-o', 'tsv', '--only-show-errors') -Retries 5 | Select-Object -First 1)
+    if (-not $runId) { throw 'Could not find the queued build run.' }
+    Write-Note "run $runId queued; polling (the first build takes about 10 minutes)"
+    $status = ''
+    while ($true) {
+        Start-Sleep -Seconds 20
+        $status = (Invoke-Native az @('acr', 'task', 'show-run', '-r', $state.acr, '--run-id', $runId, '--query', 'status', '-o', 'tsv', '--only-show-errors') -Retries 5 | Select-Object -First 1)
+        if ($status -in 'Succeeded', 'Failed', 'Canceled', 'Error', 'Timeout') { break }
+    }
+    if ($status -ne 'Succeeded') {
+        throw "Build $runId finished with status $status. Logs: az acr task logs -r $($state.acr) --run-id $runId"
+    }
 }
 finally {
     Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue

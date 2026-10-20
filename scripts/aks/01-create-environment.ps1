@@ -52,6 +52,11 @@ if (-not $haveCluster) {
         '--generate-ssh-keys', '--tags', $tags, '--only-show-errors', '-o', 'none') -Retries 1 | Out-Null
 }
 
+# Always (re)attach the registry. A cluster create that is interrupted after the cluster exists but before the
+# role assignment finishes would otherwise leave nodes unable to pull images (401 from the registry).
+Write-Step 'Granting the cluster pull access to the registry (idempotent)'
+Invoke-Native az @('aks', 'update', '-g', $rg, '-n', $cluster, '--attach-acr', $acr, '--only-show-errors', '-o', 'none') -Retries 2 | Out-Null
+
 Use-Cluster
 Write-Step 'Nodes'
 kubectl get nodes -o wide

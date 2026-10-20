@@ -1,0 +1,59 @@
+# Adds an authenticating TLS proxy to the Risk Guard pod so the read-only console can be reached from the
+# internet safely. The console itself only listens on the pod's loopback; this proxy shares that network
+# namespace and is the only thing exposed. Applied by scripts/aks/09-expose-console.ps1, which fills
+# __NGINX_IMAGE__ and creates the ConfigMap and Secrets mounted below.
+spec:
+  template:
+    spec:
+      containers:
+        - name: console-proxy
+          image: __NGINX_IMAGE__
+          command: ["nginx", "-g", "daemon off;", "-c", "/etc/console-proxy/nginx.conf"]
+          ports:
+            - name: https
+              containerPort: 8443
+          readinessProbe:
+            tcpSocket:
+              port: https
+            periodSeconds: 10
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: console-proxy-conf
+              mountPath: /etc/console-proxy
+              readOnly: true
+            - name: console-proxy-tls
+              mountPath: /etc/console-tls
+              readOnly: true
+            - name: console-proxy-auth
+              mountPath: /etc/console-auth
+              readOnly: true
+            - name: console-proxy-tmp
+              mountPath: /tmp
+      volumes:
+        - name: console-proxy-conf
+          configMap:
+            name: risk-guard-console-proxy
+        - name: console-proxy-tls
+          secret:
+            secretName: risk-guard-console-tls
+            defaultMode: 0440
+        - name: console-proxy-auth
+          secret:
+            secretName: risk-guard-console-auth
+            defaultMode: 0440
+        - name: console-proxy-tmp
+          emptyDir: {}

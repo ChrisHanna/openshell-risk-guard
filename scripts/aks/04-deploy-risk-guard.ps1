@@ -25,8 +25,9 @@ Assert-Tools
 Use-Cluster
 
 $state = Get-ClusterContext
-$ns = if ($state.namespace) { $state.namespace } else { 'openshell' }
-$tag = if ($ImageTag) { $ImageTag } elseif ($state.imageTag) { $state.imageTag } else { throw 'No image tag recorded. Run 02-build-image.ps1 or pass -ImageTag.' }
+$ns = Get-StateValue 'namespace' 'openshell'
+$tag = if ($ImageTag) { $ImageTag } else { Get-StateValue 'imageTag' }
+if (-not $tag) { throw 'No image tag recorded. Run 02-build-image.ps1 or pass -ImageTag.' }
 $image = "$($state.acr).azurecr.io/openshell-risk-guard:$tag"
 if (-not $BaselinePath) { $BaselinePath = Join-Path $script:RepoRoot 'deploy/rail-guard-demo/baseline.json' }
 if (-not $ApiSemanticsPath) { $ApiSemanticsPath = Join-Path $script:RepoRoot 'config/api_semantics.yaml' }
@@ -42,8 +43,7 @@ if (-not $haveSecrets -or $RotateSecrets) {
     $sans = @("risk-guard.$ns.svc.cluster.local", "risk-guard.$ns.svc", 'risk-guard') | ForEach-Object { "--san $_" }
     $remote = 'd=$(mktemp -d) && openshell-risk-guard local-secrets-generate --out-dir "$d" ' + ($sans -join ' ') +
         ' >/dev/null && for f in ca.crt tls.crt tls.key hmac.key; do printf "%s:%s\n" "$f" "$(base64 -w0 "$d/$f")"; done; rm -rf "$d"'
-    $lines = Invoke-Native kubectl @('run', 'rg-secgen', '-n', $ns, "--image=$image", '--restart=Never', '--rm', '-i', '--quiet',
-        '--command', '--', 'sh', '-c', $remote) -Retries 1
+    $lines = Invoke-InCluster -Name 'rg-secgen' -Namespace $ns -Image $image -ShellCommand $remote
     $b64 = @{}
     foreach ($line in $lines) { if ($line -match '^(ca\.crt|tls\.crt|tls\.key|hmac\.key):([A-Za-z0-9+/=]+)$') { $b64[$Matches[1]] = $Matches[2] } }
     foreach ($name in 'ca.crt', 'tls.crt', 'tls.key', 'hmac.key') { if (-not $b64.ContainsKey($name)) { throw "The generator did not return $name" } }
