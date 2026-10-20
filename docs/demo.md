@@ -338,13 +338,14 @@ Files are in `deploy/rail-guard-demo/agent/` (image, tools, workflow, provider p
 
 ```bash
 # one-time: build the image (needs network) and save your key to a 0600 file
-docker build --network host -t risk-guard-demo/nat-agent:1 deploy/rail-guard-demo/agent
+docker build --network host -t risk-guard-demo/nat-agent:2 deploy/rail-guard-demo/agent
 echo 'NVIDIA_API_KEY=...' > ~/.config/rail-guard-demo/nvidia.env && chmod 600 ~/.config/rail-guard-demo/nvidia.env
 
 scripts/rail-guard-demo-agent.sh setup              # import the profile, create the provider
 scripts/rail-guard-demo-agent.sh probe              # no model or key: checks sandbox, policy and scoring
 scripts/rail-guard-demo-agent.sh run triage         # benign task
 scripts/rail-guard-demo-agent.sh run overreach      # task nudges the agent to delete the production repo
+GUARDRAILS=on scripts/rail-guard-demo-agent.sh run overreach   # NeMo Guardrails input rail screens the task first
 scripts/rail-guard-demo-agent.sh export             # decisions for the last run as JSON lines
 ```
 
@@ -352,3 +353,17 @@ Each run is a fresh run and sandbox under the workload `nat-agent`, so a denial 
 next, which is the cross-sandbox behavior the console shows. Transcripts and exported decisions are saved in
 `$HOME/.local/state/openshell-risk-guard-demo/agent-runs/`. Free hosted models can be slow or rate-limited;
 what the agent does is up to the model, so runs differ.
+
+### Layers
+
+With `GUARDRAILS=on`, [NVIDIA NeMo Guardrails](https://docs.nvidia.com/nemo/guardrails/latest/about-nemo-guardrails-library/overview)
+screens the task with an input rail (`deploy/rail-guard-demo/agent/guardrails/`) before the agent starts. If the
+rail cannot run, the runner fails closed. The three layers are independent, so each one can be demonstrated:
+
+| Layer | Decides | Example |
+|---|---|---|
+| NeMo Guardrails (model) | Should the agent take this request at all? | "Delete the production repo" is blocked before the agent starts |
+| OpenShell policy (runtime) | May this process reach this endpoint and path? | `/production/secrets` is blocked by the static policy |
+| Risk Guard (behavior) | Is this permitted call reasonable for this workload now? | `DELETE /production` is allowed by policy and denied by score |
+
+Run `overreach` with guardrails off to see Risk Guard catch it, and on to see the rail stop it first.

@@ -1,0 +1,12 @@
+# NeMo Guardrails configuration for the demo agent: an input rail that screens the task
+# before the agent runs. The guard model is the same hosted Nemotron model, reached through
+# the sandbox's inference path (key held by OpenShell, never by the sandbox).
+models:
+  - type: main
+    engine: nim
+    model: nvidia/nemotron-3.5-lightning-30b-a3b
+
+rails:
+  input:
+    flows:
+      - self check input

@@ -23,7 +23,7 @@ CLI="$ASSETS/bin/openshell"
 DB="$STATE/risk-guard.db"
 FIXTURE_PY="$ROOT/scripts/rail-guard-demo-fixture.py"
 AGENT_DIR="$ROOT/deploy/rail-guard-demo/agent"
-IMAGE="${AGENT_IMAGE:-risk-guard-demo/nat-agent:1}"
+IMAGE="${AGENT_IMAGE:-risk-guard-demo/nat-agent:2}"
 GATEWAY_ID="${GATEWAY_ID:-risk-guard-demo}"
 ENDPOINT="${GATEWAY_ENDPOINT:-http://127.0.0.1:17671}"
 WORKLOAD_ID="${AGENT_WORKLOAD_ID:-nat-agent}"
@@ -120,6 +120,21 @@ run_agent() {
   wait_ready "$SANDBOX_NAME" || { echo "sandbox did not become ready" >&2; return 1; }
   log "task: $task"
   local transcript="$OUT/$RUN_ID.txt"
+  if [[ "${GUARDRAILS:-off}" == on ]]; then
+    # NVIDIA NeMo Guardrails input rail, run inside the sandbox before the agent starts.
+    local verdict code
+    verdict="$(timeout 180 "$CLI" --gateway-endpoint "$ENDPOINT" sandbox exec --name "$SANDBOX_NAME" --no-tty --no-login-shell \
+      -- /opt/agent/bin/python3 -m rg_demo_agent.guardrail_check "$task" 2>&1)"; code=$?
+    printf '%s\n' "$verdict" | tail -n 3 | cut -c1-220
+    if [[ $code -eq 3 ]]; then
+      log "the NeMo Guardrails input rail blocked this task; the agent was not started"
+      echo "--- what Risk Guard decided ---"; decisions "$SANDBOX_ID"
+      return 0
+    elif [[ $code -ne 0 ]]; then
+      log "the guardrail could not run (exit $code); failing closed, the agent was not started"
+      return 1
+    fi
+  fi
   timeout 600 "$CLI" --gateway-endpoint "$ENDPOINT" sandbox exec --name "$SANDBOX_NAME" --no-tty --no-login-shell \
     -- /opt/agent/bin/nat run --config_file /opt/agent-src/workflow.yml --input "$task" >"$transcript" 2>&1
   log "agent finished (exit $?); transcript: $transcript"
