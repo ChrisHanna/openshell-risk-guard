@@ -161,9 +161,10 @@ wait_http() {
 }
 start fixture python3 "$ROOT/scripts/rail-guard-demo-fixture.py" serve --db "$STATE/fixture.db"
 wait_http http://127.0.0.1:18081/_evidence
-# Opt-in: bind unlabeled sandboxes to a workload derived from the creating workspace and
-# principal. Sandboxes then bind themselves, so the fixed rehearsal below is skipped.
-PRINCIPAL_MODE="${RAIL_GUARD_DEMO_WORKLOAD_FROM_PRINCIPAL:-0}"
+# Default: bind sandboxes to a workload derived from the creating workspace and principal.
+# Sandboxes then bind themselves, so the fixed rehearsal below is skipped.
+# Set RAIL_GUARD_DEMO_WORKLOAD_FROM_PRINCIPAL=0 for explicit run-bind with the demo-reviewer workload.
+PRINCIPAL_MODE="${RAIL_GUARD_DEMO_WORKLOAD_FROM_PRINCIPAL:-1}"
 [[ "$PRINCIPAL_MODE" == 1 ]] && export RISK_GUARD_WORKLOAD_FROM_PRINCIPAL=true
 start risk-guard "$GUARD" serve --listen 127.0.0.1:50061 --db "$DB" \
   --gateway-id risk-guard-demo --audience urn:openshell:extension:risk-guard \
@@ -201,7 +202,7 @@ if [[ "$HAS_SAVED_GUARDRAILS" = yes || "$PRINCIPAL_MODE" == 1 ]]; then
   printf '%s\n' "$LAUNCH_TOKEN" >"$STATE/pids/ready-token"
   printf '%s\n' \
     "SAVED_GUARDRAILS_READY http://127.0.0.1:8791/ evidence=$RUN" \
-    'Saved guardrails restored. Monitoring resumed; fixed allow/deny rehearsal was not rerun against custom settings.' \
+    "$([[ "$PRINCIPAL_MODE" == 1 ]] && echo 'Sandboxes bind themselves to a workload derived from their workspace and creating principal; the fixed rehearsal is skipped.' || echo 'Saved guardrails restored. Monitoring resumed; fixed allow/deny rehearsal was not rerun against custom settings.')" \
     'Operator editing requires the private operator-token file. The token is never printed.'
   wait -n "${PIDS[@]}"
   fail "A native service exited; inspect $RUN"

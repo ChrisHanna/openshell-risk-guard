@@ -40,6 +40,9 @@ LOG="$STATE/logs/live-traffic.log"
 PIDFILE="$STATE/pids/live-traffic.pid"
 ENVFILE="$STATE/live-traffic.env"
 
+# shellcheck source=lib/binding.sh
+. "$ROOT/scripts/lib/binding.sh"
+
 SANDBOX_NAME=""; RUN_ID=""; SANDBOX_ID=""
 
 log() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*"; }
@@ -81,13 +84,15 @@ create_workload() {
   stamp="$(date -u +%Y%m%dT%H%M%S)"
   RUN_ID="live-traffic-$stamp"
   name="rg-live-${stamp:9:6}"
-  registered="$(python3 "$FIXTURE_PY" agent-registered --db "$DB" --agent-id "$WORKLOAD_ID")"
-  if [[ "$registered" == no ]]; then
-    "$GUARD" agent-register --db "$DB" --agent-id "$WORKLOAD_ID" \
-      --display-name "Live traffic generator" >/dev/null || return 1
+  if ! rg_principal_mode; then
+    registered="$(python3 "$FIXTURE_PY" agent-registered --db "$DB" --agent-id "$WORKLOAD_ID")"
+    if [[ "$registered" == no ]]; then
+      "$GUARD" agent-register --db "$DB" --agent-id "$WORKLOAD_ID" \
+        --display-name "Live traffic generator" >/dev/null || return 1
+    fi
+    "$GUARD" run-create --db "$DB" --agent-id "$WORKLOAD_ID" --run-id "$RUN_ID" \
+      --agent-revision "live-1" --task-profile "$TASK_PROFILE" >/dev/null || return 1
   fi
-  "$GUARD" run-create --db "$DB" --agent-id "$WORKLOAD_ID" --run-id "$RUN_ID" \
-    --agent-revision "live-1" --task-profile "$TASK_PROFILE" >/dev/null || return 1
   gw sandbox create --name "$name" --from "$IMAGE" --policy "$POLICY" \
     --no-auto-providers --no-tty --detach -- /usr/bin/sleep infinity >/dev/null 2>&1 || return 1
   tmp="$(mktemp)"
@@ -95,8 +100,14 @@ create_workload() {
   SANDBOX_ID="$(python3 "$FIXTURE_PY" sandbox-id "$tmp")"; rm -f "$tmp"
   [[ -n "$SANDBOX_ID" ]] || return 1
   # Bind before any traffic; unbound traffic fails closed.
-  "$GUARD" run-bind --db "$DB" --run-id "$RUN_ID" --sandbox-id "$SANDBOX_ID" \
-    --gateway-id "$GATEWAY_ID" >/dev/null || return 1
+  if rg_principal_mode; then
+    # The sidecar binds the sandbox itself, from its workspace and creating principal.
+    WORKLOAD_ID="$(rg_wait_bound "$DB" "$SANDBOX_ID")" || return 1
+    RUN_ID="run-$SANDBOX_ID"
+  else
+    "$GUARD" run-bind --db "$DB" --run-id "$RUN_ID" --sandbox-id "$SANDBOX_ID" \
+      --gateway-id "$GATEWAY_ID" >/dev/null || return 1
+  fi
   SANDBOX_NAME="$name"
   printf 'SANDBOX_NAME=%s\nRUN_ID=%s\nSANDBOX_ID=%s\n' "$SANDBOX_NAME" "$RUN_ID" "$SANDBOX_ID" >"$ENVFILE"
   log "created workload '$WORKLOAD_ID': run $RUN_ID, sandbox $SANDBOX_NAME"
