@@ -54,7 +54,9 @@ pub fn derive_workload(
         )));
     }
     let provider_ok = match (kind, provider) {
-        ("user", "oidc" | "cloudflare_access") | ("operator", "mtls") => true,
+        // A client-certificate caller is a `user` unless its certificate carries the operator
+        // role, in which case the gateway reports `operator`; both come from the `mtls` provider.
+        ("user", "oidc" | "cloudflare_access" | "mtls") | ("operator", "mtls") => true,
         ("user", LOCAL_DEV_PROVIDER) => allow_local_dev,
         _ => false,
     };
@@ -190,7 +192,14 @@ mod tests {
         assert!(derive_workload("w", "", "user", "alice", false).is_err());
         assert!(derive_workload("w", "saml", "user", "alice", false).is_err());
         assert!(derive_workload("w", "oidc", "operator", "ops", false).is_err());
-        assert!(derive_workload("w", "mtls", "user", "alice", false).is_err());
+    }
+
+    #[test]
+    fn a_client_certificate_user_and_operator_both_own_a_workload() {
+        // Observed on a real gateway: whoami reports provider=mtls, role=openshell-user.
+        let user = derive_workload("default", "mtls", "user", "openshell-client", false).unwrap();
+        let operator = derive_workload("default", "mtls", "operator", "openshell-client", false).unwrap();
+        assert_ne!(user.agent_id, operator.agent_id, "kind keeps them apart");
     }
 
     #[test]
