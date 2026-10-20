@@ -16,6 +16,7 @@ param(
     [string]$AgentSandboxVersion = 'v1.0.7',
     [string]$Namespace = 'openshell',
     [string]$RuntimeClass,
+    [switch]$ClearRuntimeClass,
     [string]$ReleaseName = 'openshell'
 )
 . "$PSScriptRoot/common.ps1"
@@ -36,6 +37,10 @@ Write-Step "OpenShell chart ($ImageTag) into namespace $Namespace"
 $helmArgs = @('upgrade', '--install', $ReleaseName, $chart, '-n', $Namespace, '--create-namespace',
     '--set', "global.image.tag=$ImageTag", '--wait', '--timeout', '10m')
 if ($RuntimeClass) { $helmArgs += @('--set', "server.defaultRuntimeClassName=$RuntimeClass") }
+if ($ClearRuntimeClass) { $helmArgs += @('--set', 'server.defaultRuntimeClassName=') }
+# Keep values from earlier steps (such as the extension registration from 05) when upgrading an existing release.
+$exists = Invoke-Native helm @('status', $ReleaseName, '-n', $Namespace) -AllowFailure -Retries 1
+if ($exists) { $helmArgs += '--reset-then-reuse-values' }
 Invoke-Native helm $helmArgs -Retries 1 | Out-Null
 Save-State @{ namespace = $Namespace; releaseName = $ReleaseName; openshellImageTag = $ImageTag; openshellChart = $chart }
 

@@ -216,6 +216,34 @@ async fn clients_refuse_an_untrusted_certificate_and_plaintext_is_not_served() {
     assert!(plaintext, "the TLS listener must not answer plaintext gRPC");
 }
 
+#[tokio::test]
+async fn the_health_probe_serves_over_tls_and_refuses_an_untrusted_ca() {
+    use std::time::Duration;
+    let dir = tempfile::tempdir().unwrap();
+    let server = start(dir.path()).await;
+    let endpoint = format!("https://{}", server.addr);
+    let timeout = Duration::from_secs(5);
+
+    sidecar::probe_health(&endpoint, Some(&dir.path().join("ca.crt")), Some("localhost"), timeout)
+        .await
+        .expect("a trusted CA must see SERVING");
+
+    let impostor = tempfile::tempdir().unwrap();
+    sidecar::generate_local_secrets(impostor.path(), &["127.0.0.1".into()]).unwrap();
+    assert!(
+        sidecar::probe_health(&endpoint, Some(&impostor.path().join("ca.crt")), Some("localhost"), timeout)
+            .await
+            .is_err(),
+        "an untrusted CA must fail the probe"
+    );
+    assert!(
+        sidecar::probe_health("https://127.0.0.1:1", Some(&dir.path().join("ca.crt")), Some("localhost"), Duration::from_secs(1))
+            .await
+            .is_err(),
+        "nothing listening must fail the probe"
+    );
+}
+
 #[test]
 fn local_secrets_are_private_and_never_overwritten() {
     let dir = tempfile::tempdir().unwrap();

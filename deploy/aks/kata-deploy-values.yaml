@@ -1,0 +1,20 @@
+# Helm values for upstream Kata Containers (kata-deploy) on an AKS node pool with nested virtualization.
+# Used by scripts/aks/06-add-kata-pool.ps1 (Mode UpstreamKata).
+#
+# Why upstream Kata and not AKS Pod Sandboxing: OpenShell requires Landlock ABI 3 (Linux 6.2+) inside the
+# sandbox and fails closed without it. The guest kernel in AKS Pod Sandboxing lacks CONFIG_SECURITY_LANDLOCK
+# (OpenShell reports: "Landlock is not implemented"), while upstream Kata's guest kernel enables it
+# (tools/packaging/kernel/configs/fragments/common/landlock.conf).
+#
+# Only the QEMU runtime is installed (RuntimeClass kata-qemu), and only on nodes labeled openshell.ai/kata=true.
+shims:
+  disableAll: true
+  qemu:
+    enabled: true
+
+nodeSelector:
+  openshell.ai/kata: "true"
+
+# The chart's default shim must be one that is enabled.
+defaultShim:
+  amd64: qemu

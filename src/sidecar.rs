@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use tonic::codegen::{Body, BoxFuture, StdError, http};
-use tonic::transport::{Identity, ServerTlsConfig};
+use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity, ServerTlsConfig};
 
 use crate::error::{Result, RiskGuardError};
 use crate::store::SqliteRiskStore;
@@ -193,6 +193,59 @@ pub struct HealthCheckResponse {
 /// `grpc.health.v1.HealthCheckResponse.ServingStatus` values.
 pub const SERVING: i32 = 1;
 pub const NOT_SERVING: i32 = 2;
+
+/// Ask a running sidecar whether it is serving, over TLS when the endpoint is `https://`.
+///
+/// Kubernetes' built-in gRPC probe cannot speak TLS, so a TLS-only listener needs an exec probe. This is that
+/// probe: it connects, calls `grpc.health.v1.Health/Check` and succeeds only on SERVING. `ca_pem` is the CA that
+/// signed the sidecar's certificate and `server_name` the DNS name on it (the endpoint may be a loopback address).
+pub async fn probe_health(
+    endpoint: &str,
+    ca_pem: Option<&Path>,
+    server_name: Option<&str>,
+    timeout: std::time::Duration,
+) -> Result<()> {
+    let mut builder = Endpoint::from_shared(endpoint.to_string())
+        .map_err(|err| RiskGuardError::InvalidArgument(format!("invalid endpoint '{endpoint}': {err}")))?
+        .connect_timeout(timeout)
+        .timeout(timeout);
+    if endpoint.starts_with("https://") {
+        let mut tls = ClientTlsConfig::new();
+        if let Some(path) = ca_pem {
+            let pem = std::fs::read(path)
+                .map_err(|err| RiskGuardError::InvalidArgument(format!("cannot read CA {}: {err}", path.display())))?;
+            tls = tls.ca_certificate(Certificate::from_pem(pem));
+        }
+        if let Some(name) = server_name {
+            tls = tls.domain_name(name.to_string());
+        }
+        builder = builder
+            .tls_config(tls)
+            .map_err(|err| RiskGuardError::InvalidArgument(format!("invalid TLS settings: {err}")))?;
+    }
+    let channel = builder
+        .connect()
+        .await
+        .map_err(|err| RiskGuardError::Internal(format!("cannot connect to {endpoint}: {err}")))?;
+    let mut grpc = tonic::client::Grpc::new(channel);
+    grpc.ready()
+        .await
+        .map_err(|err| RiskGuardError::Internal(format!("channel not ready: {err}")))?;
+    let response = grpc
+        .unary(
+            tonic::Request::new(HealthCheckRequest { service: String::new() }),
+            http::uri::PathAndQuery::from_static("/grpc.health.v1.Health/Check"),
+            tonic_prost::ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
+        )
+        .await
+        .map_err(|status| RiskGuardError::Internal(format!("health check failed: {status}")))?
+        .into_inner();
+    if response.status == SERVING {
+        Ok(())
+    } else {
+        Err(RiskGuardError::Internal("the sidecar reports NOT_SERVING".into()))
+    }
+}
 
 /// Minimal `grpc.health.v1.Health/Check`. The sidecar reports SERVING only while
 /// its decision store answers; a broken store is NOT_SERVING, matching fail-closed

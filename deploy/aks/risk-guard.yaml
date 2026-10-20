@@ -91,18 +91,22 @@ spec:
           ports:
             - name: grpc-extension
               containerPort: 50061
-          # TCP probes: Kubernetes' built-in gRPC probe cannot speak TLS, and this listener is TLS-only, so a
-          # grpc probe fails forever and the kubelet restarts the container. (grpc.health.v1 on the same port
-          # is still served for clients that can use TLS.)
+          # Kubernetes' built-in gRPC probe cannot speak TLS and this listener is TLS-only, so the probe is the
+          # binary itself: `health-check` calls grpc.health.v1 over TLS and succeeds only when the decision
+          # store answers (NOT_SERVING means evaluations are already failing closed).
           readinessProbe:
-            tcpSocket:
-              port: 50061
+            exec:
+              command: ["/usr/local/bin/openshell-risk-guard", "health-check", "--endpoint=https://127.0.0.1:50061",
+                        "--tls-ca=/etc/openshell-risk-guard/ca/ca.crt", "--server-name=risk-guard.openshell.svc"]
             periodSeconds: 10
+            timeoutSeconds: 5
           livenessProbe:
-            tcpSocket:
-              port: 50061
+            exec:
+              command: ["/usr/local/bin/openshell-risk-guard", "health-check", "--endpoint=https://127.0.0.1:50061",
+                        "--tls-ca=/etc/openshell-risk-guard/ca/ca.crt", "--server-name=risk-guard.openshell.svc"]
             initialDelaySeconds: 15
             periodSeconds: 20
+            timeoutSeconds: 5
             failureThreshold: 3
           securityContext:
             runAsNonRoot: true
@@ -133,6 +137,9 @@ spec:
               readOnly: true
             - name: api
               mountPath: /etc/openshell-risk-guard/api
+              readOnly: true
+            - name: ca
+              mountPath: /etc/openshell-risk-guard/ca
               readOnly: true
         # Read-only operator console for the same database. It listens on the pod's loopback only, so it
         # is reached with: kubectl port-forward -n openshell deploy/risk-guard 8791
@@ -185,3 +192,7 @@ spec:
         - name: api
           configMap:
             name: risk-guard-api
+        # Public CA certificate, used only by the health probe.
+        - name: ca
+          configMap:
+            name: risk-guard-ca

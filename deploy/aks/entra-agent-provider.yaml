@@ -1,0 +1,31 @@
+# OpenShell provider profile that lets the gateway mint short-lived Microsoft Entra access tokens for an agent
+# from its application's client credentials, and inject them only on requests to the listed host, for the listed
+# binary. The agent never holds the client secret or the token it is given.
+#
+# Adjust `endpoints` and `scope` to the API the agent calls. This profile has not been exercised against a real
+# Entra-protected API yet; scripts/aks/13-register-agent-identity.ps1 creates the application and the secret.
+#
+# Create the provider with the client secret from Key Vault (never type it):
+#   scripts/aks/12-sync-credentials.ps1 -SecretName nat-agent-client-secret -ProviderName entra-nat-agent \
+#       -EnvVar ENTRA_CLIENT_SECRET -ProfileFile deploy/aks/entra-agent-provider.yaml -Distro <wsl distro>
+#
+# See OpenShell's docs/how-it-works/providers/profiles.mdx for the `oauth2_client_credentials` strategy and
+# the fields it needs (client_id, client_secret, tenant_id).
+id: entra-agent
+display_name: Microsoft Entra application (client credentials)
+description: Short-lived Entra tokens for an agent's own application identity
+category: other
+credentials:
+  - name: client_secret
+    description: Entra application client secret
+    env_vars: [ENTRA_CLIENT_SECRET]
+    required: true
+endpoints:
+  - host: graph.microsoft.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: { method: GET, path: /v1.0/me }
+binaries:
+  - /usr/bin/curl

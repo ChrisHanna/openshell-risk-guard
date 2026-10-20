@@ -97,6 +97,19 @@ pub enum Commands {
         #[arg(long = "allow-local-dev-principal", env = "RISK_GUARD_ALLOW_LOCAL_DEV_PRINCIPAL")]
         allow_local_dev_principal: bool,
     },
+    /// Check that a running sidecar is serving, over TLS (for Kubernetes exec probes; exit 0 only if SERVING).
+    HealthCheck {
+        #[arg(long, default_value = "https://127.0.0.1:50061")]
+        endpoint: String,
+        /// CA certificate that signed the sidecar's certificate.
+        #[arg(long)]
+        tls_ca: Option<PathBuf>,
+        /// DNS name on the sidecar's certificate, when the endpoint is an IP address.
+        #[arg(long)]
+        server_name: Option<String>,
+        #[arg(long, default_value_t = 3)]
+        timeout_secs: u64,
+    },
     /// Generate a local-test CA, server certificate/key and resource HMAC key (never overwrites).
     LocalSecretsGenerate {
         #[arg(long)]
@@ -820,6 +833,17 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             let normalized = normalizer.normalize(&raw)?;
             let evaluation = store.evaluate_and_commit_atomic(&normalized, &detector)?;
             Ok(serde_json::to_string_pretty(&evaluation)?)
+        }
+
+        Commands::HealthCheck { endpoint, tls_ca, server_name, timeout_secs } => {
+            crate::sidecar::probe_health(
+                &endpoint,
+                tls_ca.as_deref(),
+                server_name.as_deref(),
+                std::time::Duration::from_secs(timeout_secs.max(1)),
+            )
+            .await?;
+            Ok(serde_json::json!({"status": "SERVING", "endpoint": endpoint}).to_string())
         }
 
         Commands::LocalSecretsGenerate { out_dir, sans } => {
