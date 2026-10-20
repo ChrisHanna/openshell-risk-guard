@@ -161,6 +161,10 @@ wait_http() {
 }
 start fixture python3 "$ROOT/scripts/rail-guard-demo-fixture.py" serve --db "$STATE/fixture.db"
 wait_http http://127.0.0.1:18081/_evidence
+# Opt-in: bind unlabeled sandboxes to a workload derived from the creating workspace and
+# principal. Sandboxes then bind themselves, so the fixed rehearsal below is skipped.
+PRINCIPAL_MODE="${RAIL_GUARD_DEMO_WORKLOAD_FROM_PRINCIPAL:-0}"
+[[ "$PRINCIPAL_MODE" == 1 ]] && export RISK_GUARD_WORKLOAD_FROM_PRINCIPAL=true
 start risk-guard "$GUARD" serve --listen 127.0.0.1:50061 --db "$DB" \
   --gateway-id risk-guard-demo --audience urn:openshell:extension:risk-guard \
   --default-task-profile demo-repo-review \
@@ -190,7 +194,7 @@ case "$REGISTERED" in
 esac
 "$GUARD" guardrails-show --db "$DB" --agent-id demo-reviewer >"$RUN/guardrails.json"
 HAS_SAVED_GUARDRAILS="$(python3 -c 'import json,sys; print("yes" if json.load(open(sys.argv[1]))["has_saved_settings"] else "no")' "$RUN/guardrails.json")"
-if [[ "$HAS_SAVED_GUARDRAILS" = yes ]]; then
+if [[ "$HAS_SAVED_GUARDRAILS" = yes || "$PRINCIPAL_MODE" == 1 ]]; then
   start dashboard "$GUARD" dashboard --listen 127.0.0.1:8791 --db "$DB" \
     --operator-token-file "$STATE/operator-token"
   wait_http http://127.0.0.1:8791/api/state
