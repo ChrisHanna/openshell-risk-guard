@@ -298,6 +298,20 @@ impl SqliteRiskStore {
             |row| row.get(0),
         )?;
 
+        let mut bindings = std::collections::BTreeMap::<(String, String), i64>::new();
+        {
+            let mut stmt = tx.prepare(
+                "SELECT source, outcome, COUNT(*) FROM workload_binding_audit GROUP BY source, outcome",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+            })?;
+            for row in rows {
+                let (source, outcome, count) = row?;
+                bindings.insert((source, outcome), count);
+            }
+        }
+
         tx.commit()?;
 
         let mut out = String::with_capacity(1024);
@@ -323,6 +337,19 @@ impl SqliteRiskStore {
         out.push_str(&format!(
             "openshell_risk_guard_decisions_total{{outcome=\"deny\"}} {deny}\n"
         ));
+        out.push_str("# HELP openshell_risk_guard_workload_bindings_total Sandbox-to-workload binding attempts by how the workload was chosen and the outcome.\n");
+        out.push_str("# TYPE openshell_risk_guard_workload_bindings_total counter\n");
+        for source in ["principal", "label"] {
+            for outcome in ["bound", "refused"] {
+                let count = bindings
+                    .get(&(source.to_string(), outcome.to_string()))
+                    .copied()
+                    .unwrap_or(0);
+                out.push_str(&format!(
+                    "openshell_risk_guard_workload_bindings_total{{source=\"{source}\",outcome=\"{outcome}\"}} {count}\n"
+                ));
+            }
+        }
         out.push_str("# HELP openshell_risk_guard_active_restrictions_total Active blocking restrictions by tier.\n");
         out.push_str("# TYPE openshell_risk_guard_active_restrictions_total gauge\n");
         out.push_str(&format!(

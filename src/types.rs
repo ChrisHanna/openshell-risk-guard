@@ -339,12 +339,32 @@ pub trait RiskDetector: Send + Sync {
 }
 
 /// Trait for the transactional SQLite state and audit store.
+/// Everything needed to attach a freshly created sandbox to a workload.
+#[derive(Debug, Clone, Copy)]
+pub struct SandboxBinding<'a> {
+    pub sandbox_id: &'a str,
+    pub gateway_id: &'a str,
+    pub agent_id: &'a str,
+    pub agent_revision: &'a str,
+    pub run_id: &'a str,
+    /// Create the workload if nobody registered it.
+    pub auto_register: bool,
+    pub display_name: Option<&'a str>,
+    /// The workspace the sandbox was created in. A workload scoped to a different
+    /// workspace refuses the bind.
+    pub workspace: &'a str,
+    /// Scope the workload to `workspace` if it has no scope yet. True for workloads derived
+    /// from the workspace and principal, whose ID already encodes the workspace.
+    pub claim_workspace: bool,
+}
+
 /// One attempt to attach a sandbox to a workload, kept as evidence of who did it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BindingAudit {
     pub sandbox_id: String,
     pub workspace: String,
     pub principal_kind: String,
+    pub principal_provider: String,
     pub principal_subject: String,
     pub agent_id: Option<String>,
     /// `principal` when the workload was derived from the authenticated caller, `label`
@@ -408,21 +428,16 @@ pub trait RiskStore: Send + Sync {
         sandbox_id: &str,
     ) -> Result<Vec<(NormalizedRequest, DecisionOutcome)>>;
     fn save_recommendation(&self, candidate: &HardeningCandidate) -> Result<()>;
-    fn auto_bind_sandbox_epoch(
-        &self,
-        _sandbox_id: &str,
-        _gateway_id: &str,
-        _agent_id: &str,
-        _agent_revision: &str,
-        _run_id: &str,
-        _auto_register: bool,
-        _display_name: Option<&str>,
-    ) -> Result<()> {
+    fn auto_bind_sandbox_epoch(&self, _binding: &SandboxBinding) -> Result<()> {
         Ok(())
     }
     /// Append one workload-binding attempt (accepted or refused) to the audit trail.
     fn record_binding_audit(&self, _entry: &BindingAudit) -> Result<()> {
         Ok(())
+    }
+    /// Binding attempts for one sandbox, oldest first.
+    fn list_binding_audit(&self, _sandbox_id: &str) -> Result<Vec<BindingAudit>> {
+        Ok(Vec::new())
     }
     fn close_sandbox_lifecycle(&self, _sandbox_id: &str) -> Result<Option<String>> {
         Ok(None)

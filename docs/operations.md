@@ -58,6 +58,11 @@ is what keeps the restriction ratchet linearizable.
        traffic fails closed.
      - An unregistered workload ID is refused unless `--auto-register-agents` is set.
      - A `run-id` that already exists must belong to the named agent and revision.
+     - A workload is scoped to the workspace that created it. Auto-registered labels and
+       `agent-register --workspace <name>` workloads refuse sandboxes created in any other
+       workspace, which also stops a label from capturing another workspace's derived
+       workload. A workload registered without `--workspace` is unscoped and any workspace's
+       sandbox can use it, so scope it when teams share a gateway.
      - Only the exact `openshell.nvidia.com/...` keys are read, from labels and
        annotations only. Bare names such as `agent_id` are ignored.
      - A new `agent-revision` starts a fresh scoring context, so keep the allowlist
@@ -75,6 +80,14 @@ is what keeps the restriction ratchet linearizable.
      own service identity, or when one person launches one kind of agent.
      - Only `operator` and `user` callers can own a workload. Anonymous, unknown, peer and
        sandbox callers stay unbound, so their traffic fails closed.
+     - The identity provider the gateway reports (`oidc`, `cloudflare_access` or `mtls`) is part of
+       the identity, because a subject is only unique within its provider. A principal with no
+       recognized provider is refused.
+     - OpenShell's unauthenticated local-development user (`provider=local_dev`) proves nothing about
+       who is calling, so it owns no workload and passes no allowlist unless you start `serve` with
+       `--allow-local-dev-principal`. Use that for local testing only.
+     - The sandbox must report its workspace in the committed response. A response without one is
+       refused, never assumed to be `default`.
      - The workload is registered on first use. Different workspaces never share a workload.
      - An explicit label still wins and still needs an allowlisted principal; derivation
        never rescues a refused label.

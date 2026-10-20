@@ -310,6 +310,16 @@ Unlike a standalone proxy or an approval system that can grant new permissions, 
 
 $$\text{FinalAllow}(a) = \text{OpenShellAllow}(a) \land \text{RiskPermit}_t(a)$$
 
+## Workload binding in the demo
+
+By default the launcher starts the sidecar with `--workload-from-principal`: each sandbox binds itself to a
+workload derived from its workspace and the principal that created it, and the Runs tab shows both. Local
+OpenShell reports every caller as its unauthenticated local-development user (`user:unauthenticated-local-dev`,
+provider `local_dev`), which only binds because the demo starts the sidecar with the explicit, local-only
+`--allow-local-dev-principal`. All local sandboxes therefore share one workload. Set
+`RAIL_GUARD_DEMO_WORKLOAD_FROM_PRINCIPAL=0` for explicit `run-create` / `run-bind` binding with the
+`demo-reviewer` workload and the fixed allow/deny rehearsal.
+
 ## Live traffic generator
 
 `scripts/rail-guard-demo-traffic.sh` (PowerShell wrapper: `scripts/rail-guard-demo-traffic.ps1`) keeps one sandbox

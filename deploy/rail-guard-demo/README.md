@@ -57,7 +57,7 @@ Never expose these loopback ports to an untrusted network.
 
 1. Open the **Adaptive** tab for `demo-reviewer` to show **Automated Shadow Learning** (`auto_learning_enabled = true`) and the active shadow candidate (`shadow_model_id`).
 2. Point out why the initial demo runs did **not** poison the model: runs containing the denied `DELETE` probe were automatically quarantined by the strict read-only poisoning guard (`reviewed_by = "auto-clean-policy"` requires 100% plain-allow `read_only` requests and excludes `write_mutation` and `POST /graphql`).
-3. Run a live native sandbox lifecycle from PowerShell:
+3. Run a live native sandbox lifecycle from PowerShell. This session binds sandboxes explicitly, so start the stack with `RAIL_GUARD_DEMO_WORKLOAD_FROM_PRINCIPAL=0` first; by default the demo derives each workload from the sandbox's workspace and creating principal and the script stops with an explanation:
    ```powershell
    .\scripts\rail-guard-demo-presenter.ps1 -Action live-auto-shadow
    ```

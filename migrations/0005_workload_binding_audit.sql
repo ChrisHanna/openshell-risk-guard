@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS workload_binding_audit (
     sandbox_id TEXT NOT NULL,
     workspace TEXT NOT NULL,
     principal_kind TEXT NOT NULL,
+    principal_provider TEXT NOT NULL DEFAULT '',
     principal_subject TEXT NOT NULL,
     agent_id TEXT,
     source TEXT NOT NULL CHECK (source IN ('principal', 'label')),

@@ -28,17 +28,17 @@ fn identifier(value: &str, field: &str) -> Result<()> {
 /// Who attached a sandbox to its workload, from the audit trail. `null` for sandboxes bound
 /// explicitly with `run-bind`, which records no creating principal.
 fn binding_info(tx: &Transaction, sandbox_id: &str) -> rusqlite::Result<Value> {
-    let row: Option<(String, String, String, String)> = tx
+    let row: Option<(String, String, String, String, String)> = tx
         .query_row(
-            "SELECT workspace, principal_kind, principal_subject, source FROM workload_binding_audit
+            "SELECT workspace, principal_kind, principal_provider, principal_subject, source FROM workload_binding_audit
              WHERE sandbox_id = ?1 AND outcome = 'bound' ORDER BY audit_id DESC LIMIT 1",
             params![sandbox_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .optional()?;
     Ok(match row {
-        Some((workspace, kind, subject, source)) => json!({
-            "workspace": workspace, "principal_kind": kind,
+        Some((workspace, kind, provider, subject, source)) => json!({
+            "workspace": workspace, "principal_kind": kind, "principal_provider": provider,
             "principal_subject": subject, "source": source
         }),
         None => Value::Null,
@@ -63,12 +63,13 @@ impl SqliteRiskStore {
     pub fn record_binding_audit(&self, entry: &BindingAudit) -> Result<()> {
         self.lock_conn()?.execute(
             "INSERT INTO workload_binding_audit
-             (sandbox_id, workspace, principal_kind, principal_subject, agent_id, source, outcome, reason, created_at_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             (sandbox_id, workspace, principal_kind, principal_provider, principal_subject, agent_id, source, outcome, reason, created_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 entry.sandbox_id,
                 entry.workspace,
                 entry.principal_kind,
+                entry.principal_provider,
                 entry.principal_subject,
                 entry.agent_id,
                 entry.source,
@@ -84,24 +85,46 @@ impl SqliteRiskStore {
     pub fn list_binding_audit(&self, sandbox_id: &str) -> Result<Vec<BindingAudit>> {
         let conn = self.lock_conn()?;
         let mut stmt = conn.prepare(
-            "SELECT sandbox_id, workspace, principal_kind, principal_subject, agent_id, source, outcome, reason
+            "SELECT sandbox_id, workspace, principal_kind, principal_provider, principal_subject, agent_id, source, outcome, reason
              FROM workload_binding_audit WHERE sandbox_id = ?1 ORDER BY audit_id",
         )?;
         let rows = stmt.query_map(params![sandbox_id], |row| {
-            let source: String = row.get(5)?;
-            let outcome: String = row.get(6)?;
+            let source: String = row.get(6)?;
+            let outcome: String = row.get(7)?;
             Ok(BindingAudit {
                 sandbox_id: row.get(0)?,
                 workspace: row.get(1)?,
                 principal_kind: row.get(2)?,
-                principal_subject: row.get(3)?,
-                agent_id: row.get(4)?,
+                principal_provider: row.get(3)?,
+                principal_subject: row.get(4)?,
+                agent_id: row.get(5)?,
                 source: if source == "principal" { "principal" } else { "label" },
                 bound: outcome == "bound",
-                reason: row.get(7)?,
+                reason: row.get(8)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Register a workload that can only be bound from sandboxes created in `workspace`.
+    pub fn register_agent_in_workspace(
+        &self,
+        agent_id: &str,
+        display_name: &str,
+        workspace: &str,
+    ) -> Result<()> {
+        identifier(agent_id, "agent_id")?;
+        if workspace.trim().is_empty() || workspace.len() > 128 || workspace.chars().any(char::is_control) {
+            return Err(RiskGuardError::InvalidArgument(
+                "workspace must contain 1..128 bytes without control characters".into(),
+            ));
+        }
+        self.register_agent(agent_id, display_name)?;
+        self.lock_conn()?.execute(
+            "INSERT INTO agent_workspaces (agent_id, workspace) VALUES (?1, ?2)",
+            params![agent_id, workspace.trim()],
+        )?;
+        Ok(())
     }
 
     pub fn create_agent_run(
@@ -279,16 +302,18 @@ impl SqliteRiskStore {
     /// to (a) invent a workload ID unless `auto_register` is set, and (b) attach
     /// the sandbox to an existing run owned by a different workload or revision, so a
     /// creator cannot pollute another agent's windows or learning evidence.
-    pub fn auto_bind_sandbox_epoch(
-        &self,
-        sandbox_id: &str,
-        gateway_id: &str,
-        agent_id: &str,
-        agent_revision: &str,
-        run_id: &str,
-        auto_register: bool,
-        display_name: Option<&str>,
-    ) -> Result<()> {
+    pub fn auto_bind_sandbox_epoch(&self, binding: &SandboxBinding) -> Result<()> {
+        let SandboxBinding {
+            sandbox_id,
+            gateway_id,
+            agent_id,
+            agent_revision,
+            run_id,
+            auto_register,
+            display_name,
+            workspace,
+            claim_workspace,
+        } = *binding;
         identifier(agent_id, "agent_id")?;
         identifier(agent_revision, "agent_revision")?;
         identifier(run_id, "run_id")?;
@@ -317,6 +342,20 @@ impl SqliteRiskStore {
                     "workload '{agent_id}' is not registered; run agent-register or start serve with --auto-register-agents"
                 )));
             }
+            let scoped_workspace: Option<String> = tx
+                .query_row(
+                    "SELECT workspace FROM agent_workspaces WHERE agent_id = ?1",
+                    params![agent_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(owner_workspace) = &scoped_workspace
+                && owner_workspace != workspace
+            {
+                return Err(RiskGuardError::PermissionDenied(format!(
+                    "workload '{agent_id}' belongs to workspace '{owner_workspace}', not '{workspace}'"
+                )));
+            }
             let run_owner: Option<(String, String)> = tx
                 .query_row(
                     "SELECT c.agent_id, c.agent_revision FROM agent_runs r
@@ -337,6 +376,12 @@ impl SqliteRiskStore {
                 tx.execute(
                     "INSERT INTO agents (agent_id, display_name, created_at_ms) VALUES (?1, ?2, ?3)",
                     params![agent_id, display_name.unwrap_or(agent_id), current_time_ms()],
+                )?;
+            }
+            if scoped_workspace.is_none() && (!registered || claim_workspace) {
+                tx.execute(
+                    "INSERT OR IGNORE INTO agent_workspaces (agent_id, workspace) VALUES (?1, ?2)",
+                    params![agent_id, workspace],
                 )?;
             }
             tx.commit()?;

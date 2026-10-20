@@ -165,7 +165,9 @@ wait_http http://127.0.0.1:18081/_evidence
 # Sandboxes then bind themselves, so the fixed rehearsal below is skipped.
 # Set RAIL_GUARD_DEMO_WORKLOAD_FROM_PRINCIPAL=0 for explicit run-bind with the demo-reviewer workload.
 PRINCIPAL_MODE="${RAIL_GUARD_DEMO_WORKLOAD_FROM_PRINCIPAL:-1}"
-[[ "$PRINCIPAL_MODE" == 1 ]] && export RISK_GUARD_WORKLOAD_FROM_PRINCIPAL=true
+# Local OpenShell reports every caller as its unauthenticated local-development user, which only
+# binds when this demo-only opt-in is set.
+[[ "$PRINCIPAL_MODE" == 1 ]] && export RISK_GUARD_WORKLOAD_FROM_PRINCIPAL=true RISK_GUARD_ALLOW_LOCAL_DEV_PRINCIPAL=true
 start risk-guard "$GUARD" serve --listen 127.0.0.1:50061 --db "$DB" \
   --gateway-id risk-guard-demo --audience urn:openshell:extension:risk-guard \
   --default-task-profile demo-repo-review \

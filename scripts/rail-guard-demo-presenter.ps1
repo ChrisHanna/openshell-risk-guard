@@ -204,6 +204,12 @@ set -euo pipefail
 GUARD="$Assets/bin/openshell-risk-guard"
 DB="$State/risk-guard.db"
 ROOT="$LinuxRoot"
+# This session binds its sandboxes explicitly (run-create / run-bind). When the sidecar derives
+# workloads from the creating workspace and principal, sandboxes bind themselves and run-bind fails.
+if tr '\0' '\n' <"/proc/`$(pgrep -f 'openshell-risk-guard serve' | head -1)/environ" 2>/dev/null | grep -qx 'RISK_GUARD_WORKLOAD_FROM_PRINCIPAL=true'; then
+  echo 'The sidecar derives workloads from workspace and principal, so this explicit-binding session cannot run. Restart the stack with RAIL_GUARD_DEMO_WORKLOAD_FROM_PRINCIPAL=0, or let a sandbox bind itself.' >&2
+  exit 1
+fi
 REGISTERED="`$(python3 "`$ROOT/scripts/rail-guard-demo-fixture.py" agent-registered --db "`$DB" --agent-id auto-shadow-demo)"
 if [[ "`$REGISTERED" = "no" ]]; then
   "`$GUARD" agent-register --db "`$DB" --agent-id auto-shadow-demo --display-name "Auto-Shadow Learning Demo" >/dev/null

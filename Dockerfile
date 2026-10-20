@@ -50,6 +50,10 @@ EXPOSE 50061
 #   RISK_GUARD_API_SEMANTICS    route map for the protected APIs (recommended)
 #   RISK_GUARD_AGENT_BINDING_PRINCIPALS  optional: operator:<subject>,user:<subject> allowed
 #                               to bind sandboxes to agent IDs by annotation (default: none)
+#   RISK_GUARD_WORKLOAD_FROM_PRINCIPAL  optional: true derives each unlabeled sandbox's workload
+#                               from its workspace and the authenticated creating principal
+#   RISK_GUARD_ALLOW_LOCAL_DEV_PRINCIPAL  local testing only: let OpenShell's unauthenticated
+#                               local-development user own a workload (default: refused)
 # Health: grpc.health.v1.Health/Check on the same port.
 ENTRYPOINT ["/usr/local/bin/openshell-risk-guard"]
 CMD ["serve", "--listen", "0.0.0.0:50061", "--db", "/var/lib/openshell-risk-guard/risk-guard.db"]

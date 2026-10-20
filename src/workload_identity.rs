@@ -23,21 +23,51 @@ pub struct DerivedWorkload {
     pub display_name: String,
 }
 
+/// Identity providers OpenShell reports for callers it actually authenticated.
+const AUTHENTICATED_PROVIDERS: [&str; 3] = ["oidc", "cloudflare_access", "mtls"];
+/// OpenShell's explicit unauthenticated local-development user. It proves nothing about who
+/// is calling, so it only owns a workload when the operator opts in.
+const LOCAL_DEV_PROVIDER: &str = "local_dev";
+
 /// Only callers the gateway authenticates as a person or operator can own a workload.
 /// Anonymous, unknown, peer and sandbox callers are refused because they name no durable actor.
+///
+/// `provider` is the identity provider the gateway reports for the caller. A subject is only
+/// unique within its provider, so it is part of the identity and of the hash.
 pub fn derive_workload(
     workspace: &str,
+    provider: &str,
     kind: &str,
     subject: &str,
+    allow_local_dev: bool,
 ) -> Result<DerivedWorkload, RiskGuardError> {
-    let workspace = match workspace.trim() {
-        "" => "default",
-        trimmed => trimmed,
-    };
+    let workspace = workspace.trim();
     let subject = subject.trim();
+    if workspace.is_empty() {
+        return Err(RiskGuardError::InvalidArgument(
+            "the sandbox did not report its workspace, so no workload can be derived".into(),
+        ));
+    }
     if !matches!(kind, "operator" | "user") {
         return Err(RiskGuardError::InvalidArgument(format!(
             "cannot derive a workload from a '{kind}' principal; only operator and user callers can own one"
+        )));
+    }
+    let provider_ok = match (kind, provider) {
+        ("user", "oidc" | "cloudflare_access") | ("operator", "mtls") => true,
+        ("user", LOCAL_DEV_PROVIDER) => allow_local_dev,
+        _ => false,
+    };
+    if !provider_ok {
+        let reason = if provider == LOCAL_DEV_PROVIDER {
+            "the caller is OpenShell's unauthenticated local-development user; start serve with --allow-local-dev-principal to bind it, for local testing only".to_string()
+        } else if AUTHENTICATED_PROVIDERS.contains(&provider) {
+            format!("a '{kind}' principal cannot come from the '{provider}' identity provider")
+        } else {
+            "the principal reports no recognized identity provider".to_string()
+        };
+        return Err(RiskGuardError::InvalidArgument(format!(
+            "cannot derive a workload: {reason}"
         )));
     }
     if subject.is_empty()
@@ -54,7 +84,7 @@ pub fn derive_workload(
         ));
     }
 
-    let digest = Sha256::digest(format!("{workspace}\0{kind}\0{subject}").as_bytes());
+    let digest = Sha256::digest(format!("{workspace}\0{provider}\0{kind}\0{subject}").as_bytes());
     let hash = hex::encode(digest);
     let agent_id = format!(
         "{}.{kind}.{}-{}",
@@ -64,7 +94,7 @@ pub fn derive_workload(
     );
     Ok(DerivedWorkload {
         agent_id,
-        display_name: format!("{workspace} / {kind}:{subject}"),
+        display_name: format!("{workspace} / {kind}:{subject} ({provider})"),
     })
 }
 
@@ -91,7 +121,8 @@ mod tests {
     use super::*;
 
     fn id(workspace: &str, kind: &str, subject: &str) -> String {
-        derive_workload(workspace, kind, subject).unwrap().agent_id
+        let provider = if kind == "operator" { "mtls" } else { "oidc" };
+        derive_workload(workspace, provider, kind, subject, false).unwrap().agent_id
     }
 
     #[test]
@@ -105,6 +136,13 @@ mod tests {
         assert_ne!(base, id("team-b", "user", "alice"), "workspace must scope the workload");
         assert_ne!(base, id("team-a", "user", "bob"));
         assert_ne!(base, id("team-a", "operator", "alice"), "kind must be part of the identity");
+    }
+
+    #[test]
+    fn the_identity_provider_is_part_of_the_identity() {
+        let oidc = derive_workload("w", "oidc", "user", "alice", false).unwrap().agent_id;
+        let cloudflare = derive_workload("w", "cloudflare_access", "user", "alice", false).unwrap().agent_id;
+        assert_ne!(oidc, cloudflare, "the same subject from two providers is two people");
     }
 
     #[test]
@@ -132,22 +170,42 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_workspace_means_default() {
-        assert_eq!(id("", "user", "alice"), id("default", "user", "alice"));
+    fn a_missing_workspace_is_refused_not_assumed() {
+        for workspace in ["", "  "] {
+            assert!(derive_workload(workspace, "oidc", "user", "alice", false).is_err());
+        }
     }
 
     #[test]
     fn callers_that_name_no_durable_actor_are_refused() {
         for kind in ["anonymous", "unknown", "peer", "sandbox", ""] {
-            assert!(derive_workload("default", kind, "x").is_err(), "{kind}");
+            assert!(derive_workload("default", "oidc", kind, "x", false).is_err(), "{kind}");
         }
-        assert!(derive_workload("default", "user", "  ").is_err());
-        assert!(derive_workload("default", "user", "a\nb").is_err());
+        assert!(derive_workload("default", "oidc", "user", "  ", false).is_err());
+        assert!(derive_workload("default", "oidc", "user", "a\nb", false).is_err());
+    }
+
+    #[test]
+    fn unrecognized_or_mismatched_providers_are_refused() {
+        assert!(derive_workload("w", "", "user", "alice", false).is_err());
+        assert!(derive_workload("w", "saml", "user", "alice", false).is_err());
+        assert!(derive_workload("w", "oidc", "operator", "ops", false).is_err());
+        assert!(derive_workload("w", "mtls", "user", "alice", false).is_err());
+    }
+
+    #[test]
+    fn the_unauthenticated_local_dev_user_needs_an_explicit_opt_in() {
+        let refused = derive_workload("default", "local_dev", "user", "unauthenticated-local-dev", false)
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("--allow-local-dev-principal"), "{refused}");
+        assert!(derive_workload("default", "local_dev", "user", "unauthenticated-local-dev", true).is_ok());
+        assert!(derive_workload("default", "local_dev", "operator", "x", true).is_err());
     }
 
     #[test]
     fn display_name_is_readable() {
-        let derived = derive_workload("team-a", "user", "alice@example.com").unwrap();
-        assert_eq!(derived.display_name, "team-a / user:alice@example.com");
+        let derived = derive_workload("team-a", "oidc", "user", "alice@example.com", false).unwrap();
+        assert_eq!(derived.display_name, "team-a / user:alice@example.com (oidc)");
     }
 }

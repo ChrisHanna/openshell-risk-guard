@@ -5215,7 +5215,7 @@ async function agentDetail(id, version) {
       return note;
     }
     const via = binding.source === "principal" ? "workload from workspace + principal" : "workload from operator label";
-    note.textContent = `Workspace ${binding.workspace} · bound by ${binding.principal_kind}:${binding.principal_subject} · ${via}`;
+    note.textContent = `Workspace ${binding.workspace} · bound by ${binding.principal_kind}:${binding.principal_subject}${binding.principal_provider ? ` (${binding.principal_provider})` : ""} · ${via}`;
     return note;
   }
 

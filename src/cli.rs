@@ -92,6 +92,10 @@ pub enum Commands {
         /// only; the ID cannot be chosen or forged from the request.
         #[arg(long = "workload-from-principal", env = "RISK_GUARD_WORKLOAD_FROM_PRINCIPAL")]
         workload_from_principal: bool,
+        /// Let OpenShell's unauthenticated local-development user own a workload and pass the
+        /// label allowlist. For local testing only: that caller proves nothing about who it is.
+        #[arg(long = "allow-local-dev-principal", env = "RISK_GUARD_ALLOW_LOCAL_DEV_PRINCIPAL")]
+        allow_local_dev_principal: bool,
     },
     /// Generate a local-test CA, server certificate/key and resource HMAC key (never overwrites).
     LocalSecretsGenerate {
@@ -133,6 +137,7 @@ pub enum Commands {
         reason: String,
     },
     /// Register a workload ID: an operator-assigned label for a logical agent workload, not a credential.
+    /// Use --workspace to bind it only from sandboxes created in that OpenShell workspace.
     AgentRegister {
         #[arg(long)]
         db: PathBuf,
@@ -140,6 +145,10 @@ pub enum Commands {
         agent_id: String,
         #[arg(long)]
         display_name: String,
+        /// Only sandboxes created in this OpenShell workspace may bind to the workload.
+        /// Without it the workload is unscoped and any workspace's sandbox can use the label.
+        #[arg(long)]
+        workspace: Option<String>,
     },
     /// Create a run pinned to an agent revision, approved baseline and scoring context.
     RunCreate {
@@ -409,6 +418,7 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             agent_binding_principals,
             auto_register_agents,
             workload_from_principal,
+            allow_local_dev_principal,
         } => {
             if public_key_pem.is_none() && !allow_insecure_local_test {
                 return Err(RiskGuardError::InvalidArgument(
@@ -460,7 +470,8 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                 &agent_binding_principals,
                 auto_register_agents,
             )?
-            .with_principal_derivation(workload_from_principal);
+            .with_principal_derivation(workload_from_principal)
+            .with_local_dev_principals(allow_local_dev_principal);
             if agent_binding.is_enabled() {
                 tracing::info!(
                     principals = agent_binding_principals.len(),
@@ -502,9 +513,13 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             .to_string())
         }
 
-        Commands::AgentRegister { db, agent_id, display_name } => {
-            SqliteRiskStore::open(db)?.register_agent(&agent_id, &display_name)?;
-            Ok(serde_json::json!({"agent_id": agent_id, "status": "registered"}).to_string())
+        Commands::AgentRegister { db, agent_id, display_name, workspace } => {
+            let store = SqliteRiskStore::open(db)?;
+            match &workspace {
+                Some(workspace) => store.register_agent_in_workspace(&agent_id, &display_name, workspace)?,
+                None => store.register_agent(&agent_id, &display_name)?,
+            }
+            Ok(serde_json::json!({"agent_id": agent_id, "workspace": workspace, "status": "registered"}).to_string())
         }
         Commands::RunCreate { db, agent_id, run_id, agent_revision, task_profile, mode } => {
             SqliteRiskStore::open(db)?.create_agent_run(

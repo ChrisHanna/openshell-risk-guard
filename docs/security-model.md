@@ -4,9 +4,15 @@ How Risk Guard sits next to OpenShell, what it scores, who is trusted, and the m
 
 ## Workload ID and scoring continuity
 
-A workload ID is an operator-assigned label for a logical agent workload that persists
-across runs and sandboxes. It is not an authenticated identity or credential, nor a
-model name, process path, user-supplied header or sandbox display name.
+A workload ID is the durable identity of a logical agent workload that persists across
+runs and sandboxes. It is not a credential, model name, process path, user-supplied header
+or sandbox display name. It is established in one of two ways. With
+`--workload-from-principal` it is derived from the **workspace** a sandbox was created in and
+the **principal** the gateway authenticated for that call, so nothing in the request can choose
+or forge it. Otherwise it is an operator label, which is an assertion made by an allowlisted
+principal. Either way a workload is scoped to one workspace once it has been derived,
+auto-registered or registered with `--workspace`, and a sandbox from another workspace is
+refused. A workload registered without a workspace is unscoped by design.
 The binding is resolved from authenticated gateway/sandbox context on the server.
 `serve` requires a binding by default. `--allow-unattributed` explicitly permits
 legacy sandbox-only operation, but cannot bypass a missing binding for a sandbox

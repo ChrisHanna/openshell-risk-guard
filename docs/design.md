@@ -210,8 +210,12 @@ fixture, not merely TCP connections.
 
 ### Workload ID (implemented ownership model)
 
-For attributed operation, the workload ID is the durable behavioral key. It is an
-operator-assigned label, not an authenticated principal. A run
+For attributed operation, the workload ID is the durable behavioral key. It is either
+derived from the authenticated `(workspace, principal)` of the creating call
+(`--workload-from-principal`; operator and user callers only) or an operator label, which is an
+assertion by an allowlisted principal. A workload is scoped to one workspace once derived,
+auto-registered or registered with `--workspace`, and every binding attempt is audited with its
+principal and workspace. A run
 pins its agent, operator-declared revision, task profile, immutable baseline,
 detector configuration and enforcement mode. Each sandbox execution epoch can
 be bound to one run either through the trusted operator CLI (`run-create` ->
