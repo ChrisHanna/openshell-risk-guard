@@ -5206,6 +5206,19 @@ async function agentDetail(id, version) {
     $("agent-contexts").append(pre);
   }
 
+  // Who attached a sandbox to this workload, and how the workload was chosen.
+  function bindingNote(binding) {
+    const note = document.createElement("div");
+    note.className = "quiet-note binding-note";
+    if (!binding) {
+      note.textContent = "Bound explicitly by an operator (run-bind); no creating principal recorded.";
+      return note;
+    }
+    const via = binding.source === "principal" ? "workload from workspace + principal" : "workload from operator label";
+    note.textContent = `Workspace ${binding.workspace} · bound by ${binding.principal_kind}:${binding.principal_subject} · ${via}`;
+    return note;
+  }
+
   $("agent-runs").replaceChildren();
   for (const run of data.runs) {
     const row = document.createElement("tr");
@@ -5221,7 +5234,7 @@ async function agentDetail(id, version) {
       span.className = "mono";
       span.style.marginRight = "8px";
       span.textContent = b.sandbox_id;
-        c3.append(span, inspectButton("sandbox", b.sandbox_id, "Audit evidence"));
+        c3.append(span, inspectButton("sandbox", b.sandbox_id, "Audit evidence"), bindingNote(b.binding));
     }
     const c4 = document.createElement("td");
     const runDecs = (data.decisions || []).filter(d => d?.identity?.run_id === run.run_id);

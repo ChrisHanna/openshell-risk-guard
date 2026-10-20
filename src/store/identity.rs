@@ -25,6 +25,26 @@ fn identifier(value: &str, field: &str) -> Result<()> {
     Ok(())
 }
 
+/// Who attached a sandbox to its workload, from the audit trail. `null` for sandboxes bound
+/// explicitly with `run-bind`, which records no creating principal.
+fn binding_info(tx: &Transaction, sandbox_id: &str) -> rusqlite::Result<Value> {
+    let row: Option<(String, String, String, String)> = tx
+        .query_row(
+            "SELECT workspace, principal_kind, principal_subject, source FROM workload_binding_audit
+             WHERE sandbox_id = ?1 AND outcome = 'bound' ORDER BY audit_id DESC LIMIT 1",
+            params![sandbox_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?;
+    Ok(match row {
+        Some((workspace, kind, subject, source)) => json!({
+            "workspace": workspace, "principal_kind": kind,
+            "principal_subject": subject, "source": source
+        }),
+        None => Value::Null,
+    })
+}
+
 impl SqliteRiskStore {
     pub fn register_agent(&self, agent_id: &str, display_name: &str) -> Result<()> {
         identifier(agent_id, "agent_id")?;
@@ -442,6 +462,7 @@ impl SqliteRiskStore {
                      WHERE b.run_id = ?1 ORDER BY b.created_at_ms DESC, b.rowid DESC LIMIT 100",
                 )?;
                 let sandboxes = sandboxes.query_map(params![id], |row| Ok(json!({
+                    "binding": binding_info(&tx, &row.get::<_, String>(0)?)?,
                     "sandbox_id": row.get::<_, String>(0)?, "epoch_id": row.get::<_, String>(1)?,
                     "gateway_id": row.get::<_, String>(2)?, "active": row.get::<_, bool>(3)?,
                     "mode": row.get::<_, String>(4)?, "task_profile": row.get::<_, String>(5)?,

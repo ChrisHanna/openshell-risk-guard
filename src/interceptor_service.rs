@@ -2640,6 +2640,30 @@ network_policies:
         assert_eq!(audit[0].source, "principal");
         assert_eq!(audit[0].principal_subject, "alice@example.com");
         assert_eq!(audit[0].workspace, "team-a");
+
+        // The console reads the same facts through the operator API.
+        let detail = store.operator_agent_detail(&workload, 1).unwrap().unwrap();
+        let binding = &detail["runs"][0]["sandboxes"][0]["binding"];
+        assert_eq!(binding["workspace"], "team-a");
+        assert_eq!(binding["principal_kind"], "user");
+        assert_eq!(binding["principal_subject"], "alice@example.com");
+        assert_eq!(binding["source"], "principal");
+    }
+
+    #[test]
+    fn explicitly_bound_sandboxes_report_no_creating_principal() {
+        let (service, store, _token) = setup_service_with_jwt();
+        provision_baseline(&store);
+        store.register_agent("explicit-agent", "Explicit").unwrap();
+        // No derivation and no label: the sandbox is bound later with run-bind semantics.
+        let created = create_in_workspace(&service, principal_of("user", "alice"), "sb-explicit-1", "default", json!({}));
+        assert!(bound_workload(&created).is_none());
+        store
+            .create_agent_run("explicit-agent", "run-explicit", "v1", TEST_TASK_PROFILE, EnforcementMode::Enforce)
+            .unwrap();
+        store.bind_agent_run("run-explicit", "sb-explicit-1", TEST_GATEWAY_ID).unwrap();
+        let detail = store.operator_agent_detail("explicit-agent", 1).unwrap().unwrap();
+        assert!(detail["runs"][0]["sandboxes"][0]["binding"].is_null());
     }
 
     #[test]

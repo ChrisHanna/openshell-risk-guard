@@ -7,6 +7,7 @@ const vm = require("node:vm");
 const htmlPath = path.join(__dirname, "..", "src", "operator_ui.html");
 const html = fs.readFileSync(htmlPath, "utf8");
 assert.ok(html.includes('id="adp-toggle-auto"'), "Missing #adp-toggle-auto button in operator_ui.html");
+assert.ok(html.includes("bound by ${binding.principal_kind}:${binding.principal_subject}"), "The Runs table must show who bound each sandbox");
 assert.ok(!(/\r\n/.test(html) && /[^\r]\n/.test(html)), "operator_ui.html must not mix CRLF and LF line endings");
 
 const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
