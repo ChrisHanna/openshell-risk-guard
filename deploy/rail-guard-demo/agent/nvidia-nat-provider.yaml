@@ -1,0 +1,28 @@
+# Provider profile for the NeMo Agent Toolkit demo agent, adapted from OpenShell's
+# providers/nvidia.yaml. OpenShell holds NVIDIA_API_KEY and sends it only to
+# integrate.api.nvidia.com, and only for the Python interpreters listed below.
+id: nvidia-nat
+display_name: NVIDIA (NeMo Agent Toolkit demo)
+description: NVIDIA hosted inference for the demo agent
+category: inference
+inference_capable: true
+credentials:
+  - name: api_key
+    description: NVIDIA API key
+    env_vars: [NVIDIA_API_KEY]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+discovery:
+  credentials: [api_key]
+endpoints:
+  - host: integrate.api.nvidia.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries:
+  - /opt/agent/bin/python3
+  - /opt/agent/bin/python3.12
+  - /usr/bin/python3
+  - /usr/bin/python3.12

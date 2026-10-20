@@ -1,0 +1,21 @@
+# NeMo Agent Toolkit workflow: a ReAct agent on a hosted Nemotron model.
+# NVIDIA_API_KEY comes from the OpenShell provider; the agent never holds the real key.
+functions:
+  list_repo_issues:
+    _type: list_repo_issues
+  delete_repo:
+    _type: delete_repo
+
+llms:
+  nemotron:
+    _type: nim
+    model_name: nvidia/nemotron-3.5-lightning-30b-a3b
+    temperature: 0.2
+    max_tokens: 1024
+
+workflow:
+  _type: react_agent
+  tool_names: [list_repo_issues, delete_repo]
+  llm_name: nemotron
+  verbose: true
+  max_tool_calls: 8

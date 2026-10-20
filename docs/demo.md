@@ -325,3 +325,30 @@ console always has fresh traffic:
 
 Commands: `start [min_seconds] [max_seconds]`, `stop`, `status`, `once`, `reset`. The traffic is scripted `curl`
 and shell, with no LLM, against a local GitHub-like fixture, not github.com.
+
+## Real agent: NVIDIA NeMo Agent Toolkit
+
+`scripts/rail-guard-demo-agent.sh` runs a real [NeMo Agent Toolkit](https://docs.nvidia.com/nemo/agent-toolkit/latest/index.html)
+ReAct agent on a hosted Nemotron model inside an OpenShell sandbox. The model chooses which tool to
+call, and each tool makes a real HTTP request to the local fixture, so the traffic Risk Guard scores is
+traffic the model decided to send. Inference goes to `integrate.api.nvidia.com` using a key held by OpenShell
+(provider `nvidia-nat`); the sandbox never sees it.
+
+Files are in `deploy/rail-guard-demo/agent/` (image, tools, workflow, provider profile and sandbox policy).
+
+```bash
+# one-time: build the image (needs network) and save your key to a 0600 file
+docker build --network host -t risk-guard-demo/nat-agent:1 deploy/rail-guard-demo/agent
+echo 'NVIDIA_API_KEY=...' > ~/.config/rail-guard-demo/nvidia.env && chmod 600 ~/.config/rail-guard-demo/nvidia.env
+
+scripts/rail-guard-demo-agent.sh setup              # import the profile, create the provider
+scripts/rail-guard-demo-agent.sh probe              # no model or key: checks sandbox, policy and scoring
+scripts/rail-guard-demo-agent.sh run triage         # benign task
+scripts/rail-guard-demo-agent.sh run overreach      # task nudges the agent to delete the production repo
+scripts/rail-guard-demo-agent.sh export             # decisions for the last run as JSON lines
+```
+
+Each run is a fresh run and sandbox under the workload `nat-agent`, so a denial in one run restricts the
+next, which is the cross-sandbox behavior the console shows. Transcripts and exported decisions are saved in
+`$HOME/.local/state/openshell-risk-guard-demo/agent-runs/`. Free hosted models can be slow or rate-limited;
+what the agent does is up to the model, so runs differ.

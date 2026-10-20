@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rg-demo-agent"
+version = "0.1.0"
+description = "NeMo Agent Toolkit demo agent for the openshell-risk-guard demo"
+requires-python = ">=3.11"
+dependencies = ["nvidia-nat"]
+
+[project.entry-points."nat.components"]
+rg_demo_agent = "rg_demo_agent.register"
+
+[tool.setuptools]
+packages = ["rg_demo_agent"]
