@@ -80,7 +80,13 @@ function Get-ClusterContext {
 # Point kubectl at the cluster recorded in state.
 function Use-Cluster {
     $s = Get-ClusterContext
-    Invoke-Native az @('aks', 'get-credentials', '-g', $s.resourceGroup, '-n', $s.cluster, '--overwrite-existing', '--only-show-errors') | Out-Null
+    # Reuse a working kubeconfig context; only fetch credentials from Azure when it is missing or stale.
+    $ok = Invoke-Native kubectl @('--context', $s.cluster, 'get', 'namespace', 'default', '-o', 'name', '--request-timeout=15s') -AllowFailure -Retries 1
+    if ($ok) {
+        Invoke-Native kubectl @('config', 'use-context', $s.cluster) | Out-Null
+        return
+    }
+    Invoke-Native az @('aks', 'get-credentials', '-g', $s.resourceGroup, '-n', $s.cluster, '--overwrite-existing', '--only-show-errors') -Retries 6 | Out-Null
 }
 
 function Get-OpenShellCheckout {
@@ -136,4 +142,9 @@ function Invoke-InCluster {
     finally {
         Invoke-Native kubectl @('delete', 'pod', $Name, '-n', $Namespace, '--ignore-not-found', '--wait=false') -AllowFailure | Out-Null
     }
+}
+
+# True on Linux and macOS. `$IsLinux` does not exist in Windows PowerShell 5.1, so test the platform safely.
+function Test-Unix {
+    return ($PSVersionTable.PSObject.Properties.Name -contains 'Platform') -and ($PSVersionTable.Platform -eq 'Unix')
 }

@@ -25,7 +25,7 @@ New-Item -ItemType Directory $stage | Out-Null
 try {
     Write-Step "Staging build context in $stage"
     function Copy-Clean([string]$From, [string]$To, [string[]]$ExcludeDirs, [string[]]$ExcludeFiles) {
-        $onUnix = ($PSVersionTable.PSObject.Properties.Name -contains 'Platform') -and ($PSVersionTable.Platform -eq 'Unix')
+        $onUnix = Test-Unix
         if ($onUnix) {
             $excludes = @($ExcludeDirs + $ExcludeFiles | ForEach-Object { "--exclude=$_" })
             & rsync -a @excludes "$From/" "$To/"

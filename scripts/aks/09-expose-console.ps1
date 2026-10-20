@@ -47,8 +47,8 @@ $ranges = @($AllowedIp | ForEach-Object { if ($_ -match '/') { $_ } else { "$_/3
 if (-not $DnsLabel) { $DnsLabel = Get-StateValue 'consoleDnsLabel' ("rg-console-" + (Get-Random -Minimum 100000 -Maximum 999999)) }
 $fqdn = "$DnsLabel.$($state.location).cloudapp.azure.com"
 Save-State @{ consoleDnsLabel = $DnsLabel; consoleHost = $fqdn }
-$image = Get-StateValue 'riskGuardImage'
-if (-not $image) { throw 'Run 04-deploy-risk-guard.ps1 first.' }
+$image = (Invoke-Native kubectl @('get', 'deploy/risk-guard', '-n', $ns, '-o', 'jsonpath={.spec.template.spec.containers[0].image}') -AllowFailure | Select-Object -First 1)
+if (-not $image) { throw 'Risk Guard is not deployed. Run 04-deploy-risk-guard.ps1 first.' }
 
 # --- TLS: a CA and server certificate for the DNS name, generated in-cluster by the Risk Guard image
 $haveTls = Invoke-Native kubectl @('get', 'secret', 'risk-guard-console-tls', '-n', $ns, '-o', 'name') -AllowFailure
@@ -82,7 +82,7 @@ if (-not $haveAuth -or $RotatePassword) {
             metadata = @{ name = 'risk-guard-console-auth'; namespace = $ns }
             data = @{ htpasswd = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($htpasswd)) } } | ConvertTo-Json -Depth 6)
     Set-Content -Path $credFile -Encoding ascii -Value @("url:      https://$fqdn/", "username: viewer", "password: $password")
-    if ($IsLinux -or $IsMacOS) { & chmod 600 $credFile }
+    if (Test-Unix) { & chmod 600 $credFile }
 }
 
 # --- Proxy configuration, container and public Service

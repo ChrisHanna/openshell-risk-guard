@@ -91,15 +91,19 @@ spec:
           ports:
             - name: grpc-extension
               containerPort: 50061
+          # TCP probes: Kubernetes' built-in gRPC probe cannot speak TLS, and this listener is TLS-only, so a
+          # grpc probe fails forever and the kubelet restarts the container. (grpc.health.v1 on the same port
+          # is still served for clients that can use TLS.)
           readinessProbe:
-            grpc:
+            tcpSocket:
               port: 50061
             periodSeconds: 10
           livenessProbe:
-            grpc:
+            tcpSocket:
               port: 50061
-            initialDelaySeconds: 10
+            initialDelaySeconds: 15
             periodSeconds: 20
+            failureThreshold: 3
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532
