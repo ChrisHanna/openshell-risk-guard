@@ -157,3 +157,25 @@ or `CreateSandbox` fails with `FAILED_PRECONDITION` (step 6 does this).
 * The agent making a live model call to the NVIDIA API (needs a real key, which the owner must supply) and the Entra provider
   profile minting tokens for a real protected API.
 * Real OIDC principals: only the shared client-certificate identity was exercised on the cluster.
+
+## Running a fleet of agents
+
+`scripts/aks/agent-fleet.sh` runs three agents on a schedule so the console always has fresh, varied behavior to
+score. Register each identity first (`13-register-agent-identity.ps1 -AgentName nat-agent`, then `release-bot` and
+`ops-cleaner`; add `-SkipRiskGuardUpdate` after the first run).
+
+| Agent | Behavior | Expected in Risk Guard |
+| --- | --- | --- |
+| `nat-agent` | read-only issue triage | stays low risk |
+| `release-bot` | routine work, occasionally asks for a risky delete | score climbs, some denials |
+| `ops-cleaner` | repeatedly asks to delete production or injects instructions | denied, then locked |
+
+Every 3 to 5 minutes (`MIN_WAIT` and `MAX_WAIT` seconds) one agent runs one randomly chosen task. Every third run of
+an agent is screened by the NeMo Guardrails input rail first (`--guardrails-every N`), so some requests are stopped
+before they reach Risk Guard and others are stopped by it. Use `--once` for a single pass. Each sandbox is deleted
+after its run, so the Kata node stays small.
+
+```bash
+export OPENSHELL_BIN=... ACR_SERVER=<registry>.azurecr.io
+scripts/aks/agent-fleet.sh
+```
