@@ -7,9 +7,9 @@
   This script adds an nginx proxy and a Let's Encrypt client to the Risk Guard pod and a LoadBalancer Service in
   front of them:
 
-    * Sign-in (recommended): after scripts/aks/15-setup-console-signin.ps1 the console requires a Microsoft Entra
-      account that is on its list. Everyone else sees only a sign-in screen, and every data route answers 401/403, so
-      the address needs no further allowlist unless -AllowedIp is passed.
+    * Sign-in (recommended): after scripts/aks/15-setup-console-signin.ps1 anyone can read the console, and only a
+      Microsoft Entra administrator, signing in at /admin, can change settings (every write route answers 401/403
+      otherwise). The address then needs no allowlist unless -AllowedIp is passed.
     * Source-IP allowlist: without sign-in, only -AllowedIp (default: this machine's public address) can use the
       console. nginx enforces it on port 443 (the Service keeps the client address, externalTrafficPolicy: Local).
     * A browser-trusted Let's Encrypt certificate for the Service's DNS name, issued and renewed automatically by a
@@ -57,7 +57,7 @@ if ($Remove) {
 $signIn = [bool]((Get-StateValue 'consoleEntraClientId') -and @(Get-StateValue 'consoleEntraAdminOids' @()).Count)
 if ($signIn -and $RequirePassword) { throw 'Sign-in and -RequirePassword both use the Authorization header and cannot be combined. Drop -RequirePassword.' }
 if ($signIn) {
-    Write-Note 'Entra sign-in is configured: the console shows nothing without a listed account.'
+    Write-Note 'Entra sign-in is configured: anyone can read; only the listed administrator can change settings.'
     if (-not $AllowedIp) { $AllowedIp = @('0.0.0.0/0') }
 } elseif (-not $AllowedIp) {
     Write-Step 'Detecting this machine''s public address for the allowlist'
@@ -162,6 +162,6 @@ if (-not $AcmeStaging) { Test-ConsoleCertificate }
 Write-Host ""
 Write-Host "Console:     https://$fqdn/   (public IP $ip)" -ForegroundColor Green
 Write-Host "Allowed:     $(if ($signIn -and $ranges -contains '0.0.0.0/0') { 'any address (access is by Entra account)' } else { $ranges -join ', ' })"
-if ($signIn) { Write-Host "Login:       Microsoft Entra; only the accounts listed in the console's settings see anything." } elseif ($RequirePassword) { Write-Host "Credentials: $credFile   (username viewer; the password is in that file)" } else { Write-Host "Login:       none (read-only, allowlisted). Pass -RequirePassword to add one." }
+if ($signIn) { Write-Host "Login:       Anyone can view. Administrators sign in with Microsoft Entra at https://$fqdn/admin" } elseif ($RequirePassword) { Write-Host "Credentials: $credFile   (username viewer; the password is in that file)" } else { Write-Host "Login:       none (read-only, allowlisted). Pass -RequirePassword to add one." }
 Write-Host "Certificate: Let's Encrypt, issued by the console-acme container (kubectl logs deploy/risk-guard -n $ns -c console-acme)"
 if ($AcmeStaging) { Write-Host "             STAGING certificates are not trusted by browsers; re-run without -AcmeStaging for a real one." -ForegroundColor Yellow }

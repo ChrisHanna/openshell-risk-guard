@@ -19,7 +19,7 @@ flowchart LR
   SB[Sandbox in a Kata VM] -- middleware, TLS + JWT --> RG
   RG --- DB[(SQLite on a managed disk)]
   KV[Key Vault] -. sync .-> GW
-  ME[You] -- HTTPS, Entra sign-in --> RG
+  ME[You] -- HTTPS, admin: Entra sign-in --> RG
 ```
 
 * **OpenShell** is installed from the chart in your OpenShell checkout, with images from `ghcr.io/nvidia/openshell` at the
@@ -55,7 +55,7 @@ secrets), and prints the next step. Windows PowerShell 5.1 and PowerShell 7 are 
 | 8 | `08-deploy-fixture.ps1` | Harmless test fixture and a small workload image with curl. |
 | 7 | `07-verify.ps1` | Prints workloads, who bound each sandbox, and recent decisions. |
 | 9 | `09-expose-console.ps1` | Publishes the console on the internet behind a Let's Encrypt certificate and, until step 15 is done, an IP allowlist. |
-| 15 | `15-setup-console-signin.ps1` | Requires Microsoft Entra sign-in for the console and records who may use it (see Security notes). Re-run 04 and 09 afterwards. |
+| 15 | `15-setup-console-signin.ps1` | Lets anyone view the console and requires Microsoft Entra sign-in (at `/admin`) to change it (see Security notes). Re-run 04 and 09 afterwards. |
 | 10 | `10-create-key-vault.ps1` | Key Vault (RBAC, purge protection, firewalled to your address). |
 | 11 | `11-set-secret.ps1` | Stores a secret from a hidden prompt, through a protected temp file that is overwritten and deleted. |
 | 12 | `12-sync-credentials.ps1` | Copies a Key Vault secret into an OpenShell provider over stdin. |
@@ -99,24 +99,26 @@ To give an agent its own workload from its Entra identity, add
   Secret is never mounted into it.
 * TLS keys and the HMAC key are generated in-cluster and stored only as Kubernetes Secrets. Treat the Secret store as the
   trust boundary (enable AKS encryption at rest and restrict `get secret` in `openshell`).
-* **Console sign-in.** With `15-setup-console-signin.ps1` the console requires a Microsoft Entra account that is on its list.
-  Anyone else gets the page shell with a sign-in screen and nothing more: every data route answers 401 (no valid sign-in) or
-  403 (a real tenant account that is not listed), so there is nothing to read in the page or in the network tab.
-  * The page signs in with the authorization-code flow and PKCE against a single-tenant app registration (no client secret
+* **Console sign-in.** With `15-setup-console-signin.ps1`, **anyone can view the console** and only a listed Microsoft Entra
+  administrator, signing in at **`/admin`**, can change anything. Every write route answers 401 (no valid sign-in) or 403 (a
+  real tenant account that is not an administrator). Add `-RequireSignInToRead` to make the whole console members-only instead
+  (then unlisted visitors see only a sign-in screen and every data route refuses them).
+  * The public page is the evidence the console always showed (workloads, routes, principals, decisions): publishing it with
+    sign-in on removes the IP allowlist, so only do so when that is meant to be public.
+  * `/admin` signs in with the authorization-code flow and PKCE against a single-tenant app registration (no client secret
     exists) and holds the token in the tab's session storage. The console verifies every token itself: RS256 signature against
     the tenant's published keys, issuer, tenant, audience, expiry, v2 token and the delegated `access` scope. If it cannot get a
     signing key it refuses; it never falls back to open access.
   * Access follows the account's **object ID** (Entra assigns it and never reuses it), not the email address, which is only
-    shown. Administrators (`-AdminObjectId`, by default the account you are signed in to `az` with) may read and change
-    settings. Viewers (`-ViewerObjectId`) may read only. Settings changes are recorded against the verified account
-    (`name [entra:<object id>]`) instead of a typed name.
+    shown. Administrators (`-AdminObjectId`, by default the account you are signed in to `az` with) may change settings.
+    Settings changes are recorded against the verified account (`name [entra:<object id>]`) instead of a typed name.
   * Scripts read the console as you: `az account get-access-token --scope api://<app id>/access` (the Azure CLI is
     pre-authorized for the scope). `07-verify.ps1` does this.
   * The local operator token (`--operator-token-file`) is not set on AKS. If you enable it, treat it as break-glass: it can
-    change settings but never reads data while sign-in is required.
+    change settings but never reads data while sign-in is required to read.
   * The page is served with a Content-Security-Policy that lets it talk only to itself and `login.microsoftonline.com`.
-  * Sign-in does not limit which tenant accounts can request a token for the app, only which of them see anything. To also stop
-    unlisted accounts at Entra, set "Assignment required" on the enterprise application and assign the listed accounts.
+  * Sign-in does not limit which tenant accounts can request a token for the app, only which of them can change anything. To
+    also stop unlisted accounts at Entra, set "Assignment required" on the enterprise application and assign the administrators.
 * Until sign-in is configured, the console is exposed only through the proxy in step 9 behind a source-IP allowlist (default:
   this machine's address) and GET/HEAD only; `-RequirePassword` adds a generated password (stored only as a hash in the
   cluster) but cannot be combined with sign-in. With sign-in on, the allowlist is dropped unless you pass `-AllowedIp`. Pages

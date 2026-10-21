@@ -1327,11 +1327,12 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
   <div class="signin-card">
     <div class="signin-brand">OpenShell Risk Guard</div>
     <h1 id="signin-title">Sign in to view this console</h1>
-    <p>Access is limited to approved accounts. Until you sign in, this page shows no information about agents, requests or decisions.</p>
+    <p id="signin-text">Access is limited to approved accounts. Until you sign in, this page shows no information about agents, requests or decisions.</p>
     <p id="signin-message" class="signin-message" role="alert" hidden></p>
     <div class="signin-actions">
       <button type="button" class="btn btn-primary" id="signin-btn">Sign in with Microsoft</button>
       <button type="button" class="btn" id="signin-other" hidden>Use a different account</button>
+      <a class="btn" id="signin-public" href="/" hidden>View the public dashboard</a>
     </div>
   </div>
 </div>
@@ -1416,7 +1417,9 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
           <span>Auto</span>
         </label>
 
+        <a class="btn" id="admin-link" href="/admin" hidden>Administrator sign-in</a>
         <span class="status-Readout" id="whoami-chip" hidden><span id="whoami"></span></span>
+        <a class="btn" id="public-link" href="/" hidden>Public view</a>
         <button type="button" id="signout" class="btn" hidden>Sign out</button>
         <button type="button" id="refresh" class="btn">Refresh</button>
       </div>
@@ -2583,7 +2586,7 @@ function makeBadge(text, cls = "badge-neutral", withDot = true) {
 // ---- Sign-in (Microsoft Entra) ----
 // The server shows nothing to anyone who is not on its list, so this page makes no data request until it holds a token.
 // Authorization code with PKCE: no secret exists in the page, and the token lives in this tab's session storage only.
-const AUTH = { cfg: null, token: "", expiresAt: 0, refreshToken: "", name: "", role: "" };
+const AUTH = { cfg: null, offered: false, token: "", expiresAt: 0, refreshToken: "", name: "", role: "" };
 const authStore = (() => {
   try { sessionStorage.setItem("rg_probe", "1"); sessionStorage.removeItem("rg_probe"); return sessionStorage; }
   catch (_) { const m = new Map(); return { getItem: k => m.get(k) ?? null, setItem: (k, v) => m.set(k, v), removeItem: k => m.delete(k) }; }
@@ -2595,7 +2598,7 @@ function authB64(bytes) {
   for (const b of bytes) text += String.fromCharCode(b);
   return btoa(text).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
-const authRedirectUri = () => location.origin + "/";
+const authRedirectUri = () => location.origin + "/admin";
 const authEndpoint = kind => `https://login.microsoftonline.com/${AUTH.cfg.tenant_id}/oauth2/v2.0/${kind}`;
 const authScopes = () => `${AUTH.cfg.scope} openid profile offline_access`;
 
@@ -2611,6 +2614,12 @@ function authShowGate(message = "", denied = false) {
   autoRefreshTimer = null;
   document.body.classList.add("signed-out");
   $("signin-gate").hidden = false;
+  const publicRead = Boolean(AUTH.cfg?.public_read);
+  $("signin-title").textContent = publicRead ? "Administrator sign-in" : "Sign in to view this console";
+  $("signin-text").textContent = publicRead
+    ? "This page is for administrators, who can change enforcement settings. Anyone can view the dashboard without signing in."
+    : "Access is limited to approved accounts. Until you sign in, this page shows no information about agents, requests or decisions.";
+  $("signin-public").hidden = !publicRead;
   $("signin-message").hidden = !message;
   $("signin-message").textContent = message;
   $("signin-other").hidden = !denied;
@@ -2692,7 +2701,7 @@ function authSignOut() {
   const hint = authClaims(AUTH.token).preferred_username;
   authStore.removeItem("rg_auth");
   authStore.removeItem("rg_pkce");
-  const params = new URLSearchParams({ post_logout_redirect_uri: authRedirectUri() });
+  const params = new URLSearchParams({ post_logout_redirect_uri: location.origin + "/" });
   if (hint) params.set("logout_hint", hint);
   location.assign(authEndpoint("logout") + "?" + params);
 }
@@ -2705,6 +2714,13 @@ async function authBoot() {
     status = response.ok ? await response.json() : null;
   } catch (_) { /* treated below as unavailable */ }
   if (!status?.sign_in) { document.body.classList.remove("signed-out"); return true; }
+  AUTH.offered = true;
+  if (location.pathname !== "/admin" && status.sign_in.public_read) {
+    // The public view: anyone may read. Administrators have their own page, so no sign-in prompt appears here.
+    $("admin-link").hidden = false;
+    document.body.classList.remove("signed-out");
+    return true;
+  }
   AUTH.cfg = status.sign_in;
   $("signin-btn").addEventListener("click", () => void authStart(false));
   $("signin-other").addEventListener("click", () => void authStart(true));
@@ -2737,6 +2753,7 @@ async function authBoot() {
   $("whoami").textContent = `${AUTH.name} · ${AUTH.role === "admin" ? "administrator" : "read-only"}`;
   $("whoami-chip").hidden = false;
   $("signout").hidden = false;
+  $("public-link").hidden = false;
   document.body.classList.remove("signed-out");
   $("signin-gate").hidden = true;
   return true;
@@ -3003,7 +3020,8 @@ async function refreshOperatorStatus() {
     const status = await guardrailJson("/api/operator/status");
     if (sequence !== operatorStatusSequence) return;
     if (typeof status?.enabled !== "boolean") throw new Error("Operator capability is not reported by this service. Dashboard remains read-only.");
-    operatorCapability = status.enabled ? "enabled" : "disabled";
+    // On the public page there is nothing to unlock: administrators sign in at /admin.
+    operatorCapability = status.enabled && !(AUTH.offered && !AUTH.cfg) ? "enabled" : "disabled";
     operatorStatusError = "";
     if (!status.enabled) lockOperator();
   } catch (error) {
@@ -3129,7 +3147,9 @@ function renderGuardrails() {
   $("cfg-access-status").textContent = operatorCapability === "checking"
     ? "Checking operator controls. Dashboard remains read-only."
     : operatorCapability === "disabled"
-      ? "This console is view-only. To change enforcement settings, an operator enables controls on the service (--operator-token-file); the overview above shows what is enforced now."
+      ? (AUTH.offered
+          ? "This is the public, view-only dashboard. Administrators sign in at /admin to change enforcement settings; the overview above shows what is enforced now."
+          : "This console is view-only. To change enforcement settings, an operator enables controls on the service (--operator-token-file); the overview above shows what is enforced now.")
       : operatorCapability === "unavailable"
         ? "Read-only: operator capability is unavailable. Reload to retry after a compatible backend is running."
         : AUTH.cfg ? (operatorToken

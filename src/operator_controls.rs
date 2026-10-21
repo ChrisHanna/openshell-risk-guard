@@ -26,8 +26,10 @@ use crate::store::SqliteRiskStore;
 pub(crate) struct OperatorControls {
     /// Break-glass local capability token. Absent unless the dashboard is started with `--operator-token-file`.
     verifier: Option<[u8; 32]>,
-    /// Entra sign-in. When present, reading evidence needs a listed account too.
+    /// Entra sign-in. Always required to change anything; also required to read unless `public_read` is set.
     entra: Option<Arc<EntraVerifier>>,
+    /// Anyone may read evidence (as on the public console); only a signed-in administrator may change it.
+    public_read: bool,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -41,11 +43,12 @@ struct ClearRestrictionRequest {
 
 impl OperatorControls {
     pub(crate) fn disabled() -> Self {
-        Self { verifier: None, entra: None }
+        Self { verifier: None, entra: None, public_read: false }
     }
 
-    pub(crate) fn with_entra(mut self, entra: Arc<EntraVerifier>) -> Self {
+    pub(crate) fn with_entra(mut self, entra: Arc<EntraVerifier>, public_read: bool) -> Self {
         self.entra = Some(entra);
+        self.public_read = public_read;
         self
     }
 
@@ -63,6 +66,7 @@ impl OperatorControls {
                     "tenant_id": config.tenant_id,
                     "client_id": config.client_id,
                     "scope": config.scope(),
+                    "public_read": self.public_read,
                 })
             }
             None => serde_json::Value::Null,
@@ -93,6 +97,7 @@ impl OperatorControls {
         Self {
             verifier: Some(mac.finalize().into_bytes().into()),
             entra: None,
+            public_read: false,
         }
     }
 
@@ -257,15 +262,15 @@ fn auth_failure(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({"error": message}))).into_response()
 }
 
-/// With sign-in configured, nothing but the page shell and the sign-in settings is served without a listed account.
+/// With sign-in required to read, nothing but the page shell and the sign-in settings is served without a listed account.
 pub(crate) async fn read_gate(
     Extension(controls): Extension<OperatorControls>,
     request: Request,
     next: Next,
 ) -> Response {
-    if controls.entra.is_some() {
+    if controls.entra.is_some() && !controls.public_read {
         let path = request.uri().path();
-        let open = matches!(path, "/" | "/api/operator/status");
+        let open = matches!(path, "/" | "/admin" | "/api/operator/status");
         if !open {
             if let Err(response) = controls.identity(request.headers()).await {
                 return response;
@@ -800,10 +805,10 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn with_sign_in_nobody_sees_anything_until_a_listed_account_signs_in() {
+    async fn when_sign_in_is_required_to_read_nobody_sees_anything_until_a_listed_account_signs_in() {
         use crate::entra_auth::tests::{ADMIN, STRANGER, VIEWER, test_token, test_verifier};
         let store = store();
-        let controls = OperatorControls::disabled().with_entra(test_verifier());
+        let controls = OperatorControls::disabled().with_entra(test_verifier(), false);
         let (origin, server) = start(controls, Arc::clone(&store)).await;
 
         // The page shell and the sign-in settings are all that anonymous callers can reach.
@@ -886,10 +891,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn on_the_public_console_anyone_reads_but_only_a_signed_in_administrator_changes_anything() {
+        use crate::entra_auth::tests::{ADMIN, STRANGER, VIEWER, test_token, test_verifier};
+        let store = store();
+        let (origin, server) = start(
+            OperatorControls::disabled().with_entra(test_verifier(), true),
+            Arc::clone(&store),
+        )
+        .await;
+        let (_, status) = request(&origin, "GET", "/api/operator/status", None, None, "").await;
+        assert_eq!(status["sign_in"]["public_read"], true);
+
+        // Reading needs nothing.
+        for path in ["/api/state", "/api/agents/agent", "/api/agents/agent/guardrails", "/api/agents/agent/restrictions"] {
+            let (code, _) = request(&origin, "GET", path, None, None, "").await;
+            assert_eq!(code, StatusCode::OK, "{path} is public");
+        }
+
+        // Changing anything needs a listed administrator.
+        let update = GuardrailsUpdate {
+            expected_revision: 0,
+            settings: AgentGuardrails::from_baseline(
+                &build_standard_corpus().default_baseline,
+                EnforcementMode::Observe,
+                None,
+            ),
+        };
+        let body = serde_json::to_string(&update).unwrap();
+        let put = |token: Option<String>| {
+            let (origin, body) = (origin.clone(), body.clone());
+            async move {
+                request(&origin, "PUT", "/api/agents/agent/guardrails", None, token.as_deref(), &body).await
+            }
+        };
+        assert_eq!(put(None).await.0, StatusCode::UNAUTHORIZED, "anonymous");
+        assert_eq!(put(Some("not.a.token".into())).await.0, StatusCode::UNAUTHORIZED, "junk token");
+        assert_eq!(put(Some(test_token(STRANGER))).await.0, StatusCode::FORBIDDEN, "unlisted account");
+        assert_eq!(put(Some(test_token(VIEWER))).await.0, StatusCode::FORBIDDEN, "viewer");
+        let clear = r#"{"scope":"agent","reason":"x"}"#;
+        assert_eq!(
+            request(&origin, "POST", "/api/agents/agent/restrictions/clear", None, None, clear).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+        let (saved, view) = put(Some(test_token(ADMIN))).await;
+        assert_eq!(saved, StatusCode::OK);
+        let by = view["history"][0]["updated_by"].as_str().unwrap();
+        assert!(by.contains(&format!("entra:{ADMIN}")), "audit names the verified account: {by}");
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn the_break_glass_token_cannot_read_when_sign_in_is_required() {
         use crate::entra_auth::tests::test_verifier;
         let token = "e".repeat(64);
-        let controls = OperatorControls::from_token(&token).with_entra(test_verifier());
+        let controls = OperatorControls::from_token(&token).with_entra(test_verifier(), false);
         let (origin, server) = start(controls, store()).await;
         let (code, _) = request(&origin, "GET", "/api/state", None, Some(&token), "").await;
         assert_eq!(code, StatusCode::UNAUTHORIZED, "the local token is for writes only, and never opens the data");

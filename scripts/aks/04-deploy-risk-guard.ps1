@@ -101,6 +101,7 @@ if ($entraTenant -and $entraClient -and $entraAdmins.Count) {
     $lines = @("            - --entra-tenant-id=$entraTenant", "            - --entra-client-id=$entraClient")
     foreach ($oid in $entraAdmins) { $lines += "            - --entra-admin-oid=$oid" }
     foreach ($oid in @(Get-StateValue 'consoleEntraViewerOids' @())) { $lines += "            - --entra-viewer-oid=$oid" }
+    if (Get-StateValue 'consoleRequireSignInToRead') { $lines += '            - --entra-require-sign-in-to-read' }
     $signIn = $lines -join "`n"
     Write-Note "console sign-in: tenant $entraTenant, $($entraAdmins.Count) administrator(s)"
 } else {

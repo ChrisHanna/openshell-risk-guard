@@ -7,13 +7,15 @@
   needs to .aks/state.json:
 
     * The app exposes one delegated scope, api://<app id>/access, and issues v2 access tokens. The console page signs
-      people in with the authorization-code flow and PKCE (no client secret exists), and the console verifies each token
-      itself: signature, issuer, tenant, audience, expiry and scope.
+      administrators in with the authorization-code flow and PKCE (no client secret exists), and the console verifies each
+      token itself: signature, issuer, tenant, audience, expiry and scope.
     * Access follows the account's OBJECT ID, which Entra assigns and never reuses; an email address is only shown to
-      people. -AdminObjectId may read and change settings, -ViewerObjectId may read. By default the administrator is the
-      account you are signed in to Azure with. Anyone else sees only a sign-in screen and receives no data.
-    * The redirect URI is the console's HTTPS address, so 09-expose-console.ps1 must have chosen it first (it records
-      the name in state). Pass -LocalRedirectPort to also allow http://localhost:<port>/ for trying the page locally.
+      people. -AdminObjectId may change settings (and is the only role that can); -ViewerObjectId is only meaningful with
+      -RequireSignInToRead. By default the administrator is the account you are signed in to Azure with.
+    * Everyone can read the console without signing in. Administrators sign in at https://<console>/admin, which is the
+      only place that can change settings. Pass -RequireSignInToRead to make the whole console members-only instead.
+    * The redirect URI is https://<console>/admin, so 09-expose-console.ps1 must have chosen the address first (it
+      records the name in state). Pass -LocalRedirectPort to also allow http://localhost:<port>/admin for trying it locally.
 
   Re-run to change the lists or the address; it never creates a second registration. Afterwards run
   04-deploy-risk-guard.ps1 (passes the settings to the console) and 09-expose-console.ps1 (drops the IP allowlist,
@@ -26,7 +28,8 @@ param(
     [string[]]$AdminObjectId,
     [string[]]$ViewerObjectId,
     [string]$AppName = 'openshell-risk-guard-console',
-    [int]$LocalRedirectPort
+    [int]$LocalRedirectPort,
+    [switch]$RequireSignInToRead
 )
 . "$PSScriptRoot/common.ps1"
 Assert-Tool az 'Install the Azure CLI: https://learn.microsoft.com/cli/azure/install-azure-cli'
@@ -71,8 +74,9 @@ $scopeId = $null
 foreach ($scope in @($existing.api.oauth2PermissionScopes)) { if ($scope.value -eq 'access') { $scopeId = $scope.id } }
 if (-not $scopeId) { $scopeId = [guid]::NewGuid().ToString() }
 
-$redirects = @("https://$consoleHost/")
-if ($LocalRedirectPort) { $redirects += "http://localhost:$LocalRedirectPort/" }
+# /admin receives the sign-in; / is where signing out returns.
+$redirects = @("https://$consoleHost/admin", "https://$consoleHost/")
+if ($LocalRedirectPort) { $redirects += @("http://localhost:$LocalRedirectPort/admin", "http://localhost:$LocalRedirectPort/") }
 $api = @{
     requestedAccessTokenVersion = 2
     oauth2PermissionScopes = @(@{
@@ -110,9 +114,11 @@ Save-State @{
     consoleEntraClientId   = $appId
     consoleEntraAdminOids  = @($AdminObjectId | ForEach-Object { $_.ToLowerInvariant() })
     consoleEntraViewerOids = @($ViewerObjectId | Where-Object { $_ } | ForEach-Object { $_.ToLowerInvariant() })
+    consoleRequireSignInToRead = [bool]$RequireSignInToRead
 }
 Write-Host ''
-Write-Host "Sign-in configured for https://$consoleHost/" -ForegroundColor Green
+Write-Host "Sign-in configured. Everyone: https://$consoleHost/   Administrators: https://$consoleHost/admin" -ForegroundColor Green
+if ($RequireSignInToRead) { Write-Host '  The whole console is members-only (-RequireSignInToRead).' }
 Write-Host "  Administrators: $($AdminObjectId -join ', ')"
 Write-Host "  Viewers:        $(if ($ViewerObjectId) { $ViewerObjectId -join ', ' } else { '(none)' })"
 Write-Host 'Next: 04-deploy-risk-guard.ps1 (applies the settings), then 09-expose-console.ps1 (removes the IP allowlist).'

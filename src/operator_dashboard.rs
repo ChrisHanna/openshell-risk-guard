@@ -94,6 +94,11 @@ pub(crate) fn router_with_controls(
             "/",
             get(|| async { Html(include_str!("operator_ui.html")) }),
         )
+        // The same page, where an administrator signs in. Everyone else uses "/" and never needs to sign in.
+        .route(
+            "/admin",
+            get(|| async { Html(include_str!("operator_ui.html")) }),
+        )
         .route(
             "/metrics",
             get(|State(store): State<Arc<SqliteRiskStore>>| async move {
@@ -186,15 +191,17 @@ pub async fn serve_with_operator_token(
     db: PathBuf,
     operator_token_file: Option<PathBuf>,
 ) -> Result<()> {
-    serve_with_sign_in(listen, db, operator_token_file, None).await
+    serve_with_sign_in(listen, db, operator_token_file, None, false).await
 }
 
-/// Serve the console. With `entra` set, every data route needs a listed Entra account and edits are attributed to it.
+/// Serve the console. With `entra` set, changes need a listed administrator and are attributed to that account; with
+/// `require_sign_in_to_read` every data route needs a listed account too, otherwise anyone may read.
 pub async fn serve_with_sign_in(
     listen: SocketAddr,
     db: PathBuf,
     operator_token_file: Option<PathBuf>,
     entra: Option<crate::entra_auth::EntraConfig>,
+    require_sign_in_to_read: bool,
 ) -> Result<()> {
     if !listen.ip().is_loopback() {
         return Err(RiskGuardError::InvalidArgument(
@@ -222,9 +229,13 @@ pub async fn serve_with_sign_in(
                 tenant = %config.tenant_id,
                 admins = config.admins.len(),
                 viewers = config.viewers.len(),
-                "Entra sign-in required: the console shows nothing to anyone not on the list"
+                require_sign_in_to_read,
+                "Entra sign-in enabled: only listed administrators may change settings"
             );
-            controls.with_entra(Arc::new(crate::entra_auth::EntraVerifier::new(config)?))
+            controls.with_entra(
+                Arc::new(crate::entra_auth::EntraVerifier::new(config)?),
+                !require_sign_in_to_read,
+            )
         }
         None => controls,
     };
@@ -275,6 +286,7 @@ mod tests {
             "signin-gate",
             "signin-btn",
             "signout",
+            "admin-link",
             // The editing controls must survive the redesign: they are what an unlocked operator uses.
             "cfg-form",
             "cfg-save",

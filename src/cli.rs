@@ -326,6 +326,10 @@ pub enum Commands {
         /// Object IDs of accounts that may read only.
         #[arg(long = "entra-viewer-oid", env = "RISK_GUARD_ENTRA_VIEWER_OIDS", value_delimiter = ',')]
         entra_viewer_oids: Vec<String>,
+        /// Also require a listed account to read. Off by default: the public console is readable by anyone and only
+        /// administrators (who sign in at /admin) can change settings.
+        #[arg(long, env = "RISK_GUARD_ENTRA_REQUIRE_SIGN_IN_TO_READ")]
+        entra_require_sign_in_to_read: bool,
     },
     /// Run the synthetic integration harness (not a native OpenShell deployment).
     DemoDashboard {
@@ -922,6 +926,7 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             entra_client_id,
             entra_admin_oids,
             entra_viewer_oids,
+            entra_require_sign_in_to_read,
         } => {
             let entra = match (entra_tenant_id, entra_client_id) {
                 (Some(tenant), Some(client)) => Some(crate::entra_auth::EntraConfig::new(
@@ -932,7 +937,7 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                 )?),
                 _ => None,
             };
-            crate::operator_dashboard::serve_with_sign_in(listen, db, operator_token_file, entra).await?;
+            crate::operator_dashboard::serve_with_sign_in(listen, db, operator_token_file, entra, entra_require_sign_in_to_read).await?;
             Ok(serde_json::json!({"status": "stopped", "listen": listen.to_string()}).to_string())
         }
         Commands::DemoDashboard { listen, db } => {
