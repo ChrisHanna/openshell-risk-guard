@@ -1133,6 +1133,29 @@ tbody tr:focus-within { background: var(--bg-elevated); }
 .audit-deny { color: var(--crit-text); font-weight: 600; }
 .audit-allow { color: var(--ok-text); }
 .quiet-inline { color: var(--text-muted); font-size: 12px; font-weight: 400; margin-left: 8px; }
+/* ---- Fleet overview ---- */
+.fleet-verdict { font-size: 18px; font-weight: 600; color: var(--text-primary); margin: 6px 0 0; }
+.attention-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.attention-card {
+  border: 1px solid var(--crit-border); background: var(--bg-code); border-radius: 8px; padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-start;
+}
+.attention-head { display: flex; flex-direction: column; gap: 2px; }
+.attention-name { font-size: 16px; font-weight: 600; }
+.attention-stats { color: var(--text-secondary); font-size: 13px; }
+.attention-last { color: var(--text-primary); font-size: 13px; }
+.link-button {
+  background: none; border: 0; padding: 0; margin: 0; font: inherit; color: var(--text-primary); cursor: pointer;
+  text-align: left; font-weight: 600; text-decoration: none;
+}
+.link-button:hover, .link-button:focus-visible { text-decoration: underline; }
+.sort-btn { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; font-weight: inherit; }
+.sort-btn:hover { color: var(--text-primary); }
+th[aria-sort="ascending"] .sort-btn::after { content: " ▲"; font-size: 10px; }
+th[aria-sort="descending"] .sort-btn::after { content: " ▼"; font-size: 10px; }
+.risk-bar { display: block; width: 90px; height: 4px; background: var(--border); border-radius: 2px; margin-top: 5px; overflow: hidden; }
+.risk-bar > span { display: block; height: 100%; background: var(--text-muted); }
+.risk-bar > span.high { background: var(--crit); }
 /* ---- Blocked & flagged actions ---- */
 .incident-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 16px 0 14px; }
 .incident-filter { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1282,115 +1305,79 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
       <div class="page-heading">
         <div>
           <h1>Fleet overview</h1>
-          <p>Understand the environment. Find the agent workload that needs attention.</p>
+          <p id="fleet-verdict" class="fleet-verdict" role="status" aria-live="polite">Loading…</p>
+          <p id="fleet-verdict-sub" class="quiet-note" style="margin:4px 0 0"></p>
         </div>
-        <button type="button" class="btn btn-primary" id="browse-agents-btn">Explore workloads <span aria-hidden="true">&rarr;</span></button>
       </div>
-      <div class="kpi-strip">
+
+      <div class="kpi-strip" id="fleet-kpis">
         <article class="kpi-box">
-          <div class="kpi-label">Workloads</div>
-          <div class="kpi-val" id="fleet-kpi-agents">0</div>
-          <div class="kpi-sub">Logical agent workloads</div>
-        </article>
-        <article class="kpi-box">
-          <div class="kpi-label">With active locks</div>
-          <div class="kpi-val" id="fleet-kpi-contained" style="color:var(--crit-text)">0</div>
-          <div class="kpi-sub">Context-scoped restrictions</div>
-        </article>
-        <article class="kpi-box">
-          <div class="kpi-label">Blocked actions</div>
+          <div class="kpi-label">Blocked</div>
           <div class="kpi-val" id="fleet-kpi-blocked" style="color:var(--crit-text)">0</div>
-          <div class="kpi-sub" id="fleet-kpi-blocked-sub">Stopped inline at middleware</div>
+          <div class="kpi-sub" id="fleet-kpi-blocked-sub">Requests Risk Guard denied</div>
         </article>
         <article class="kpi-box">
-          <div class="kpi-label">Sandboxes recorded</div>
-          <div class="kpi-val" id="fleet-kpi-sandboxes">0</div>
-          <div class="kpi-sub" id="fleet-kpi-sandboxes-sub">Every sandbox Risk Guard has seen</div>
+          <div class="kpi-label">Workloads locked</div>
+          <div class="kpi-val" id="fleet-kpi-contained" style="color:var(--crit-text)">0</div>
+          <div class="kpi-sub" id="fleet-kpi-contained-sub">Locks in force</div>
         </article>
         <article class="kpi-box">
-          <div class="kpi-label">Recommendations</div>
-          <div class="kpi-val" id="fleet-kpi-recs">0</div>
-          <div class="kpi-sub">Stored hardening proposals</div>
+          <div class="kpi-label">Peak risk</div>
+          <div class="kpi-val" id="fleet-kpi-peak">0</div>
+          <div class="kpi-sub" id="fleet-kpi-peak-sub">Highest score recorded</div>
+        </article>
+        <article class="kpi-box">
+          <div class="kpi-label">Requests inspected</div>
+          <div class="kpi-val" id="fleet-kpi-inspected">0</div>
+          <div class="kpi-sub" id="fleet-kpi-inspected-sub">Inspected HTTP requests</div>
         </article>
       </div>
 
-      <div class="grid-2">
-        <section class="panel">
-          <div class="panel-header">
-            <div class="panel-title-group">
-              <h2>Restriction posture</h2>
-              <p>Current context locks across the loaded agent inventory</p>
-            </div>
-          </div>
-          <div class="panel-body">
-            <div class="posture-bar" aria-hidden="true">
-              <span id="dist-contained-bar" style="background:var(--crit);width:0"></span>
-              <span id="dist-unlocked-bar" style="background:var(--graph-edge);width:0"></span>
-            </div>
-            <div class="summary-list">
-              <div class="summary-row"><span class="muted">With active context locks</span><strong id="dist-contained">0</strong></div>
-              <div class="summary-row"><span class="muted">Without active context locks</span><strong id="dist-healthy">0</strong></div>
-            </div>
-            <p class="quiet-note">A context lock is not an agent-wide quarantine. No active lock is not a clean bill of health.</p>
-          </div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-header">
-            <div class="panel-title-group">
-              <h2>Follow the evidence</h2>
-              <p>One logical agent workload, connected across runs and boundaries</p>
-            </div>
-          </div>
-          <div class="panel-body evidence-grid">
-            <div><h3>Activity</h3><p>Network destinations and filesystem policy boundaries.</p></div>
-            <div><h3>Detections</h3><p>Risky actions, scores, and their contributing signals.</p></div>
-            <div><h3>Recommendations</h3><p>Saved hardening proposals and recorded proof results.</p></div>
-            <div><h3>Run lineage</h3><p>Durable workload continuity across ephemeral sandboxes.</p></div>
-          </div>
-        </section>
-      </div>
-      <p class="quiet-note" id="inventory-scope">Recorded totals from the loaded inventory. Request counts cover the decisions still retained (30 days by default). Connectivity and sandbox lifecycle are inferred from the calls Risk Guard receives; it does not probe the gateway.</p>
-    </main>
-
-    <main class="content-wrap view-hidden" id="agents-view" aria-label="Agent directory">
-      <div class="page-heading">
-        <div><h1>Workloads</h1><p>Track logical agent workloads across ephemeral runs and OpenShell sandboxes (distinct from external IAM/Entra credentials).</p></div>
-        <span class="table-count" id="directory-count" role="status"></span>
-      </div>
-      <section class="panel">
+      <section class="panel" id="attention-section" aria-labelledby="attention-title" hidden>
         <div class="panel-header">
           <div class="panel-title-group">
-            <h2>Workload directory</h2>
-            <p>Select a logical agent workload to open its workspace</p>
+            <h2 id="attention-title">Needs attention</h2>
+            <p>Workloads with locks in force or blocked requests, riskiest first</p>
+          </div>
+        </div>
+        <div class="panel-body"><div class="attention-grid" id="attention-cards"></div></div>
+      </section>
+
+      <section class="panel" id="directory-section" style="margin-top:16px">
+        <div class="panel-header">
+          <div class="panel-title-group">
+            <h2>Workloads</h2>
+            <p>Logical agent workloads across ephemeral runs and OpenShell sandboxes (distinct from external IAM or Entra credentials). Select one to open its workspace.</p>
           </div>
           <div class="filter-row">
-            <input type="search" id="fleet-agent-search" placeholder="Search loaded workloads..." aria-label="Search Workload IDs" />
+            <input type="search" id="fleet-agent-search" placeholder="Search loaded workloads..." aria-label="Search workloads by name or ID" />
             <select id="fleet-posture-filter" aria-label="Filter workloads by posture">
-              <option value="all">All statuses</option>
-              <option value="contained">With active locks</option>
-              <option value="blocked">With blocked actions</option>
-              <option value="hardening">With recommendations</option>
+              <option value="all">All workloads</option>
+              <option value="contained">With locks in force</option>
+              <option value="blocked">With blocked requests</option>
             </select>
           </div>
         </div>
-        <div class="table-scroll" tabindex="0" role="region" aria-label="Agent directory table">
-          <table class="directory-table">
+        <div class="table-scroll" tabindex="0" role="region" aria-label="Workload directory table">
+          <table class="directory-table" id="directory-table">
             <thead>
               <tr>
-                <th scope="col">Workload</th>
-                <th scope="col">Posture</th>
-                <th scope="col">Recorded activity</th>
-                <th scope="col">Recommendations</th>
-                <th scope="col">Last observed</th>
-                <th scope="col"><span class="table-count">Inspect</span></th>
+                <th scope="col" data-sort-col="name"><button type="button" class="sort-btn" data-sort="name">Workload</button></th>
+                <th scope="col" data-sort-col="risk"><button type="button" class="sort-btn" data-sort="risk">Risk now · peak</button></th>
+                <th scope="col" data-sort-col="locks"><button type="button" class="sort-btn" data-sort="locks">Locks</button></th>
+                <th scope="col" data-sort-col="blocked"><button type="button" class="sort-btn" data-sort="blocked">Blocked / inspected</button></th>
+                <th scope="col">Sandboxes</th>
+                <th scope="col" data-sort-col="seen"><button type="button" class="sort-btn" data-sort="seen">Last seen</button></th>
+                <th scope="col"><span class="table-count">Open</span></th>
               </tr>
             </thead>
             <tbody id="agents"></tbody>
           </table>
         </div>
         <div class="empty-state" id="directory-empty" hidden>No workloads match these filters.</div>
+        <p class="quiet-note" style="margin:10px 14px"><span id="directory-count" role="status"></span></p>
       </section>
+      <p class="quiet-note" id="inventory-scope">Recorded totals from the loaded inventory.</p>
     </main>
 
     <!-- =================================================================== -->
@@ -2245,14 +2232,15 @@ function switchMainView(view, scrollToTop = false) {
     if (isCurrent) $(id).setAttribute("aria-current", "page");
     else $(id).removeAttribute("aria-current");
   }
-  $("nav-agent-lbl").textContent = view === "fleet" ? "Fleet overview"
-    : view === "directory" ? "Agents" : currentAgentData?.agent?.agent_id || "Agent workspace";
-  $("fleet-view").classList.toggle("view-hidden", view !== "fleet");
-  $("agents-view").classList.toggle("view-hidden", view !== "directory");
+  $("nav-agent-lbl").textContent = view === "fleet" || view === "directory" ? "Fleet overview"
+    : currentAgentData?.agent?.agent_id || "Agent workspace";
+  // "directory" is the workloads section of the Fleet page, so it shows that page and scrolls to the section.
+  $("fleet-view").classList.toggle("view-hidden", view !== "fleet" && view !== "directory");
   $("agent-detail").classList.toggle("view-hidden", view !== "agent");
   $("agent-detail").hidden = view !== "agent" || !currentAgentData;
   if (view === "agent") switchAgentSubTab(activeAgentTab);
-  if (scrollToTop) window.scrollTo({ top: 0, behavior: "instant" });
+  if (view === "directory") $("directory-section").scrollIntoView({ block: "start", behavior: "instant" });
+  else if (scrollToTop) window.scrollTo({ top: 0, behavior: "instant" });
 }
 
 function switchAgentSubTab(tab) {
@@ -2288,7 +2276,7 @@ function openAuditModal(contextLabel) {
   }
   modal.hidden = false;
   document.body.style.overflow = "hidden";
-  for (const id of ["fleet-view", "agents-view", "agent-detail", "agent-loading"]) $(id).inert = true;
+  for (const id of ["fleet-view", "agent-detail", "agent-loading"]) $(id).inert = true;
   document.querySelector(".top-header").inert = true;
   document.querySelector(".sidebar").inert = true;
   if (isOpening) $("close-audit-modal-btn").focus();
@@ -2297,7 +2285,7 @@ function openAuditModal(contextLabel) {
 function closeAuditModal() {
   $("audit-modal").hidden = true;
   document.body.style.overflow = "";
-  for (const id of ["fleet-view", "agents-view", "agent-detail", "agent-loading"]) $(id).inert = false;
+  for (const id of ["fleet-view", "agent-detail", "agent-loading"]) $(id).inert = false;
   document.querySelector(".top-header").inert = false;
   document.querySelector(".sidebar").inert = false;
   if (selected?.kind === "sandbox") {
@@ -5603,115 +5591,257 @@ function renderAllForCurrentAgent() {
   renderGuardrails();
 }
 
+// ---- Fleet overview: a verdict, four numbers, who needs attention, and the sortable workload directory --------------
+// Counts are recorded decisions that are still retained (30 days by default), not "right now" figures; the wording says
+// so. A lock stays in force after the score falls back to 0, so "risk now" can read 0 next to a lock and that is correct.
+const NOT_SEEN_MS = 6 * 3600000;
+let directorySort = { key: "attention", dir: "desc" };
+const agentLatestBlock = new Map();   // agent_id -> { observedAt, block } from that workload's own detail
+
+const humanizeProfile = profile => String(profile || "").replace(/[-_]+/g, " ").replace(/^./, c => c.toUpperCase());
+
+function agentRole(item, data) {
+  if (String(item.display_name || "").startsWith("default / ")) return "Unlabeled · named from the authenticated principal";
+  const row = (data.sandboxes || []).find(s => s.identity?.agent_id === item.agent_id);
+  return row?.epoch?.task_profile ? humanizeProfile(row.epoch.task_profile) : "";
+}
+
+function riskNowPeak(item) {
+  const now = item.latest_risk_score;
+  const peak = item.max_risk_score;
+  if (peak === null || peak === undefined) return { now: null, peak: null, text: "—" };
+  return { now, peak, text: `${now ?? "—"} now · ${peak} peak` };
+}
+
+function attentionRank(item) {
+  return [Number(item.active_restriction_count || 0), Number(item.max_risk_score || 0), Number(item.denied_count || 0)];
+}
+
+function compareAgents(a, b) {
+  const sign = directorySort.dir === "asc" ? 1 : -1;
+  const num = (x, y) => (x - y) * sign;
+  switch (directorySort.key) {
+    case "name": return String(a.display_name || a.agent_id).localeCompare(String(b.display_name || b.agent_id)) * sign;
+    case "risk": return num(Number(a.max_risk_score ?? -1), Number(b.max_risk_score ?? -1));
+    case "locks": return num(Number(a.active_restriction_count || 0), Number(b.active_restriction_count || 0));
+    case "blocked": return num(Number(a.denied_count || 0), Number(b.denied_count || 0));
+    case "seen": return num(Number(a.last_observed_at_ms || 0), Number(b.last_observed_at_ms || 0));
+    default: {
+      const ra = attentionRank(a), rb = attentionRank(b);
+      for (let i = 0; i < ra.length; i++) if (ra[i] !== rb[i]) return rb[i] - ra[i];
+      return 0;
+    }
+  }
+}
+
+function openWorkload(agentId, tab) {
+  activeAgentTab = tab || "map";
+  switchMainView("agent", true);
+  inspect("agent", agentId);
+}
+
+function workloadButton(item, label, tab, cls) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = cls || "link-button";
+  b.textContent = label;
+  b.addEventListener("click", event => { event.stopPropagation(); openWorkload(item.agent_id, tab); });
+  return b;
+}
+
+function renderAttentionCards(items, data) {
+  const section = $("attention-section");
+  const cards = items
+    .filter(i => Number(i.active_restriction_count || 0) > 0 || Number(i.denied_count || 0) > 0)
+    .sort((a, b) => {
+      const ra = attentionRank(a), rb = attentionRank(b);
+      for (let i = 0; i < ra.length; i++) if (ra[i] !== rb[i]) return rb[i] - ra[i];
+      return 0;
+    }).slice(0, 3);
+  section.hidden = cards.length === 0;
+  $("attention-cards").replaceChildren(...cards.map(item => {
+    const locks = Number(item.active_restriction_count || 0);
+    const card = document.createElement("article");
+    card.className = "attention-card";
+    const head = document.createElement("div");
+    head.className = "attention-head";
+    const title = workloadButton(item, item.display_name || item.agent_id, "detections", "link-button attention-name");
+    const role = document.createElement("span");
+    role.className = "cell-secondary";
+    role.textContent = agentRole(item, data);
+    head.append(title, role);
+    const risk = riskNowPeak(item);
+    const stats = document.createElement("div");
+    stats.className = "attention-stats";
+    stats.textContent = `Risk ${risk.text} · ${locks ? `${locks} lock${locks === 1 ? "" : "s"} in force` : "no locks"} · ${item.denied_count} of ${item.decision_count} requests blocked`;
+    const last = document.createElement("div");
+    last.className = "attention-last";
+    const cached = agentLatestBlock.get(item.agent_id);
+    last.textContent = cached?.block
+      ? `Latest block: requested to ${plainAction(cached.block.req)} · ${relativeAge(Date.now() - cached.block.ts)} ago · score ${cached.block.score}`
+      : cached && !cached.pending ? (cached.failed ? "The latest block could not be loaded." : "No block recorded in the loaded window.")
+      : "Loading the latest block…";
+    const open = workloadButton(item, "See what was blocked →", "detections", "btn");
+    card.append(head, stats, last, open);
+    return card;
+  }));
+  // Fetch each card's latest block once per change of that workload's activity.
+  for (const item of cards) {
+    const cached = agentLatestBlock.get(item.agent_id);
+    if (cached && cached.observedAt === item.last_observed_at_ms) continue;
+    agentLatestBlock.set(item.agent_id, { observedAt: item.last_observed_at_ms, block: cached?.block ?? null, pending: true });
+    read(`/api/agents/${encodeURIComponent(item.agent_id)}`).then(detail => {
+      const denies = (detail.decisions || []).filter(d => d.evaluation?.outcome === "deny")
+        .sort((a, b) => Number(b.evaluation?.decision_timestamp_ms || 0) - Number(a.evaluation?.decision_timestamp_ms || 0));
+      const top = denies[0];
+      agentLatestBlock.set(item.agent_id, {
+        observedAt: item.last_observed_at_ms, pending: false,
+        block: top ? { req: top.request || {}, score: top.evaluation?.risk_score, ts: Number(top.evaluation?.decision_timestamp_ms || 0) } : null,
+      });
+      if (cachedStateData === data) renderAttentionCards(items, data);
+    }).catch(() => {
+      // The card keeps its counts; the latest-block line is a convenience and says when it could not be loaded.
+      agentLatestBlock.set(item.agent_id, { observedAt: item.last_observed_at_ms, pending: false, failed: true, block: cached?.block ?? null });
+      if (cachedStateData === data) renderAttentionCards(items, data);
+    });
+  }
+}
+
 function renderFleetDirectory() {
   if (!cachedStateData) return;
   const data = cachedStateData;
+  const agents = data.agents || [];
   const q = ($("fleet-agent-search").value || "").trim().toLowerCase();
   const pf = $("fleet-posture-filter").value;
 
-  $("agents").replaceChildren();
-  let totalContained = 0;
-  let totalBlocked = 0;
-  let totalRecs = 0;
-  let shown = 0;
-
-  for (const item of data.agents || []) {
-    const denied = Number(item.denied_count ?? 0);
-    const locks = Number(item.active_restriction_count ?? 0);
-    const recs = Number(item.recommendation_count ?? 0);
-    const sbx = Number(item.sandbox_count ?? item.run_count ?? 0);
-    if (locks > 0) totalContained++;
-    totalBlocked += denied;
-    totalRecs += recs;
-
-    if (pf === "contained" && locks === 0) continue;
-    if (pf === "blocked" && denied === 0) continue;
-    if (pf === "hardening" && recs === 0) continue;
-    if (q) {
-      const hay = `${item.agent_id} ${item.display_name || ""}`.toLowerCase();
-      if (!hay.includes(q)) continue;
+  let lockedWorkloads = 0, totalLocks = 0, totalBlocked = 0, totalCalls = 0, peak = 0, topNow = null;
+  for (const item of agents) {
+    const locks = Number(item.active_restriction_count || 0);
+    if (locks > 0) lockedWorkloads++;
+    totalLocks += locks;
+    totalBlocked += Number(item.denied_count || 0);
+    totalCalls += Number(item.decision_count || 0);
+    peak = Math.max(peak, Number(item.max_risk_score || 0));
+    if (item.latest_risk_score !== null && item.latest_risk_score !== undefined && (!topNow || item.latest_risk_score > topNow.score)) {
+      topNow = { score: item.latest_risk_score, item };
     }
+  }
 
+  // Verdict first: what is true right now, in one sentence, and an honest caveat.
+  const total = agents.length;
+  let verdict;
+  if (!total) verdict = "No workloads are recorded yet.";
+  else if (lockedWorkloads) verdict = `${lockedWorkloads} of ${total} workload${total === 1 ? " has" : "s have"} locks in force. ${totalBlocked} request${totalBlocked === 1 ? " was" : "s were"} blocked.`;
+  else if (totalBlocked) verdict = `No locks are in force. ${totalBlocked} request${totalBlocked === 1 ? " was" : "s were"} blocked earlier.`;
+  else verdict = "No locks in force and nothing blocked.";
+  $("fleet-verdict").textContent = verdict;
+  $("fleet-verdict-sub").textContent = !total ? "Start a sandbox with the Risk Guard policy and its first request will appear here."
+    : lockedWorkloads ? `A lock stays in force after a score falls back to 0, so a workload can read "0 now" and still be locked.`
+    : "That is not proof of safety: Risk Guard only scores the HTTP requests OpenShell inspects for the hosts it is attached to.";
+
+  $("fleet-kpi-blocked").textContent = String(totalBlocked);
+  $("fleet-kpi-blocked-sub").textContent = `of ${totalCalls} inspected request${totalCalls === 1 ? "" : "s"}`;
+  $("fleet-kpi-contained").textContent = String(lockedWorkloads);
+  $("fleet-kpi-contained-sub").textContent = totalLocks ? `${totalLocks} lock${totalLocks === 1 ? "" : "s"} in force · no expiry` : "no locks in force";
+  $("fleet-kpi-peak").textContent = String(peak);
+  $("fleet-kpi-peak-sub").textContent = topNow ? `highest now: ${topNow.score}` : "no scored requests";
+  $("fleet-kpi-inspected").textContent = String(totalCalls);
+  $("fleet-kpi-inspected-sub").textContent = "inspected HTTP only · retained decisions";
+  $("side-fleet-count").textContent = String(data.total_agents || total);
+
+  renderAttentionCards(agents, data);
+
+  // Directory: filter, then sort. Rows past 6 h without activity are marked so a stale row cannot pass for a live one.
+  const rows = agents.filter(item => {
+    if (pf === "contained" && !Number(item.active_restriction_count || 0)) return false;
+    if (pf === "blocked" && !Number(item.denied_count || 0)) return false;
+    if (q && !`${item.agent_id} ${item.display_name || ""} ${agentRole(item, data)}`.toLowerCase().includes(q)) return false;
+    return true;
+  }).sort(compareAgents);
+
+  for (const th of document.querySelectorAll("#directory-table th[data-sort-col]")) {
+    th.setAttribute("aria-sort", th.dataset.sortCol === directorySort.key ? (directorySort.dir === "asc" ? "ascending" : "descending") : "none");
+  }
+
+  $("agents").replaceChildren(...rows.map(item => {
+    const locks = Number(item.active_restriction_count || 0);
+    const denied = Number(item.denied_count || 0);
     const row = document.createElement("tr");
     row.style.cursor = "pointer";
-    row.onclick = () => {
-      activeAgentTab = "map";
-      switchMainView("agent", true);
-      inspect("agent", item.agent_id);
-    };
+    row.addEventListener("click", () => openWorkload(item.agent_id, "map"));
 
     const c1 = document.createElement("td");
     c1.className = "identity-cell";
-    const name = document.createElement("strong");
-    name.textContent = item.display_name || item.agent_id;
-    const identifier = document.createElement("span");
-    identifier.className = "cell-secondary mono";
-    identifier.textContent = item.agent_id;
-    c1.append(name, identifier);
+    const role = agentRole(item, data);
+    const secondary = document.createElement("span");
+    secondary.className = "cell-secondary";
+    secondary.textContent = [role, item.display_name && item.display_name !== item.agent_id && !String(item.display_name).startsWith("default / ") ? `${identityKind(item.agent_id)} ${shortId(item.agent_id, 13)}` : ""].filter(Boolean).join(" · ");
+    secondary.title = item.agent_id;
+    c1.append(workloadButton(item, item.display_name || item.agent_id, "map"), secondary);
 
     const c2 = document.createElement("td");
-    c2.append(
-      makeBadge(
-        locks > 0 ? `${locks} context locks` : denied > 0 ? "Blocked history" : "No active locks",
-        locks > 0 || denied > 0 ? "badge-red" : "badge-neutral"
-      )
-    );
+    const risk = riskNowPeak(item);
+    const riskText = document.createElement("span");
+    riskText.textContent = risk.text;
+    riskText.title = "Latest score, and the highest score recorded for this workload";
+    const bar = document.createElement("span");
+    bar.className = "risk-bar";
+    bar.setAttribute("aria-hidden", "true");
+    const fill = document.createElement("span");
+    fill.style.width = `${Math.min(100, Number(risk.peak || 0))}%`;
+    if (Number(risk.peak || 0) >= 70) fill.className = "high";
+    bar.append(fill);
+    c2.append(riskText, bar);
 
     const c3 = document.createElement("td");
-    const traffic = document.createElement("span");
-    traffic.textContent = `${item.decision_count} calls · ${denied} blocked`;
-    if (denied > 0) traffic.style.color = "var(--crit-text)";
-    const execution = document.createElement("span");
-    execution.className = "cell-secondary";
-    const open = Number(item.active_sandbox_count);
-    execution.textContent = `${sbx} sandboxes${Number.isFinite(open) ? ` (${open} still open)` : ""} · ${item.run_count} runs`;
-    c3.append(traffic, execution);
+    c3.append(makeBadge(locks > 0 ? `${locks} in force` : "None", locks > 0 ? "badge-red" : "badge-neutral"));
 
     const c4 = document.createElement("td");
-    c4.textContent = recs > 0 ? `${recs} saved` : "None recorded";
+    c4.textContent = `${denied} / ${item.decision_count}`;
+    c4.title = "Requests denied, of the inspected requests still retained";
+    if (denied > 0) c4.style.color = "var(--crit-text)";
 
     const c5 = document.createElement("td");
+    const open = Number(item.active_sandbox_count);
+    c5.textContent = `${item.sandbox_count} recorded${Number.isFinite(open) ? ` · ${open} open` : ""}`;
     c5.className = "muted";
-    c5.style.whiteSpace = "normal";
-    c5.textContent = time(item.last_observed_at_ms);
 
     const c6 = document.createElement("td");
-    const openBtn = inspectButton("agent", item.agent_id, "Open");
-    openBtn.onclick = e => {
-      e.stopPropagation();
-      activeAgentTab = "map";
-      switchMainView("agent", true);
-      inspect("agent", item.agent_id);
-    };
-    c6.append(openBtn);
+    const seen = Number(item.last_observed_at_ms || 0);
+    const age = seen ? Date.now() - seen : null;
+    c6.className = "muted";
+    c6.textContent = age === null ? "Never" : `${relativeAge(age)} ago${age > NOT_SEEN_MS ? " · quiet" : ""}`;
+    c6.title = seen ? new Date(seen).toISOString().replace("T", " ").slice(0, 19) + " UTC" : "No request recorded";
 
-    row.append(c1, c2, c3, c4, c5, c6);
-    $("agents").append(row);
-    shown++;
-  }
+    const c7 = document.createElement("td");
+    c7.append(workloadButton(item, "Open", "map", "btn"));
+    row.append(c1, c2, c3, c4, c5, c6, c7);
+    return row;
+  }));
 
-  $("side-fleet-count").textContent = String(data.total_agents || (data.agents || []).length);
-  $("fleet-kpi-agents").textContent = String(data.total_agents || (data.agents || []).length);
-  $("fleet-kpi-contained").textContent = String(totalContained);
-  $("fleet-kpi-blocked").textContent = String(totalBlocked);
-  // One definition everywhere: "recorded" is every sandbox ever bound (the same basis as each agent's count below).
-  // The lifecycle breakdown says how many of them are still being seen.
   const life = data.sandbox_lifecycle && typeof data.sandbox_lifecycle === "object" ? data.sandbox_lifecycle : null;
-  $("fleet-kpi-sandboxes").textContent = String(life ? life.sandboxes_recorded : (data.total_sandboxes || (data.sandboxes || []).length));
-  $("fleet-kpi-sandboxes-sub").textContent = life
-    ? `${life.recently_active} active in 15 min · ${life.idle} idle · ${life.not_seen_recently} not seen for 6 h+ · ${life.sandboxes_closed} closed`
-    : "Every sandbox Risk Guard has seen";
-  $("fleet-kpi-recs").textContent = String(totalRecs);
-  $("dist-contained").textContent = String(totalContained);
-  const loaded = (data.agents || []).length;
-  $("dist-healthy").textContent = String(Math.max(0, loaded - totalContained));
-  $("dist-contained-bar").style.width = `${loaded ? totalContained / loaded * 100 : 0}%`;
-  $("dist-unlocked-bar").style.width = `${loaded ? (loaded - totalContained) / loaded * 100 : 0}%`;
-  $("directory-count").textContent = `${shown} of ${loaded} loaded agents`;
-  $("directory-empty").hidden = shown > 0;
-  $("directory-empty").textContent = loaded ? "No agents match these filters." : "No registered agents recorded in this database.";
-  $("inventory-scope").textContent = `Loaded ${loaded} of ${data.total_agents ?? loaded} registered agents. Request counts cover the decisions still retained (30 days by default). Connectivity and sandbox lifecycle are inferred from the calls Risk Guard receives; it does not probe the gateway.`;
+  const sortNames = { name: "name", risk: "peak risk", locks: "locks", blocked: "blocked requests", seen: "last seen" };
+  const sortedBy = directorySort.key === "attention"
+    ? "most urgent first (locks, then peak risk)"
+    : `${sortNames[directorySort.key]}, ${directorySort.dir === "asc" ? "lowest first" : "highest first"}`;
+  $("directory-count").textContent = `${rows.length} of ${total} workloads · sorted by ${sortedBy} · click a column heading to change it`;
+  $("directory-empty").hidden = rows.length > 0;
+  $("directory-empty").textContent = total ? "No workloads match these filters." : "No registered workloads recorded in this database.";
+  $("inventory-scope").textContent =
+    `Request counts cover the decisions still retained (30 days by default), not a live rate. ` +
+    (life ? `${life.sandboxes_recorded} sandboxes recorded: ${life.recently_active} active in the last 15 min, ${life.idle} idle, ${life.not_seen_recently} not seen for 6 h or more (most likely deleted), ${life.sandboxes_closed} closed. ` : "") +
+    "Connectivity and sandbox lifecycle are inferred from the calls Risk Guard receives; it does not probe the gateway.";
 }
+
+document.addEventListener("click", event => {
+  const button = event.target.closest?.("#directory-table .sort-btn");
+  if (!button) return;
+  const key = button.dataset.sort;
+  directorySort = directorySort.key === key
+    ? { key, dir: directorySort.dir === "desc" ? "asc" : "desc" }
+    : { key, dir: key === "name" ? "asc" : "desc" };
+  renderFleetDirectory();
+});
 
 async function inspect(kind, id) {
   selected = { kind, id };
@@ -5880,7 +6010,6 @@ async function refresh() {
   void refreshOperatorStatus();
   $("refresh").disabled = true;
   $("error").textContent = "";
-  $("agents").replaceChildren();
   $("sandboxes").replaceChildren();
   try {
     const data = await read("/api/state");
@@ -5924,7 +6053,9 @@ async function refresh() {
     if (refreshFailedSince === null) refreshFailedSince = Date.now();
     renderFreshness();
     if (!cachedStateData) {
-      for (const id of ["side-fleet-count", "fleet-kpi-agents", "fleet-kpi-contained", "fleet-kpi-blocked", "fleet-kpi-sandboxes", "fleet-kpi-recs", "dist-contained", "dist-healthy"]) $(id).textContent = "—";
+      for (const id of ["side-fleet-count", "fleet-kpi-contained", "fleet-kpi-blocked", "fleet-kpi-peak", "fleet-kpi-inspected"]) $(id).textContent = "—";
+      $("fleet-verdict").textContent = "Risk Guard could not be reached.";
+      $("fleet-verdict-sub").textContent = "No fleet numbers have been loaded. Refresh to retry.";
       $("directory-count").textContent = "Inventory unavailable";
       $("directory-empty").textContent = "Agent inventory is unavailable. Refresh to retry.";
       $("directory-empty").hidden = false;
@@ -5938,7 +6069,6 @@ async function refresh() {
 $("nav-fleet-btn").addEventListener("click", () => switchMainView("fleet", true));
 $("back-to-fleet-btn").addEventListener("click", () => switchMainView("fleet", true));
 $("nav-directory-btn").addEventListener("click", () => switchMainView("directory", true));
-$("browse-agents-btn").addEventListener("click", () => switchMainView("directory", true));
 $("nav-agent-btn").addEventListener("click", () => {
   ++selectionVersion;
   selected = { kind: "agent", id: currentAgentData.agent.agent_id };
