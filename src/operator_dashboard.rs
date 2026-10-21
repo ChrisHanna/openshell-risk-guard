@@ -229,11 +229,19 @@ mod tests {
             "technical-fold",
             // Honest-scope and freshness cues that stay on every page.
             "freshness",
+            // The architecture page, reachable from the sidebar.
+            "how-view",
+            "nav-how-btn",
+            "how-diagram",
         ] {
             assert!(page.contains(&format!("id=\"{id}\"")), "missing view: {id}");
         }
         assert!(page.contains("class=\"scope-bar\""), "the scope statement must be on every page");
         assert!(!page.contains("id=\"agents-view\""), "the directory is part of the Fleet page now");
+        // The settings tab is "Enforcement": "Guardrails" would be mistaken for NVIDIA NeMo Guardrails.
+        assert!(page.contains(">Enforcement</button>"));
+        assert!(!page.contains(">Guardrails</button>"), "the tab must not be called Guardrails");
+        assert!(!page.contains("<h2>Guardrails</h2>"));
         assert!(page.contains("aria-label=\"Agent workspace\""));
         assert!(page.contains("Agent evidence"));
         assert!(page.contains("Context-scoped restrictions"));

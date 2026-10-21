@@ -1133,6 +1133,76 @@ tbody tr:focus-within { background: var(--bg-elevated); }
 .audit-deny { color: var(--crit-text); font-weight: 600; }
 .audit-allow { color: var(--ok-text); }
 .quiet-inline { color: var(--text-muted); font-size: 12px; font-weight: 400; margin-left: 8px; }
+/* ---- How it works ---- */
+.how-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; align-self: flex-start; }
+.how-toggle button { background: transparent; border: 0; color: var(--text-secondary); padding: 7px 14px; font-size: 13px; cursor: pointer; }
+.how-toggle button[aria-pressed="true"] { background: var(--bg-hover); color: var(--text-primary); font-weight: 600; }
+#how-view[data-level="plain"] .hood { display: none; }
+#how-view .hood { color: var(--text-secondary); font-size: 13px; }
+#how-view .hood code, #how-view code { font-family: var(--mono, monospace); font-size: 12px; background: var(--bg-hover); padding: 1px 5px; border-radius: 4px; }
+#how-diagram { width: 100%; height: auto; display: block; }
+.how-lane { fill: var(--bg-code); stroke: var(--border); stroke-width: 1; }
+.how-lane-label { fill: var(--text-muted); font-size: 11px; letter-spacing: .06em; }
+.how-box { fill: var(--bg-panel, #1b1d21); stroke: var(--text-muted); stroke-width: 1.2; }
+.how-box.os { stroke: #7aa2f7; }
+.how-box.rg { stroke: #4fd1c5; fill: rgba(79, 209, 197, .08); }
+.how-box.ev { stroke: #d4b36a; }
+.how-box.ext { stroke-dasharray: 4 3; }
+.how-t1 { fill: var(--text-primary); font-size: 13.5px; font-weight: 600; }
+.how-t2 { fill: var(--text-secondary); font-size: 11.5px; }
+.how-t3 { fill: var(--text-secondary); font-size: 12px; }
+.how-t3.ok, .how-line.ok { fill: var(--ok-text); stroke: var(--ok-text); }
+.how-t3.ok { stroke: none; }
+.how-t3.bad { fill: var(--crit-text); }
+.how-line { fill: none; stroke: var(--text-muted); stroke-width: 1.4; }
+.how-line.bad { stroke: var(--crit-text); }
+.how-line.dash { stroke-dasharray: 6 4; }
+.how-line.dot { stroke-dasharray: 2 4; stroke: var(--text-muted); }
+.how-chip { fill: var(--crit-bg); stroke: var(--crit-border); }
+.how-num { fill: var(--bg-panel, #1b1d21); stroke: var(--text-secondary); stroke-width: 1.2; }
+.how-numt { fill: var(--text-primary); font-size: 12px; font-weight: 700; }
+.how-node { cursor: pointer; outline: none; }
+.how-node:focus-visible .how-box { stroke: var(--focus); stroke-width: 2.5; }
+.how-node.active .how-box, .how-arrow-g.active .how-num { stroke: #fff; stroke-width: 2.4; }
+.how-node.active .how-box { fill: rgba(255, 255, 255, .06); }
+.how-arrow-g.active .how-line { stroke-width: 2.8; }
+.how-arrow-g { cursor: pointer; }
+.how-stepper { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 10px; }
+.how-stepper button {
+  background: transparent; border: 1px solid var(--border); color: var(--text-secondary); border-radius: 8px;
+  padding: 7px 12px; font-size: 13px; cursor: pointer; display: inline-flex; gap: 8px; align-items: center;
+}
+.how-stepper button .n { display: inline-flex; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--text-muted); align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
+.how-stepper button[aria-selected="true"] { background: var(--bg-hover); color: var(--text-primary); border-color: var(--text-secondary); }
+.how-step-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; background: var(--bg-code); display: flex; flex-direction: column; gap: 8px; }
+.how-step-card h3 { margin: 0; font-size: 16px; }
+.how-step-card p { margin: 0; color: var(--text-primary); }
+.how-step-card .sees { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 4px; }
+.how-step-card .sees > div { font-size: 13px; color: var(--text-secondary); }
+.how-step-card .sees strong { display: block; color: var(--text-primary); font-size: 12px; margin-bottom: 2px; }
+.how-cards { display: flex; flex-direction: column; gap: 14px; }
+.how-card h3 { margin: 0 0 6px; font-size: 15px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.how-card p { margin: 0 0 6px; color: var(--text-primary); font-size: 14px; }
+.how-list { margin: 0; padding-left: 18px; color: var(--text-primary); font-size: 14px; display: flex; flex-direction: column; gap: 6px; }
+.how-badges { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.how-badge { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 3px; }
+.how-badge .l { font-size: 12px; color: var(--text-muted); }
+.how-badge .v { font-size: 14px; color: var(--text-primary); overflow-wrap: anywhere; }
+.how-badge.ok { border-color: var(--ok-border, var(--border)); }
+.how-badge.ok .v::before { content: "✓ "; color: var(--ok-text); }
+.how-badge.warn .v::before { content: "– "; color: var(--warn-text, #d4b36a); }
+.how-badge.none .v { color: var(--text-secondary); }
+.how-badge.none .v::before { content: "○ "; }
+.how-glossary dl { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; margin: 0; }
+.how-glossary dt { font-weight: 600; color: var(--text-primary); }
+.how-glossary dd { margin: 0; color: var(--text-secondary); }
+.how-example-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+/* Cells default to a single line (td { white-space: nowrap }); these two tables hold sentences, so they wrap. */
+.how-example-table td, table.why-table td { white-space: normal; }
+.how-example-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; }
+.how-example-table { table-layout: fixed; }
+.how-example-table td:first-child { width: 190px; color: var(--text-muted); }
+@media (max-width: 760px) { .how-glossary dl { grid-template-columns: 1fr; } .how-step-card .sees { grid-template-columns: 1fr; } }
 /* ---- Fleet overview ---- */
 .fleet-verdict { font-size: 18px; font-weight: 600; color: var(--text-primary); margin: 6px 0 0; }
 .attention-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
@@ -1242,6 +1312,12 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
           <span class="nav-item-left">
             <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6M17 15a5 5 0 0 1 4 5"/></svg>
             <span>Workloads</span>
+          </span>
+        </button>
+        <button type="button" class="nav-item" id="nav-how-btn">
+          <span class="nav-item-left">
+            <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="19" cy="18" r="2"/><path d="M7 12h6M13 12l4-5M13 12l4 5"/></svg>
+            <span>How it works</span>
           </span>
         </button>
       </div>
@@ -1380,6 +1456,213 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
       <p class="quiet-note" id="inventory-scope">Recorded totals from the loaded inventory.</p>
     </main>
 
+    <main class="content-wrap view-hidden" id="how-view" data-level="plain" aria-label="How Risk Guard works with OpenShell">
+      <div class="page-heading">
+        <div>
+          <h1>How it works</h1>
+          <p class="fleet-verdict">OpenShell decides what an agent <em>may</em> reach. Risk Guard decides whether <em>this</em> call, from <em>this</em> workload, right now, looks like its normal behavior. It can only say no.</p>
+          <p class="quiet-note" style="margin:4px 0 0">Risk Guard adds one layer on top of OpenShell. It never widens what OpenShell allows.</p>
+        </div>
+        <div class="how-toggle" role="group" aria-label="Level of detail">
+          <button type="button" data-level="plain" aria-pressed="true">Plain</button>
+          <button type="button" data-level="hood" aria-pressed="false">Under the hood</button>
+        </div>
+      </div>
+
+      <section class="panel">
+        <div class="panel-header">
+          <div class="panel-title-group">
+            <h2>The path of one request</h2>
+            <p>Click a step, or a part of the diagram, to see what happens there.</p>
+          </div>
+        </div>
+        <div class="panel-body">
+          <svg id="how-diagram" viewBox="0 0 960 450" role="img" aria-labelledby="how-diagram-title how-diagram-desc">
+            <title id="how-diagram-title">How a request flows through OpenShell and Risk Guard</title>
+            <desc id="how-diagram-desc">An agent's request passes OpenShell's network policy, then Risk Guard's middleware, which scores it and returns allow or deny, before OpenShell adds credentials and forwards it. A separate control-plane path checks sandbox changes. Decisions are written to a store that a read-only console displays.</desc>
+            <defs>
+              <marker id="how-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="context-stroke"/></marker>
+            </defs>
+            <rect class="how-lane" x="8" y="8" width="944" height="150" rx="8"/>
+            <rect class="how-lane" x="8" y="170" width="944" height="110" rx="8"/>
+            <rect class="how-lane" x="8" y="292" width="944" height="150" rx="8"/>
+            <text class="how-lane-label" x="20" y="28">DATA PLANE · every request</text>
+            <text class="how-lane-label" x="20" y="190">CONTROL PLANE · when a sandbox is created or changed</text>
+            <text class="how-lane-label" x="20" y="312">EVIDENCE · what was decided</text>
+
+            <!-- data plane -->
+            <g class="how-node" data-steps="1" tabindex="0" role="button" aria-label="Step 1: the agent sends a request">
+              <rect class="how-box" x="24" y="54" width="150" height="62" rx="8"/>
+              <text class="how-t1" x="99" y="82" text-anchor="middle">Agent</text>
+              <text class="how-t2" x="99" y="100" text-anchor="middle">in its sandbox</text>
+            </g>
+            <g class="how-node" data-steps="2" tabindex="0" role="button" aria-label="Step 2: OpenShell checks network policy">
+              <rect class="how-box os" x="236" y="54" width="170" height="62" rx="8"/>
+              <text class="how-t1" x="321" y="82" text-anchor="middle">OpenShell</text>
+              <text class="how-t2" x="321" y="100" text-anchor="middle">network policy</text>
+            </g>
+            <g class="how-node" data-steps="3 4" tabindex="0" role="button" aria-label="Steps 3 and 4: Risk Guard scores the request">
+              <rect class="how-box rg" x="468" y="54" width="170" height="62" rx="8"/>
+              <text class="how-t1" x="553" y="82" text-anchor="middle">Risk Guard</text>
+              <text class="how-t2" x="553" y="100" text-anchor="middle">middleware · scores 0–100</text>
+            </g>
+            <g class="how-node" data-steps="6" tabindex="0" role="button" aria-label="Step 6: OpenShell adds credentials and forwards">
+              <rect class="how-box os" x="700" y="54" width="118" height="62" rx="8"/>
+              <text class="how-t1" x="759" y="82" text-anchor="middle">OpenShell</text>
+              <text class="how-t2" x="759" y="100" text-anchor="middle">adds credentials</text>
+            </g>
+            <g class="how-node" data-steps="6" tabindex="-1">
+              <rect class="how-box ext" x="852" y="54" width="92" height="62" rx="8"/>
+              <text class="how-t1" x="898" y="82" text-anchor="middle">Outside</text>
+              <text class="how-t2" x="898" y="100" text-anchor="middle">service</text>
+            </g>
+            <g class="how-arrow-g" data-steps="1"><path class="how-line" d="M174 85 H236" marker-end="url(#how-arrow)"/><circle class="how-num" cx="205" cy="70" r="11"/><text class="how-numt" x="205" y="74" text-anchor="middle">1</text></g>
+            <g class="how-arrow-g" data-steps="2"><text class="how-t3" x="321" y="136" text-anchor="middle">2 · policy allows it</text></g>
+            <g class="how-arrow-g" data-steps="3"><path class="how-line" d="M406 85 H468" marker-end="url(#how-arrow)"/><circle class="how-num" cx="437" cy="70" r="11"/><text class="how-numt" x="437" y="74" text-anchor="middle">3</text></g>
+            <g class="how-arrow-g" data-steps="4"><circle class="how-num" cx="553" cy="134" r="11"/><text class="how-numt" x="553" y="138" text-anchor="middle">4</text></g>
+            <g class="how-arrow-g allow" data-steps="6"><path class="how-line ok" d="M638 85 H700" marker-end="url(#how-arrow)"/><text class="how-t3 ok" x="669" y="72" text-anchor="middle">allow</text><path class="how-line" d="M818 85 H852" marker-end="url(#how-arrow)"/><circle class="how-num" cx="835" cy="70" r="11"/><text class="how-numt" x="835" y="74" text-anchor="middle">6</text></g>
+            <g class="how-arrow-g deny" data-steps="5"><path class="how-line bad dash" d="M553 54 V42 H99 V54" marker-end="url(#how-arrow)"/><rect class="how-chip" x="248" y="32" width="210" height="20" rx="10"/><text class="how-t3 bad" x="353" y="46" text-anchor="middle">5 · deny: HTTP 403, never leaves</text></g>
+
+            <!-- control plane -->
+            <g class="how-node" data-steps="A" tabindex="-1">
+              <rect class="how-box ext" x="24" y="214" width="150" height="52" rx="8"/>
+              <text class="how-t1" x="99" y="236" text-anchor="middle">Operator / CI</text>
+              <text class="how-t2" x="99" y="253" text-anchor="middle">creates or changes a sandbox</text>
+            </g>
+            <g class="how-node" data-steps="B" tabindex="-1">
+              <rect class="how-box os" x="236" y="214" width="170" height="52" rx="8"/>
+              <text class="how-t1" x="321" y="236" text-anchor="middle">OpenShell gateway</text>
+              <text class="how-t2" x="321" y="253" text-anchor="middle">calls Risk Guard first</text>
+            </g>
+            <g class="how-node" data-steps="B" tabindex="-1">
+              <rect class="how-box rg" x="468" y="214" width="150" height="52" rx="8"/>
+              <text class="how-t1" x="543" y="236" text-anchor="middle">Risk Guard</text>
+              <text class="how-t2" x="543" y="253" text-anchor="middle">interceptor</text>
+            </g>
+            <path class="how-line" d="M174 240 H236" marker-end="url(#how-arrow)"/>
+            <path class="how-line" d="M406 240 H468" marker-end="url(#how-arrow)"/>
+            <text class="how-t3" x="437" y="232" text-anchor="middle">check</text>
+            <text class="how-t3" x="640" y="206">VALIDATE (fail-closed): refuses a change that</text>
+            <text class="how-t3" x="640" y="222">removes Risk Guard or widens access.</text>
+            <text class="how-t3" x="640" y="246">POST_COMMIT (fail-open): records the sandbox,</text>
+            <text class="how-t3" x="640" y="262">its policy and its identity.</text>
+            <path class="how-line dot" d="M520 116 V214"/>
+            <text class="how-t3" x="528" y="170" >one Risk Guard process</text>
+
+            <!-- evidence -->
+            <g class="how-node" data-steps="4" tabindex="-1">
+              <rect class="how-box ev" x="468" y="344" width="150" height="62" rx="8"/>
+              <text class="how-t1" x="543" y="372" text-anchor="middle">Evidence store</text>
+              <text class="how-t2" x="543" y="390" text-anchor="middle">SQLite · one writer</text>
+            </g>
+            <g class="how-node" tabindex="-1">
+              <rect class="how-box ev" x="700" y="344" width="150" height="62" rx="8"/>
+              <text class="how-t1" x="775" y="372" text-anchor="middle">This console</text>
+              <text class="how-t2" x="775" y="390" text-anchor="middle">read-only</text>
+            </g>
+            <g class="how-node" tabindex="-1">
+              <rect class="how-box ext" x="888" y="344" width="56" height="62" rx="8"/>
+              <text class="how-t1" x="916" y="380" text-anchor="middle">You</text>
+            </g>
+            <path class="how-line" d="M625 116 V324 H590 V344" marker-end="url(#how-arrow)"/>
+            <text class="how-t3" x="633" y="316">every decision is written here</text>
+            <path class="how-line" d="M543 266 V344" marker-end="url(#how-arrow)"/>
+            <path class="how-line" d="M618 375 H700" marker-end="url(#how-arrow)"/>
+            <path class="how-line" d="M850 375 H888" marker-end="url(#how-arrow)"/>
+          </svg>
+
+          <div class="how-stepper" id="how-stepper" role="tablist" aria-label="Steps"></div>
+          <div class="how-step-card" id="how-step-card" role="tabpanel" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <div class="grid-2" style="margin-top:16px">
+        <section class="panel">
+          <div class="panel-header"><div class="panel-title-group"><h2>Two places Risk Guard plugs in</h2><p>Both are OpenShell extension points. Nothing in OpenShell is forked or patched.</p></div></div>
+          <div class="panel-body how-cards">
+            <div class="how-card">
+              <h3>On every request <span class="badge badge-neutral">supervisor middleware</span></h3>
+              <p class="plain">Scores each outbound HTTP call after OpenShell's own rules allow it and before any secret is attached.</p>
+              <p class="hood">Registered as a supervisor middleware, bound per sandbox in its policy (<code>network_middlewares</code>) for the hosts you attach, with <code>on_error: fail_closed</code>. HTTP request, phase <code>PRE_CREDENTIALS</code>; 500 ms timeout.</p>
+            </div>
+            <div class="how-card">
+              <h3>On every sandbox change <span class="badge badge-neutral">gateway interceptor</span></h3>
+              <p class="plain">Checks that nobody removes Risk Guard or widens a sandbox's access, and records each sandbox so its activity has an identity.</p>
+              <p class="hood"><code>VALIDATE</code> (fail-closed) covers <code>CreateSandbox</code>, <code>UpdateConfig</code>, <code>ApproveDraftChunk</code>, <code>ApproveAllDraftChunks</code> and <code>SubmitPolicyAnalysis</code>. <code>POST_COMMIT</code> records the epoch and policy snapshot, and <code>DeleteSandbox</code> closes the epoch. OpenShell forces <code>POST_COMMIT</code> to fail-open because it observes an already-committed change, so a missed event cannot deny anything.</p>
+            </div>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-header"><div class="panel-title-group"><h2>Who is the "workload"?</h2><p>Scores follow a workload, not a sandbox, so a fresh sandbox does not reset the penalty.</p></div></div>
+          <div class="panel-body how-cards">
+            <div class="how-card">
+              <p class="plain">A workload is a workspace plus the identity OpenShell authenticated for whoever created the sandbox. Nobody types it, so it cannot be forged. An agent can also carry a named identity, such as its Microsoft Entra application ID, but only when an allowlisted operator sets it.</p>
+              <p class="hood">Derived as a hash of (workspace, provider, kind, subject) from the gateway's authenticated principal, or taken from the <code>openshell.nvidia.com/agent-id</code> label when the creating principal is on the binding allowlist. A bad label is refused at <code>VALIDATE</code>.</p>
+              <p class="quiet-note" id="how-identity-example">Loading a live example…</p>
+            </div>
+            <div class="how-card">
+              <h3>What it stores, and what it never uses</h3>
+              <p class="plain"><strong>Stores:</strong> the method, host, path pattern, a keyed resource name, the score and why, lock state, and the sandbox's policy. <strong>Never uses:</strong> request or response bodies, headers, query strings, or credentials.</p>
+              <p class="hood">OpenShell delivers the body, headers and query to the middleware, up to the registered payload limit. Risk Guard discards them unread, never logs them, and advertises the 4 MiB platform maximum so a large body is never denied just for its size. Raw resource names are stored, so keep the database on an encrypted volume.</p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel" style="margin-top:16px">
+        <div class="panel-header"><div class="panel-title-group"><h2>A real request, from the live data</h2><p id="how-example-sub">Loading the latest blocked request…</p></div></div>
+        <div class="panel-body" id="how-example"></div>
+      </section>
+
+      <div class="grid-2" style="margin-top:16px">
+        <section class="panel">
+          <div class="panel-header"><div class="panel-title-group"><h2>Live proof</h2><p>Read from this running system. "Not collected" means exactly that, not "fine".</p></div></div>
+          <div class="panel-body"><div class="how-badges" id="how-badges"></div></div>
+        </section>
+        <section class="panel">
+          <div class="panel-header"><div class="panel-title-group"><h2>Adopting it</h2><p>What it takes, and what to expect.</p></div></div>
+          <div class="panel-body how-cards">
+            <div class="how-card">
+              <h3>What you set up</h3>
+              <ul class="how-list">
+                <li>Run Risk Guard (one Deployment, one SQLite file on a volume).</li>
+                <li>Register its two services in the OpenShell gateway configuration and restart the gateway.</li>
+                <li>Add <code>network_middlewares: risk-guard</code> to a sandbox policy for each host you want scored, and give each agent an approved task profile.</li>
+                <li>Start in observe mode if you want detection before enforcement.</li>
+              </ul>
+            </div>
+            <div class="how-card">
+              <h3>Honest limits</h3>
+              <ul class="how-list">
+                <li><strong>Fail-closed.</strong> If Risk Guard is down or slow, calls to attached hosts are denied. The gateway will not start if a registered service is unavailable.</li>
+                <li><strong>One replica, one writer.</strong> No high availability yet. A redeploy leaves a gap of about a minute.</li>
+                <li><strong>Only attached hosts, only HTTP.</strong> No scoring of other hosts, files, processes, responses or WebSocket traffic.</li>
+                <li><strong>Early scores are rule-based.</strong> Until a workload has history, a score comes from its approved task rules and a fixed API-risk map, not learned behavior.</li>
+                <li><strong>Recorded, not proven.</strong> A decision shows what was asked and answered, not that the call reached its destination.</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel" style="margin-top:16px">
+        <div class="panel-header"><div class="panel-title-group"><h2>Words used in this console</h2></div></div>
+        <div class="panel-body how-glossary">
+          <dl>
+            <dt>Workload</dt><dd>The identity a score follows across runs and sandboxes. Shown with its name and, for a named agent, its Application ID.</dd>
+            <dt>Sandbox</dt><dd>The isolated environment OpenShell runs an agent in. Sandboxes come and go; workloads persist.</dd>
+            <dt>Epoch</dt><dd>One governed lifetime of a sandbox: its policy, its approved baseline, and its decision sequence.</dd>
+            <dt>Task profile</dt><dd>The approved description of what a kind of agent is meant to do: allowed actions, approved resources and normal pace.</dd>
+            <dt>Score</dt><dd>0 to 100 for one request. It is not a probability of compromise. A request at or above the block line (70 by default) is denied.</dd>
+            <dt>Lock</dt><dd>A restriction on one kind of action against one target for a workload. It follows the workload across sandboxes, has no expiry, and only an operator can clear it.</dd>
+            <dt>Fail-closed</dt><dd>When Risk Guard cannot answer in time, the request is denied. That is an availability choice, and it is not recorded as risky behavior.</dd>
+            <dt>Enforcement</dt><dd>The tab showing what a workload is allowed to do and the saved settings. (Not NeMo Guardrails, which screens a task before an agent starts.)</dd>
+          </dl>
+        </div>
+      </section>
+      <p class="quiet-note" style="margin-top:14px">Where each claim comes from: OpenShell's supervisor-middleware and gateway-interceptor documentation and source, and Risk Guard's design notes. This page describes the system as built; it is not a promise of future features.</p>
+    </main>
+
     <!-- =================================================================== -->
     <!-- VIEW 2: SELECTED AGENT DRILL-DOWN                                   -->
     <!-- =================================================================== -->
@@ -1403,7 +1686,7 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
         <button type="button" class="workspace-tab" id="tab-recommendations" data-agent-tab="recommendations" role="tab" aria-selected="false" aria-controls="agent-tab-recommendations" tabindex="-1">Recommendations</button>
         <button type="button" class="workspace-tab" id="tab-runs" data-agent-tab="runs" role="tab" aria-selected="false" aria-controls="agent-tab-runs" tabindex="-1">Runs <span class="nav-counter" id="run-limit">0</span></button>
         <button type="button" class="workspace-tab" id="tab-adaptive" data-agent-tab="adaptive" role="tab" aria-selected="false" aria-controls="agent-tab-adaptive" tabindex="-1">Adaptive</button>
-        <button type="button" class="workspace-tab" id="tab-settings" data-agent-tab="settings" role="tab" aria-selected="false" aria-controls="agent-tab-settings" tabindex="-1">Guardrails</button>
+        <button type="button" class="workspace-tab" id="tab-settings" data-agent-tab="settings" role="tab" aria-selected="false" aria-controls="agent-tab-settings" tabindex="-1">Enforcement</button>
       </div>
       <div class="workspace-toolbar" id="agent-observation-controls">
         <div class="filter-row">
@@ -1598,11 +1881,11 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
           </div>
         </section>
 
-      <!-- SUB-VIEW 2: GUARDRAIL CONFIGURATION -->
+      <!-- SUB-VIEW 2: ENFORCEMENT SETTINGS (formerly "Guardrails"; renamed so it is not confused with NeMo Guardrails) -->
       <section class="panel workspace-panel view-hidden" id="agent-tab-settings" role="tabpanel" aria-labelledby="tab-settings" tabindex="0">
         <div class="panel-header">
           <div class="panel-title-group">
-            <h2>Guardrails</h2>
+            <h2>Enforcement</h2>
             <p>Save desired settings in SQLite. Risk Guard changes affect subsequent evaluations; task profiles and filesystem changes require a new run or sandbox.</p>
           </div>
           <span id="cfg-access-badge" class="badge badge-neutral">Read-only</span>
@@ -1741,7 +2024,7 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
               <p class="quiet-note">A recorded profile/policy match only compares recorded configuration. Kernel/runtime policy load is not collected; a match is not proof that a policy was loaded.</p>
               <details>
                 <summary>Recorded sandbox coverage</summary>
-                <pre id="cfg-coverage" tabindex="0" role="region" aria-label="Saved guardrail application coverage"></pre>
+                <pre id="cfg-coverage" tabindex="0" role="region" aria-label="Saved enforcement coverage"></pre>
               </details>
               <details>
                 <summary>Saved revision history</summary>
@@ -1794,7 +2077,7 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
             </div>
             <div class="inline-actions">
               <span class="badge badge-neutral" id="adp-access-badge">Read-only</span>
-              <button type="button" class="btn" id="adp-unlock">Unlock in Guardrails</button>
+              <button type="button" class="btn" id="adp-unlock">Unlock in Enforcement</button>
               <button type="button" class="btn" id="adp-refresh">Refresh evidence</button>
             </div>
           </div>
@@ -1817,7 +2100,7 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
                 </div>
                 <div>
                   <small>Blocking</small>
-                  <strong id="adp-card-enforce">Deterministic guardrails only</strong>
+                  <strong id="adp-card-enforce">Rule-based enforcement only</strong>
                   <p id="adp-card-enforce-detail">A learned model can block only after you review and promote it.</p>
                 </div>
               </div>
@@ -1826,7 +2109,7 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
                 <button type="button" class="btn btn-primary" id="adp-card-promote" disabled>Review &amp; promote…</button>
                 <button type="button" class="btn" id="adp-toggle-auto" disabled>Pause learning</button>
               </div>
-              <p id="adp-card-lock" class="quiet-note">Viewing is open to everyone on this machine. Changes need the operator token: Guardrails → Unlock editing.</p>
+              <p id="adp-card-lock" class="quiet-note">Viewing is open to everyone on this machine. Changes need the operator token: Enforcement → Unlock editing.</p>
             </div>
           </div>
         </section>
@@ -1839,7 +2122,7 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
               <div class="adaptive-summary">
                 <div><small>Learned model support</small><strong id="adp-model-state">Evidence not loaded</strong><p id="adp-learning-summary">No training or enforcement status is inferred.</p></div>
                 <div><small>Evidence provenance</small><strong id="adp-provenance">Local demo / unverified</strong><p id="adp-provenance-detail">Never presented as JWT-verified or production-trained evidence.</p></div>
-                <div><small>Independent protection</small><strong>Deterministic guardrails remain</strong><p>Native enforcement, task constraints, existing restrictions and history stay active. Learning does not grant permissions.</p></div>
+                <div><small>Independent protection</small><strong>Rule-based enforcement remains</strong><p>Native enforcement, task constraints, existing restrictions and history stay active. Learning does not grant permissions.</p></div>
               </div>
               <div class="adaptive-controls">
                 <div class="adaptive-field">
@@ -1999,14 +2282,14 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
               </div>
               <label class="adaptive-check" for="adp-shadow-reviewed">
                 <input type="checkbox" id="adp-shadow-reviewed" disabled />
-                <span>I reviewed this model’s native shadow observations and counterfactual alerts and approve this exact context, scope and guardrail revision for learned enforcement.</span>
+                <span>I reviewed this model’s native shadow observations and counterfactual alerts and approve this exact context, scope and enforcement-settings revision for learned enforcement.</span>
               </label>
               <div class="inline-actions" style="margin-top:16px">
                 <button type="button" class="btn btn-primary" id="adp-enforce" disabled>Approve enforcement…</button>
                 <button type="button" class="btn" id="adp-shadow" disabled>Use in shadow…</button>
                 <button type="button" class="btn" id="adp-off" disabled>Stop model…</button>
               </div>
-              <p class="quiet-note">Promotion requires algorithm quality, minimum independent training/holdout support, zero empirical holdout would-blocks, clean native shadow support from new independent runs outside all training/holdout runs, and explicit review. A guardrail/configuration revision change makes old models incompatible and unusable at runtime. Off stops model use without clearing restrictions or history.</p>
+              <p class="quiet-note">Promotion requires algorithm quality, minimum independent training/holdout support, zero empirical holdout would-blocks, clean native shadow support from new independent runs outside all training/holdout runs, and explicit review. A enforcement-settings/configuration revision change makes old models incompatible and unusable at runtime. Off stops model use without clearing restrictions or history.</p>
             </div>
           </div>
         </section>
@@ -2222,23 +2505,27 @@ function inspectButton(kind, id, label = "Inspect") {
 function switchMainView(view, scrollToTop = false) {
   activeTopView = view;
   $("nav-fleet-btn").classList.toggle("active", view === "fleet");
-  $("nav-directory-btn").classList.toggle("active", view !== "fleet");
+  $("nav-directory-btn").classList.toggle("active", view === "directory" || view === "agent");
+  $("nav-how-btn").classList.toggle("active", view === "how");
   $("nav-agent-btn").classList.toggle("active", view === "agent");
   for (const [id, isCurrent] of [
     ["nav-fleet-btn", view === "fleet"],
     ["nav-directory-btn", view === "directory"],
+    ["nav-how-btn", view === "how"],
     ["nav-agent-btn", view === "agent"]
   ]) {
     if (isCurrent) $(id).setAttribute("aria-current", "page");
     else $(id).removeAttribute("aria-current");
   }
   $("nav-agent-lbl").textContent = view === "fleet" || view === "directory" ? "Fleet overview"
-    : currentAgentData?.agent?.agent_id || "Agent workspace";
+    : view === "how" ? "How it works" : currentAgentData?.agent?.agent_id || "Agent workspace";
   // "directory" is the workloads section of the Fleet page, so it shows that page and scrolls to the section.
   $("fleet-view").classList.toggle("view-hidden", view !== "fleet" && view !== "directory");
+  $("how-view").classList.toggle("view-hidden", view !== "how");
   $("agent-detail").classList.toggle("view-hidden", view !== "agent");
   $("agent-detail").hidden = view !== "agent" || !currentAgentData;
   if (view === "agent") switchAgentSubTab(activeAgentTab);
+  if (view === "how") { renderHowLive(); if (cachedStateData) void loadHowExample(cachedStateData); }
   if (view === "directory") $("directory-section").scrollIntoView({ block: "start", behavior: "instant" });
   else if (scrollToTop) window.scrollTo({ top: 0, behavior: "instant" });
 }
@@ -2276,7 +2563,7 @@ function openAuditModal(contextLabel) {
   }
   modal.hidden = false;
   document.body.style.overflow = "hidden";
-  for (const id of ["fleet-view", "agent-detail", "agent-loading"]) $(id).inert = true;
+  for (const id of ["fleet-view", "how-view", "agent-detail", "agent-loading"]) $(id).inert = true;
   document.querySelector(".top-header").inert = true;
   document.querySelector(".sidebar").inert = true;
   if (isOpening) $("close-audit-modal-btn").focus();
@@ -2285,7 +2572,7 @@ function openAuditModal(contextLabel) {
 function closeAuditModal() {
   $("audit-modal").hidden = true;
   document.body.style.overflow = "";
-  for (const id of ["fleet-view", "agent-detail", "agent-loading"]) $(id).inert = false;
+  for (const id of ["fleet-view", "how-view", "agent-detail", "agent-loading"]) $(id).inert = false;
   document.querySelector(".top-header").inert = false;
   document.querySelector(".sidebar").inert = false;
   if (selected?.kind === "sandbox") {
@@ -2352,7 +2639,7 @@ function validateGuardrailView(view, agentId) {
         || (filesystem !== null && (!filesystem || typeof filesystem.include_workdir !== "boolean"
           || !strings(filesystem.read_only) || !strings(filesystem.read_write)))))
       || (view.has_saved_settings && settings === null)) {
-    throw new Error("Guardrails returned an incomplete or mismatched agent view. Controls remain read-only; reload to retry.");
+    throw new Error("Enforcement settings returned an incomplete or mismatched agent view. Controls remain read-only; reload to retry.");
   }
 }
 
@@ -2386,14 +2673,14 @@ function guardrailHttpError(status, payload, token = "") {
   let message;
   if (status === 401) message = "Operator authorization is missing or invalid (HTTP 401). Unlock again.";
   else if (status === 403) message = "Origin rejected (HTTP 403). Open this dashboard directly from the same service origin.";
-  else if (status === 404) message = "Guardrail controls are unavailable or this workload is unknown (HTTP 404). The service may have controls disabled or an older backend. Read-only until a successful reload.";
+  else if (status === 404) message = "Enforcement controls are unavailable or this workload is unknown (HTTP 404). The service may have controls disabled or an older backend. Read-only until a successful reload.";
   else if (status === 409) message = `Revision conflict (HTTP 409)${Number.isSafeInteger(payload?.current_revision) ? `; server revision ${payload.current_revision}` : ""}. Draft preserved; reload/discard before saving.`;
   else if (status === 413) message = "The settings payload exceeds the service's 64 KiB request limit (HTTP 413). Shorten lists or paths before retrying.";
   else if (status === 400 || status === 422) {
     let detail = typeof payload?.error === "string" ? payload.error : "Check the field constraints and imported approved profile name.";
     if (token) detail = detail.replace(new RegExp(token, "gi"), "[redacted]");
     message = `Validation rejected (HTTP ${status}): ${detail}`;
-  } else message = `Guardrail service unavailable (HTTP ${status}).`;
+  } else message = `Enforcement service unavailable (HTTP ${status}).`;
   const error = new Error(message);
   error.status = status;
   error.currentRevision = Number.isSafeInteger(payload?.current_revision) ? payload.current_revision : null;
@@ -2407,7 +2694,7 @@ async function guardrailFetch(url, options = {}) {
       cache: "no-store", mode: "same-origin", credentials: "same-origin", redirect: "error", ...options
     });
   } catch (_) {
-    throw new Error("Guardrail service could not be reached. No save is confirmed; reload to check the saved state.");
+    throw new Error("Enforcement service could not be reached. No save is confirmed; reload to check the saved state.");
   }
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
@@ -2420,7 +2707,7 @@ async function guardrailFetch(url, options = {}) {
 async function guardrailJson(url, options) {
   const response = await guardrailFetch(url, options);
   try { return await response.json(); }
-  catch (_) { throw new Error("Guardrail service returned an invalid response. No save is confirmed; reload to check the saved state."); }
+  catch (_) { throw new Error("Enforcement service returned an invalid response. No save is confirmed; reload to check the saved state."); }
 }
 
 function lockOperator(message = "") {
@@ -2563,7 +2850,7 @@ function renderGuardrails() {
   $("cfg-access-status").textContent = operatorCapability === "checking"
     ? "Checking operator controls. Dashboard remains read-only."
     : operatorCapability === "disabled"
-      ? "This console is view-only. To change guardrails, an operator enables controls on the service (--operator-token-file); the overview above shows what is enforced now."
+      ? "This console is view-only. To change enforcement settings, an operator enables controls on the service (--operator-token-file); the overview above shows what is enforced now."
       : operatorCapability === "unavailable"
         ? "Read-only: operator capability is unavailable. Reload to retry after a compatible backend is running."
         : operatorVerifying ? "Verifying local operator authorization…"
@@ -2681,7 +2968,7 @@ function renderRestrictionRecovery() {
     const statusMsg = restrictionClearError || restrictionClearNotice
       || (!rows.length ? "No active context-scoped restrictions recorded for this workload."
         : unlocked ? "Operator unlocked. Enter an audit reason to clear an active lock."
-          : "Read-only: unlock operator controls in Guardrails to clear an active restriction.");
+          : "Read-only: unlock operator controls in Enforcement to clear an active restriction.");
     status.textContent = statusMsg;
     status.className = restrictionClearError ? "cfg-error" : "muted";
     list.replaceChildren();
@@ -2938,7 +3225,7 @@ async function saveGuardrails(event) {
 async function reloadGuardrails() {
   const state = currentGuardrailState();
   if (!state || state.loading || state.saving) return;
-  if (state.dirty && !window.confirm("Discard this workload's unsaved guardrail draft and reload the server revision?")) return;
+  if (state.dirty && !window.confirm("Discard this workload's unsaved enforcement draft and reload the server revision?")) return;
   await Promise.all([refreshOperatorStatus(), loadGuardrails(state.agentId, state.editVersion)]);
 }
 
@@ -2955,7 +3242,7 @@ async function downloadGuardrailPolicy() {
     const url = URL.createObjectURL(new Blob([yaml], { type: "application/yaml" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${state.agentId.replace(/[^a-z0-9_-]/gi, "_")}-saved-guardrails.yaml`;
+    link.download = `${state.agentId.replace(/[^a-z0-9_-]/gi, "_")}-saved-enforcement-settings.yaml`;
     document.body.append(link);
     link.click();
     link.remove();
@@ -3195,7 +3482,7 @@ function adaptiveReconcile(state) {
 function receiveAdaptiveView(state, view) {
   validateAdaptiveView(view, state.agentId);
   if (state.view && view.guardrails_revision < state.view.guardrails_revision) {
-    throw new Error("The service returned an older guardrail revision. Refresh before any further action; no mutation success is assumed.");
+    throw new Error("The service returned an older enforcement-settings revision. Refresh before any further action; no mutation success is assumed.");
   }
   if (state.view && state.view.guardrails_revision !== view.guardrails_revision) {
     adaptiveClearAcknowledgments(state);
@@ -3232,7 +3519,7 @@ async function adaptiveRequest(state, command, signal, authorization = "") {
   if (!response.ok) {
     const detail = adaptiveRedact(typeof payload?.error === "string" ? payload.error
       : typeof payload?.message === "string" ? payload.message : "", authorization);
-    const message = response.status === 401 ? "Operator authorization was rejected. Unlock again in Guardrails."
+    const message = response.status === 401 ? "Operator authorization was rejected. Unlock again in Enforcement."
       : response.status === 403 ? "Origin or operator access rejected. Open the dashboard directly from the same service origin."
         : response.status === 404 ? "Adaptive evidence API is unavailable or this workload is unknown. A compatible backend may not be running; no learning state is inferred."
           : response.status === 409 ? "Adaptive state changed. Refresh and review the current revision/model before retrying; no automatic retry or replacement."
@@ -3305,7 +3592,7 @@ function adaptiveSafetyBlockers(state, model) {
   const blockers = [];
   if (model.revoked) blockers.push("This model is revoked; its derived evidence cannot be promoted.");
   if (!model.compatible) blockers.push("The backend marks this model incompatible with current configuration.");
-  if (model.guardrails_revision !== adaptiveCurrentRevision(state)) blockers.push(`Model r${model.guardrails_revision} does not match current guardrail revision r${adaptiveCurrentRevision(state)}.`);
+  if (model.guardrails_revision !== adaptiveCurrentRevision(state)) blockers.push(`Model r${model.guardrails_revision} does not match current enforcement-settings revision r${adaptiveCurrentRevision(state)}.`);
   if (!profile.ready_for_enforcement) blockers.push("The algorithm quality/readiness gate has not passed. This candidate is provisional / insufficient evidence.");
   for (const [prefix, label] of [["training", "Training"], ["holdout", "Holdout"]]) {
     if (adaptiveCount(profile[`${prefix}_runs`]) < minimums[`${prefix}_runs`] || profile[`${prefix}_requests`] < minimums[`${prefix}_requests`]) {
@@ -3438,14 +3725,14 @@ function renderAdaptiveModel(state, writable) {
   adaptiveText("adp-training-help", !state?.view ? "No approved learning evidence loaded."
     : !state.contextId ? "Choose this workload’s context and evidence scope before building."
       : eligible.length ? `${eligible.length} eligible approved windows across ${new Set(eligible.map(session => session.run_id)).size} distinct runs · provisional builds allowed · shadow only`
-        : "No approved learning evidence at this guardrail revision. Finish and explicitly approve an eligible native capture first.");
+        : "No approved learning evidence at this enforcement-settings revision. Finish and explicitly approve an eligible native capture first.");
   $("adp-train").disabled = !writable || !state?.contextId || !eligible.length;
   $("adp-model-content").hidden = !model;
   $("adp-model-empty").hidden = Boolean(model);
   adaptiveText("adp-model-empty", !state?.view ? "Learning evidence is unavailable; no training status is inferred."
     : !state.contextId ? "Choose a context to inspect its models. There is no agent-wide learned model."
       : eligible.length ? "Not trained · approved windows exist, but no candidate has been built for this context and evidence scope."
-        : "Not trained · no approved learning evidence for this context, scope and guardrail revision.");
+        : "Not trained · no approved learning evidence for this context, scope and enforcement-settings revision.");
   if (!model) {
     for (const id of ["adp-shadow-reviewed", "adp-enforce", "adp-shadow", "adp-off"]) $(id).disabled = true;
     $("adp-shadow-reviewed").checked = false;
@@ -3596,7 +3883,7 @@ function renderAdaptiveCard(state, writable) {
   adaptiveText("adp-card-model-detail", !featured
     ? "Built automatically after the first approved run. It observes only and never blocks."
     : `Would have blocked ${adaptiveNumber(stats.reviewable_would_block)} of ${adaptiveNumber(stats.reviewable_requests)} clean requests from new runs · ${adaptiveNumber(featured.auto_approved_sessions ?? 0)} training run(s) auto-approved without review`);
-  adaptiveText("adp-card-enforce", featured?.enforced ? "Learned model can block" : "Deterministic guardrails only");
+  adaptiveText("adp-card-enforce", featured?.enforced ? "Learned model can block" : "Rule-based enforcement only");
   adaptiveText("adp-card-enforce-detail", featured?.enforced
     ? `Model ${featured.model_id} was promoted. Stopping it keeps existing restrictions.`
     : "A learned model can block only after you review and promote it.");
@@ -3635,13 +3922,13 @@ function renderAdaptive() {
   $("agent-tab-adaptive").setAttribute("aria-busy", String(busy));
   $("adp-refresh").disabled = !state || busy;
   $("adp-unlock").disabled = operatorVerifying || Boolean(state?.pending);
-  $("adp-unlock").textContent = adaptiveAuthorized() ? "Operator access in Guardrails" : "Unlock in Guardrails";
+  $("adp-unlock").textContent = adaptiveAuthorized() ? "Operator access in Enforcement" : "Unlock in Enforcement";
   adaptiveText("adp-access-badge", operatorVerifying ? "Verifying…" : adaptiveAuthorized() ? "Operator unlocked" : "Read-only");
   const authStatus = operatorCapability === "checking" ? "Checking operator capability; writes disabled."
     : operatorCapability === "disabled" ? "Operator writes are disabled by the service."
       : operatorCapability === "unavailable" ? "Operator capability is unavailable; writes disabled."
-        : adaptiveAuthorized() ? "Operator authorization is shared with Guardrails for this tab only."
-          : "Read-only evidence. Unlock in Guardrails to curate or change a model.";
+        : adaptiveAuthorized() ? "Operator authorization is shared with Enforcement for this tab only."
+          : "Read-only evidence. Unlock in Enforcement to curate or change a model.";
   adaptiveText("adp-status", !state ? "Select an agent to inspect adaptive evidence."
     : state.pending ? `${state.pending} Awaiting service confirmation; controls are disabled.`
       : state.loading ? `Refreshing adaptive evidence for ${state.agentId}; selections and review notes are preserved.`
@@ -4611,7 +4898,7 @@ function buildRiskyItems(data, periodDecisions, fsSummary) {
             return {
               triggered: true,
               ptsNum: c || 85,
-              title: "Layer A Role Guardrail Violation",
+              title: "Outside the approved task rules (Layer A)",
               pts: `+${c || 85} pts`,
               desc: `${s.observed_summary || "Task constraint details not recorded"} · Baseline: ${s.baseline_summary || "Not recorded"}`
             };
@@ -6021,6 +6308,7 @@ async function refresh() {
     renderFreshness();
 
     renderFleetDirectory();
+    if (activeTopView === "how") { renderHowLive(); void loadHowExample(data); }
 
     for (const item of data.sandboxes) {
       const row = document.createElement("tr");
@@ -6306,9 +6594,191 @@ $("auto-refresh").addEventListener("change", e => {
 });
 
 
+// ---- How it works ----------------------------------------------------------------------------------------------------
+// A teaching page: the diagram and steps are fixed copy (checked against OpenShell's docs and source and Risk Guard's
+// code); the proof badges, the identity example and the walkthrough are read from the running system, and anything
+// the system does not collect is shown as "not collected", never as healthy.
+const HOW_STEPS = [
+  { n: 1, title: "The agent sends a request",
+    plain: "An agent inside its sandbox calls an outside service over HTTP.",
+    hood: "Outbound HTTP/S goes through the sandbox's proxy in the OpenShell supervisor. Traffic OpenShell cannot inspect (for example a tls: skip endpoint) is not scored; with on_error: fail_closed an attached entry denies it." },
+  { n: 2, title: "OpenShell checks its own policy first",
+    plain: "OpenShell's rules decide whether the call is allowed at all. A request they refuse never reaches Risk Guard.",
+    hood: "Network policy (L4/L7) is evaluated before any middleware, so Risk Guard only sees requests that policy already allows. It can add a deny and can never add a permit." },
+  { n: 3, title: "OpenShell asks Risk Guard",
+    plain: "For the hosts Risk Guard is attached to, OpenShell asks: is this normal for this workload?",
+    hood: "The supervisor calls SupervisorMiddleware.EvaluateHttpRequest (HTTP request, phase PRE_CREDENTIALS) over gRPC with a short-lived EdDSA token, with a 500 ms timeout. It happens before credentials are injected, so Risk Guard never handles a secret.",
+    sees: "The method, host, port, path pattern, the program making the call when OpenShell reports it, and which sandbox and workload it belongs to.",
+    never: "Bodies, headers, query strings and credentials. OpenShell delivers the body, headers and query; Risk Guard discards them unread and never stores them." },
+  { n: 4, title: "Risk Guard scores it",
+    plain: "It works out who the workload is, compares the request with what that workload is approved to do, and gives it a score from 0 to 100.",
+    hood: "Identifies the workload (workspace plus authenticated principal, or an allowlisted agent-id label), normalizes the route (for example POST /services/{svc}/rollback), applies any lock, scores against the approved task profile, commits the decision to SQLite in one transaction and only then answers. If it cannot answer in time or its store fails, the answer is deny, and that is not recorded as risky behavior." },
+  { n: 5, title: "Deny, or allow",
+    plain: "At 70 or above the request is denied and never leaves the sandbox; the agent gets an HTTP 403. A repeat of a locked action is denied straight away.",
+    hood: "A deny is HTTP 403 with a JSON body that names the reason code: task_constraint_denied (outside the approved task rules), behavioral_risk_denied (a score over the line), behavioral_risk_restricted (a lock applies), or risk_state_unavailable (Risk Guard could not answer in time and failed closed). Risk Guard's own text is never forwarded to the sandbox." },
+  { n: 6, title: "OpenShell adds credentials and forwards",
+    plain: "If it is allowed, OpenShell attaches the credentials and sends the request on. The agent itself never holds the real secret.",
+    hood: "Provider credentials are injected after request middleware runs, so neither the agent nor Risk Guard holds the real value." },
+];
+let howStep = 1;
+
+function selectHowStep(n) {
+  howStep = n;
+  const step = HOW_STEPS.find(s => s.n === n);
+  for (const b of document.querySelectorAll("#how-stepper button")) b.setAttribute("aria-selected", String(Number(b.dataset.step) === n));
+  for (const el of document.querySelectorAll("#how-diagram [data-steps]")) {
+    el.classList.toggle("active", el.dataset.steps.split(" ").includes(String(n)));
+  }
+  const card = $("how-step-card");
+  const h = document.createElement("h3"); h.textContent = `${step.n}. ${step.title}`;
+  const plain = document.createElement("p"); plain.className = "plain"; plain.textContent = step.plain;
+  const hood = document.createElement("p"); hood.className = "hood"; hood.textContent = step.hood;
+  card.replaceChildren(h, plain, hood);
+  if (step.sees) {
+    const sees = document.createElement("div"); sees.className = "sees";
+    const a = document.createElement("div"); const as = document.createElement("strong"); as.textContent = "What Risk Guard uses"; a.append(as, document.createTextNode(step.sees));
+    const b = document.createElement("div"); const bs = document.createElement("strong"); bs.textContent = "What it never uses"; b.append(bs, document.createTextNode(step.never));
+    sees.append(a, b);
+    card.append(sees);
+  }
+}
+
+function buildHow() {
+  $("how-stepper").replaceChildren(...HOW_STEPS.map(s => {
+    const b = document.createElement("button");
+    b.type = "button"; b.dataset.step = String(s.n); b.setAttribute("role", "tab");
+    const num = document.createElement("span"); num.className = "n"; num.textContent = String(s.n);
+    b.append(num, document.createTextNode(s.title));
+    b.addEventListener("click", () => selectHowStep(s.n));
+    return b;
+  }));
+  for (const el of document.querySelectorAll("#how-diagram [data-steps]")) {
+    const first = el.dataset.steps.split(" ").map(Number).find(Number.isFinite);
+    if (!first) continue;
+    el.addEventListener("click", () => selectHowStep(first));
+    el.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectHowStep(first); } });
+  }
+  for (const b of document.querySelectorAll(".how-toggle button")) {
+    b.addEventListener("click", () => {
+      $("how-view").dataset.level = b.dataset.level;
+      for (const x of document.querySelectorAll(".how-toggle button")) x.setAttribute("aria-pressed", String(x === b));
+    });
+  }
+  selectHowStep(1);
+}
+
+let howExample = null;
+let howExampleKey = null;
+
+async function loadHowExample(data) {
+  const candidates = (data.agents || []).filter(a => Number(a.denied_count) > 0)
+    .sort((a, b) => Number(b.last_observed_at_ms || 0) - Number(a.last_observed_at_ms || 0));
+  const key = candidates.map(a => `${a.agent_id}:${a.last_observed_at_ms}`).join("|");
+  if (key === howExampleKey) return;
+  howExampleKey = key;
+  if (!candidates.length) { howExample = null; renderHowLive(); return; }
+  try {
+    const detail = await read(`/api/agents/${encodeURIComponent(candidates[0].agent_id)}`);
+    const denies = (detail.decisions || []).filter(d => d.evaluation?.outcome === "deny")
+      .sort((a, b) => Number(b.evaluation?.decision_timestamp_ms || 0) - Number(a.evaluation?.decision_timestamp_ms || 0));
+    const cause = denies.find(d => d.evaluation?.reason_code !== "behavioral_risk_restricted") || denies[0];
+    howExample = cause ? { agent: detail.agent, decision: cause, snapshot: (detail.policy_snapshots || [])[0] || null,
+      enforce: Number.isInteger(detail.guardrails?.settings?.enforce_threshold) ? detail.guardrails.settings.enforce_threshold : (cause.evaluation?.threshold ?? 70) } : null;
+  } catch { howExample = null; }
+  renderHowLive();
+}
+
+function renderHowLive() {
+  if (!$("how-badges")) return;
+  const data = cachedStateData;
+  if (!data) { $("how-badges").textContent = "Loading…"; return; }
+  const life = data.sandbox_lifecycle && typeof data.sandbox_lifecycle === "object" ? data.sandbox_lifecycle : null;
+  const conn = data.gateway_connectivity && typeof data.gateway_connectivity === "object" ? data.gateway_connectivity : null;
+  const badges = [];
+  const add = (label, value, kind) => badges.push({ label, value, kind });
+
+  add("Evidence source", data.source === "persisted_risk_guard_evidence" ? "Real decisions, persisted in Risk Guard's own store" : `${data.source ?? "not reported"}`, data.source === "persisted_risk_guard_evidence" ? "ok" : "warn");
+  add("Coverage", data.coverage === "selected_inspected_http_requests_only" ? "Inspected HTTP requests on attached hosts only" : `${data.coverage ?? "not reported"}`, data.coverage === "selected_inspected_http_requests_only" ? "ok" : "warn");
+  if (conn) {
+    const last = conn.last_supervisor_request_ms;
+    const age = Number.isFinite(last) ? `last request ${relativeAge(Math.max(0, Date.now() - last))} ago` : "no request yet";
+    add("Requests arriving from OpenShell", conn.status === "receiving" ? `Yes · ${age}` : conn.status === "quiet" ? `Quiet · ${age}` : "None received yet", conn.status === "receiving" ? "ok" : "warn");
+  } else add("Requests arriving from OpenShell", "Not collected", "none");
+  if (life) {
+    add("Decisions recorded", `${life.decisions_recorded} retained`, "ok");
+    add("Sandboxes", `${life.sandboxes_recorded} recorded · ${life.recently_active} active in the last 15 min · ${life.not_seen_recently} not seen for 6 h+`, "ok");
+  }
+  if (howExample) {
+    const snap = howExample.snapshot?.parsed_policy?.network_middlewares;
+    const failClosed = snap && Object.values(snap).some(m => m && m.on_error === "fail_closed");
+    add("Fail-closed binding", failClosed ? "Present on the latest recorded sandbox policy (on_error: fail_closed)" : "Not found in the latest recorded policy", failClosed ? "ok" : "warn");
+    const prov = howExample.decision.transport_provenance;
+    add("How the decision reached Risk Guard", prov ? (PROVENANCE_TEXT[prov] || prov) : "Not recorded", prov ? "ok" : "none");
+    add("Upstream result", howExample.decision.upstream_outcome ? String(howExample.decision.upstream_outcome) : "Not collected", howExample.decision.upstream_outcome ? "ok" : "none");
+  } else {
+    add("Fail-closed binding", "Shown once a blocked request exists to read it from", "none");
+    add("Upstream result", "Not collected", "none");
+  }
+  add("Link to the gateway", "Inferred from the calls received; not probed", "none");
+  $("how-badges").replaceChildren(...badges.map(b => {
+    const box = document.createElement("div");
+    box.className = `how-badge ${b.kind}`;
+    const l = document.createElement("span"); l.className = "l"; l.textContent = b.label;
+    const v = document.createElement("span"); v.className = "v"; v.textContent = b.value;
+    box.append(l, v);
+    return box;
+  }));
+
+  // Identity example
+  const named = (data.agents || []).find(a => agentName(a) && GUID_RE.test(String(a.agent_id)));
+  const derived = (data.agents || []).find(a => String(a.display_name || "").startsWith("default / "));
+  const parts = [];
+  if (named) parts.push(`A named agent: ${agentName(named)} is ${identityKind(named.agent_id)} ${named.agent_id}.`);
+  if (derived) parts.push(`An unlabeled sandbox: "${derived.display_name}" is derived from the workspace and the authenticated principal.`);
+  $("how-identity-example").textContent = parts.length ? `In this system: ${parts.join(" ")}` : "No workloads recorded yet.";
+
+  // Walkthrough of one real blocked request
+  const host = $("how-example");
+  if (!howExample) {
+    $("how-example-sub").textContent = "No blocked request exists yet, so there is nothing to walk through. Steps 1 to 6 above describe the path every request takes.";
+    host.replaceChildren();
+    return;
+  }
+  const { decision: d, agent, enforce } = howExample;
+  const ev = d.evaluation || {}, req = d.request || {};
+  $("how-example-sub").textContent = `The latest blocked request, by ${agentName(agent) || agent.agent_id}, followed through the six steps. All values below are read from the recorded decision.`;
+  const { active } = activeSignals(d);
+  const rows = [
+    ["Workload", `${agentName(agent) || agent.agent_id} (${identityKind(agent.agent_id)} ${agent.agent_id})`],
+    ["1 · What was asked", `${req.method} ${req.host}${req.route_template} for '${req.resource_id}', in plain words: requested to ${plainAction(req)}`],
+    ["2 · OpenShell's policy", "Allowed it. Risk Guard only receives requests that policy has already allowed, so the static policy let this one through."],
+    ["3 · How Risk Guard saw it", `Action class ${req.action_class}; category ${req.semantic_category}; ${req.high_impact ? "high impact" : "not high impact"}. Only the method, host, route and target are used.`],
+    ["4 · Score", `${ev.risk_score} against a block line of ${enforce}: ${active.length ? active.map(s => `${SIGNAL_TEXT[s.feature] || s.feature} +${Math.round(s.contribution)}`).join(", ") : "no individual signal recorded"}.`],
+    ["5 · The answer", `Denied (HTTP 403, reason code ${ev.reason_code}). ${whatRiskGuardDid(ev)}`],
+    ["Evidence", `request ${ev.request_id || req.request_id} · epoch ${ev.epoch_id} · sequence ${ev.state_sequence} · ${PROVENANCE_TEXT[d.transport_provenance] || d.transport_provenance || "source not recorded"}`],
+    ["Not observed", "Whether the call would have succeeded upstream. Risk Guard records what it was asked and what it answered; the upstream result is not collected."],
+  ];
+  const table = document.createElement("table");
+  table.className = "how-example-table";
+  for (const [k, v] of rows) {
+    const tr = document.createElement("tr");
+    const a = document.createElement("td"); a.textContent = k;
+    const b = document.createElement("td"); b.textContent = v;
+    tr.append(a, b);
+    table.append(tr);
+  }
+  host.replaceChildren(table);
+}
+
+buildHow();
+$("nav-how-btn").addEventListener("click", () => switchMainView("how", true));
+
 // ---- Audit evidence summary -------------------------------------------------------------------------------
 const REASON_TEXT = {
-  behavioral_risk_restricted: "Behavioral risk over the enforcement threshold",
+  behavioral_risk_denied: "Behavioral risk over the block line",
+  behavioral_risk_restricted: "Stopped by a lock from an earlier block",
+  task_constraint_denied: "Outside the approved task rules",
+  risk_state_unavailable: "Risk Guard could not answer in time, so it failed closed",
   baseline_insufficient: "Allowed: no behavioral history to compare with yet",
 };
 const PROVENANCE_TEXT = { native_supervisor_http_rpc_verified: "Supervisor RPC (verified)" };
@@ -6394,7 +6864,7 @@ $("audit-download").addEventListener("click", () => {
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 });
 
-// ---- Guardrails overview ----------------------------------------------------------------------------------
+// ---- Enforcement overview ----------------------------------------------------------------------------------
 function renderGuardrailGlance(data) {
   const box = $("guardrail-glance-rows");
   if (!box) return;

@@ -46,7 +46,7 @@ Never expose these loopback ports to an untrusted network.
    - **Allowed `GET /repos/local/review/issues` (`200`):** Matches the agent's approved resource (`local/review`) and read-only profile (`score = 0 < 70`).
    - **Blocked `DELETE /repos/local/production` (`403`, `0` upstream hits):** Static OpenShell policy permitted `DELETE`, but Risk Guard caught the unfamiliar high-impact action at `PRE_CREDENTIALS` (`reason_code = "behavioral_risk_denied"`, `score = 85 >= 70`), prevented credential injection (`upstream_delete_count = 0`), and latched a **Tier-1 strict restriction**.
    - **Cross-sandbox workload continuity (`behavioral_risk_restricted`):** When a second real OpenShell sandbox spun up under the same durable **Agent Workload ID** (`demo-reviewer`) and retried `DELETE /repos/local/production`, Risk Guard immediately denied it (`score = 100`, `0` upstream hits) because restrictions attach to the logical **Agent Workload** in SQLite (`WAL + FULL`), not the ephemeral container (and distinct from external IAM/Entra credentials).
-2. Open **Guardrails**:
+2. Open **Enforcement**:
    - Click **Unlock editing** and paste the token from `.\scripts\rail-guard-demo-presenter.ps1 -Action copy-token`.
    - Show live SQLite-backed tuning (**Mode**, **Block threshold**, **Cooldown**, **Expected resources**, **Unfamiliar high-impact constraint**) and click **Save & apply** to create an immutable guardrail revision.
    - Under **Active restrictions & lock recovery**, demonstrate audited **Clear lock**: enter an operator reason and click **Clear lock** (`POST /api/agents/{id}/restrictions/clear`), recording the clearance in `restriction_clearances`.
@@ -140,7 +140,7 @@ and strictly read-only (`reviewed_by = "auto-clean-policy"`), then fit/update th
 shadow model (`shadow_model_id`). (`POST /graphql` and `write_mutation` routes
 are excluded from clean read-only training because request bodies are not
 inspected at `PRE_CREDENTIALS`, and any denial or high-impact probe quarantines
-that run's window.) Operators can also unlock through **Guardrails** using the
+that run's window.) Operators can also unlock through **Enforcement** using the
 existing private local token to pause or resume per-agent learning
 (`set_auto_learning`) or manually start, review, and train **Local demo** capture
 windows on fresh trusted-bound native runs.

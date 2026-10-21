@@ -48,7 +48,7 @@ unknowns must not be replaced with invented route, process or lifecycle data.
 
 The embedded, offline console separates environment-level **Fleet overview** and
 **Agents** from the selected agent's **Activity**, **Detections**,
-**Recommendations**, **Runs**, and **Guardrails** tabs. Fleet overview is the
+**Recommendations**, **Runs**, and **Enforcement** tabs. Fleet overview is the
 default entry point. Global headers do not inherit an agent's posture; time and
 boundary controls appear only on the activity/detection views they filter.
 Inventory totals remain bounded recorded totals, not a time-windowed fleet

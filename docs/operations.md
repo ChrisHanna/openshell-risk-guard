@@ -189,3 +189,11 @@ rather than clearing it repeatedly.
 4. **Learned models** build themselves in shadow for every agent; promoting one to
    enforce is an explicit, evidence-bound decision. They are a second opinion, never
    the only control.
+
+## Terminology: Enforcement and NeMo Guardrails
+
+The workload tab that shows what is enforced and the saved enforcement settings is called **Enforcement** in the console.
+It was called "Guardrails" before, which collided with **NVIDIA NeMo Guardrails**, the input rail some agent runs use to
+screen a task before the agent starts. They are different things: NeMo Guardrails judges the *request to the agent*;
+Enforcement shows what OpenShell's policy and Risk Guard's behavioral scoring allow the agent to do. The HTTP routes and
+CLI commands still use `guardrails` (`guardrails-show`, `/api/agents/<id>/guardrails`) so existing scripts keep working.

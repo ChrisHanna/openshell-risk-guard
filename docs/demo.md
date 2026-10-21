@@ -59,7 +59,7 @@ sandbox; a request score is not a probability of compromise.
   manual guidance, not additional prover-verified candidates. No policies are
   applied by the console.
 - **Runs** connects execution bindings to contextual agent/sandbox **Audit
-  evidence**. **Guardrails** loads actual recorded settings. After **Unlock
+  evidence**. **Enforcement** (formerly "Guardrails") loads actual recorded settings. After **Unlock
   editing**, **Save & apply** validates and commits a new per-agent SQLite
   revision. Reloads and process restarts retain saved values; unsaved drafts
   remain local and are not confused with successful saves.
