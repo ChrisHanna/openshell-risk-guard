@@ -73,12 +73,22 @@ done
 
 if [ "$GUARD" = 1 ]; then
   echo "--- NeMo Guardrails input rail"
-  set +e
-  timeout 240 "$CLI" sandbox exec --name "$NAME" --no-tty --no-login-shell -- /opt/agent/bin/python3.12 -m rg_demo_agent.guardrail_check "$TASK"
-  code=$?
-  set -e
+  # The check waits on a model call, and the CLI's connection to the gateway (a kubectl port-forward) sometimes drops
+  # while it waits ("h2 protocol error ... broken pipe"). The check is idempotent, so a run that could not complete is
+  # retried. Exit 3 means the rail ran and blocked the task: that is final and never retried. If it still cannot run
+  # after the retries, the task is not started (fail closed).
+  code=1
+  for attempt in 1 2 3; do
+    set +e
+    timeout 240 "$CLI" sandbox exec --name "$NAME" --no-tty --no-login-shell -- /opt/agent/bin/python3.12 -m rg_demo_agent.guardrail_check "$TASK"
+    code=$?
+    set -e
+    [ "$code" -eq 0 ] || [ "$code" -eq 3 ] && break
+    echo "the guardrail check could not complete (attempt $attempt of 3, exit $code)" >&2
+    sleep 10
+  done
   if [ "$code" -eq 3 ]; then echo "blocked by the guardrail; the agent was not started"; echo "sandbox: $NAME"; exit 0; fi
-  [ "$code" -eq 0 ] || { echo "the guardrail could not run (exit $code); failing closed" >&2; exit 1; }
+  [ "$code" -eq 0 ] || { echo "the guardrail could not run after 3 attempts (exit $code); failing closed" >&2; exit 1; }
 fi
 
 # The cluster workflow points the tools at the in-cluster fixture and gives the model room to reason.

@@ -178,6 +178,10 @@ application ID; the console serves a Let's Encrypt certificate that browsers tru
 * The gateway connection from WSL is a `kubectl port-forward` and it drops now and then. A dropped `sandbox create` may still
   have created the sandbox, so `run-agent.sh` checks for it and retries before giving up.
 * In a script with `set -e` and `pipefail`, a `grep` that finds nothing ends the script silently. Polling a sandbox's phase while
+* A long `openshell sandbox exec` (the NeMo Guardrails check waits on a model call) can die with `h2 protocol error ... broken
+  pipe` when the CLI's connection runs through the `kubectl port-forward`. That is a transport failure, not a verdict, so
+  `run-agent.sh` retries the check up to three times. An exit of 3 (the rail blocked the task) is final and is never
+  retried, and a check that still cannot run fails closed, so the agent is not started.
   it is still being scheduled hit this, so that line ends with `|| true`.
 * Some networks reset the `az` client's connections to the ACR build service (`az acr build` fails with error 10054) while
   `curl` works. `02-build-image.ps1 -LocalDocker` builds with Docker and pushes to the registry instead.
