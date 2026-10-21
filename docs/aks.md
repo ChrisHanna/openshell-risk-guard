@@ -158,9 +158,26 @@ or `CreateSandbox` fails with `FAILED_PRECONDITION` (step 6 does this).
   so the port-forward must be relayed to WSL's localhost.
 * `11-set-secret.ps1` needs an interactive hidden prompt, so it was not run unattended. `12-sync-credentials.ps1` was verified
   with a dummy secret.
-* The agent making a live model call to the NVIDIA API (needs a real key, which the owner must supply) and the Entra provider
-  profile minting tokens for a real protected API.
+* The Entra provider profile minting tokens for a real protected API.
 * Real OIDC principals: only the shared client-certificate identity was exercised on the cluster.
+
+**Also verified later:** the agent makes live Nemotron calls through OpenShell with the key injected from Key Vault; three
+agents, each with its own Entra application, run on a schedule and each shows in the console with its name next to its
+application ID; the console serves a Let's Encrypt certificate that browsers trust.
+
+**Operational lessons**
+
+* A small Kata node fills up. Each sandbox is a VM, so leftover sandboxes make new ones sit in `Provisioning`. The fleet deletes
+  each sandbox after its run and sweeps `agent-*` sandboxes older than 3 hours.
+* The gateway connection from WSL is a `kubectl port-forward` and it drops now and then. A dropped `sandbox create` may still
+  have created the sandbox, so `run-agent.sh` checks for it and retries before giving up.
+* In a script with `set -e` and `pipefail`, a `grep` that finds nothing ends the script silently. Polling a sandbox's phase while
+  it is still being scheduled hit this, so that line ends with `|| true`.
+* Some networks reset the `az` client's connections to the ACR build service (`az acr build` fails with error 10054) while
+  `curl` works. `02-build-image.ps1 -LocalDocker` builds with Docker and pushes to the registry instead.
+* Docker Desktop can fail to start on stale unix-socket files (`sailor-ingest.sock`, `docker-secrets-engine\engine.sock`) left by
+  an unclean shutdown. They cannot be deleted, but moving their folders aside lets Docker recreate them.
+* A reasoning model needs a larger `max_tokens` and native tool calling, otherwise the ReAct reply is empty or fails to parse.
 
 ## Running a fleet of agents
 
