@@ -53,6 +53,16 @@ extension points (`SupervisorMiddleware` before credentials are injected,
 `GatewayInterceptor` on policy changes) and keeps its own SQLite state. It never
 proxies traffic, stores secrets, or writes OpenShell policy.
 
+## Where this fits: OpenShell, NVIDIA Sentry, and clouds without the hardware
+
+NVIDIA's recent releases (the Open Agent Safety Platform) describe OpenShell as the sandbox runtime and policy layer, with
+**NVIDIA Sentry**, an out-of-band monitoring and enforcement layer on BlueField-4 hardware, beside it. That is the recommended shape
+where the hardware exists, and NVIDIA lists Sentry as planned. **On Azure we have no access to that hardware, so Risk Guard is a
+software layer for the same job**: task-aware, behavior-aware enforcement and evidence for OpenShell sandboxes, built on OpenShell's own
+extension points and runnable on any cluster. It is not equivalent: it assumes an uncompromised supervisor and node, which
+the hardware layer does not. See [Where Risk Guard fits](docs/positioning.md) for the comparison, what it assumes, and the planned
+software analogue of the hardware separation.
+
 ## Why Risk Guard for OpenShell Users: Closing the Authorized-Endpoint Gap
 
 - **The OpenShell Foundation:** Kernel Landlock filesystem confinement, process isolation, static L4/L7 Rego network policies, credential injection only for approved endpoints, and Z3 formal verification (`openshell-prover`) on policy changes.
@@ -100,8 +110,9 @@ Where this document says "the sandboxed process", it means the program running i
   as high-impact by default. OpenShell treats an oversized payload as a middleware
   failure, so Risk Guard advertises and is registered for the 4 MiB platform maximum;
   a large body is never denied just for its size.
-- **Single local operator.** The console uses one private capability token, not
-  per-user accounts; its audit records the capability, not a person.
+- **Operators.** On the AKS deployment the console is public to read, and an administrator signs in with Microsoft Entra
+  at `/admin` to change settings; changes are recorded against the verified account (object ID). A local console
+  without sign-in uses one private capability token, and its audit records the capability, not a person.
 - **Raw resource names** (for example `org/payments-prod`) are stored for operator
   explanations. The database is owner-only (`0600`). Put it on an encrypted volume.
 
@@ -166,6 +177,7 @@ cargo run -- hardening-report \
 |---|---|
 | [Operating Risk Guard](docs/operations.md) | TLS and secrets, bootstrap order, protecting a new API, recovering from a false positive, metrics, rollout |
 | [Security model](docs/security-model.md) | How the sidecar sits next to OpenShell, workload ID continuity, trust boundaries, measured release gates |
+| [Where Risk Guard fits](docs/positioning.md) | How it relates to OpenShell and NVIDIA Sentry and DOCA Argus, what it assumes, and what the hardware layer adds |
 | [Running on AKS](docs/aks.md) | Deploy OpenShell and Risk Guard on Azure Kubernetes Service with scripts: Kata VM sandboxes, Key Vault credentials, Entra agent identities, a protected public console, and what a real cluster showed |
 | [Demo and local deployment](docs/demo.md) | Running the local demo stack and its traffic generator |
 | [Requirements](docs/requirements.md), [Design](docs/design.md), [Anomaly detection](docs/anomaly-detection.md) | Specifications and the scoring model |

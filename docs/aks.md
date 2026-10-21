@@ -12,6 +12,10 @@ The scripts live in [`scripts/aks/`](../scripts/aks) and the manifests in [`depl
 
 ## What you get
 
+NVIDIA's recommended shape for governing agents is OpenShell plus its hardware-based Sentry layer. This environment runs on Azure
+without that hardware, so Risk Guard is the software layer for the same job; [Where Risk Guard fits](positioning.md) explains the
+difference, what it assumes, and the planned software analogue of the hardware separation.
+
 ```mermaid
 flowchart LR
   CLI[openshell CLI] -- mTLS --> GW[OpenShell gateway]
@@ -112,8 +116,9 @@ To give an agent its own workload from its Entra identity, add
   * Access follows the account's **object ID** (Entra assigns it and never reuses it), not the email address, which is only
     shown. Administrators (`-AdminObjectId`, by default the account you are signed in to `az` with) may change settings.
     Settings changes are recorded against the verified account (`name [entra:<object id>]`) instead of a typed name.
-  * Scripts read the console as you: `az account get-access-token --scope api://<app id>/access` (the Azure CLI is
-    pre-authorized for the scope). `07-verify.ps1` does this.
+  * Scripts need no token on the public console. On a members-only one (`-RequireSignInToRead`) they read it as you with
+    `az account get-access-token --scope api://<app id>/access`, which works where the tenant lets the script pre-authorize the
+    Azure CLI for the scope (it is best effort). `07-verify.ps1` does this.
   * The local operator token (`--operator-token-file`) is not set on AKS. If you enable it, treat it as break-glass: it can
     change settings but never reads data while sign-in is required to read.
   * The page is served with a Content-Security-Policy that lets it talk only to itself and `login.microsoftonline.com`.

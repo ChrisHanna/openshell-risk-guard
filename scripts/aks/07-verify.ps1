@@ -5,8 +5,9 @@
 .DESCRIPTION
   Port-forwards to the console container in the Risk Guard pod, reads /api/state and the
   detail of each workload, and prints the binding (workspace, principal, identity provider, source).
-  When console sign-in is configured (15-setup-console-signin.ps1) the requests carry your own Azure sign-in as a
-  bearer token, so the account you are signed in to `az` with must be one of the console's listed accounts.
+  The console is readable without signing in. Only when it was set up members-only (15-setup-console-signin.ps1
+  -RequireSignInToRead) do the requests carry your own Azure sign-in as a bearer token, so the account you are signed
+  in to `az` with must be one of the console's listed accounts.
   Open the console yourself with:  kubectl port-forward -n openshell deploy/risk-guard 8791
   then browse http://127.0.0.1:8791/ (it asks you to sign in when sign-in is configured).
 #>
@@ -20,7 +21,7 @@ $ns = Get-StateValue 'namespace' 'openshell'
 
 $headers = @{}
 $clientId = Get-StateValue 'consoleEntraClientId'
-if ($clientId) {
+if ($clientId -and (Get-StateValue 'consoleRequireSignInToRead')) {
     $token = (Invoke-Native az @('account', 'get-access-token', '--scope', "api://$clientId/access", '--query', 'accessToken', '-o', 'tsv') | Select-Object -First 1).Trim()
     $headers = @{ Authorization = "Bearer $token" }
 }

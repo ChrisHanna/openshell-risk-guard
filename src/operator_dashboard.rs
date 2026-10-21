@@ -277,6 +277,8 @@ mod tests {
             "how-view",
             "nav-how-btn",
             "how-diagram",
+            // Where it fits with NVIDIA Sentry: the software-versus-hardware positioning.
+            "how-positioning",
             // Enforcement: the two layers, the action table, the score meter, and the settings kept under a fold.
             "enf-view",
             "enf-table",

@@ -95,12 +95,18 @@ Invoke-Graph 'PATCH' "https://graph.microsoft.com/v1.0/applications/$objectId" @
     optionalClaims = @{ accessToken = @(@{ name = 'email' }) }
 } | Out-Null
 # The console is its own client, so it is pre-authorized for its own scope (no consent screen for the scope itself).
-# The Azure CLI is pre-authorized too, so `az account get-access-token --scope api://<app id>/access` works for scripts
-# that read the console as the signed-in administrator, with no secret to store.
+# Where the tenant allows it, the Azure CLI is pre-authorized too, so `az account get-access-token --scope api://<app id>/access`
+# works for scripts that read a members-only console as the signed-in administrator, with no secret to store.
 $azureCli = '04b07795-8ddb-4961-a3f5-6a4ee1a4e0d0'
-$api.preAuthorizedApplications = @(
-    @{ appId = $appId; delegatedPermissionIds = @($scopeId) },
-    @{ appId = $azureCli; delegatedPermissionIds = @($scopeId) })
+$preAuthorized = @(@{ appId = $appId; delegatedPermissionIds = @($scopeId) })
+# Entra only accepts a pre-authorized app that exists in this tenant. The Azure CLI's service principal is created on
+# first use and some tenants cannot create it on demand, so this is best effort: only scripts that read a members-only
+# console (-RequireSignInToRead) need it, and without it they can still be run from a signed-in browser.
+$cliThere = Invoke-Native az @('ad', 'sp', 'show', '--id', $azureCli, '--query', 'id', '-o', 'tsv') -AllowFailure
+if (-not $cliThere) { $cliThere = Invoke-Native az @('ad', 'sp', 'create', '--id', $azureCli, '--query', 'id', '-o', 'tsv') -AllowFailure -Retries 1 }
+if ($cliThere) { $preAuthorized += @{ appId = $azureCli; delegatedPermissionIds = @($scopeId) } }
+else { Write-Note 'the Azure CLI is not available as a client in this tenant; skipping its pre-authorization (not needed for the public console)' }
+$api.preAuthorizedApplications = $preAuthorized
 Invoke-Graph 'PATCH' "https://graph.microsoft.com/v1.0/applications/$objectId" @{ api = $api } | Out-Null
 
 $sp = Invoke-Native az @('ad', 'sp', 'show', '--id', $appId, '--query', 'id', '-o', 'tsv') -AllowFailure
