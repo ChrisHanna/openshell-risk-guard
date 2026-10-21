@@ -158,11 +158,24 @@ rather than clearing it repeatedly.
   serialized `synchronous = FULL` writer connection so dashboard, `/api/state`,
   and `/metrics` queries never contend with inline `EvaluateHttpRequest`
   decision transactions.
-- **Bounded `10,000`-Decision Retention Pruning:** Decision storage automatically
-  prunes the oldest unreferenced decisions beyond `10,000` rows while preserving
-  any decision row pinned by an adaptive training window (`adaptive_window_decisions`)
-  or an active restriction trigger (`restrictions.trigger_request_id` /
-  `agent_restriction_origins.trigger_request_id`).
+- **Decision retention (two bounds):** Detailed decisions are kept for
+  `--decision-retention-days` (default `30`, env `RISK_GUARD_DECISION_RETENTION_DAYS`; `0`
+  keeps everything). An hourly job prunes older decisions in small batches. Separately, each
+  epoch keeps at most `10,000` decisions, pruning the oldest first. Neither bound removes a
+  decision that something still needs: an adaptive training window
+  (`adaptive_observations`), a restriction origin, or the request that triggered a lock
+  (`restrictions.trigger_request_id` / `agent_restrictions.trigger_request_id`). Epochs,
+  restrictions and the audit of cleared locks are never pruned. The console's request counts
+  cover the decisions still retained, so with the default they describe the last 30 days.
+- **Sandbox lifecycle is inferred, not polled.** Risk Guard learns of sandboxes only from
+  gateway interceptor events and supervisor requests, and OpenShell makes `POST_COMMIT`
+  fail-open, so a delete event missed during a restart is never retried. `/api/state`
+  therefore classifies each active epoch by its last activity (`recently_active` within 15
+  minutes, `idle` within 6 hours, otherwise `not_seen_recently`, most likely a deleted
+  sandbox) and reports `gateway_connectivity` from the calls it has received. It does not
+  probe the gateway.
+- **`/metrics` is operator-only.** The console's public proxy answers `404` for it; read it
+  with `kubectl port-forward` or `kubectl exec` against the pod's loopback listener.
 
 ## Rolling it out
 

@@ -108,6 +108,7 @@ impl SqliteRiskStore {
         conn.execute_batch(BINDING_AUDIT_MIGRATION_SQL)?;
         conn.execute_batch(AGENT_WORKSPACES_MIGRATION_SQL)?;
         ensure_binding_audit_provider_column(&conn)?;
+        ensure_epoch_closed_at_column(&conn)?;
         conn.execute_batch(SIDECAR_MIGRATION_SQL)?;
 
         let read_conn = Connection::open(path_ref)?;
@@ -138,6 +139,7 @@ impl SqliteRiskStore {
         conn.execute_batch(BINDING_AUDIT_MIGRATION_SQL)?;
         conn.execute_batch(AGENT_WORKSPACES_MIGRATION_SQL)?;
         ensure_binding_audit_provider_column(&conn)?;
+        ensure_epoch_closed_at_column(&conn)?;
         conn.execute_batch(SIDECAR_MIGRATION_SQL)?;
 
         Ok(Self {
@@ -185,12 +187,13 @@ impl SqliteRiskStore {
         }
         let agents = identity::agent_inventory(&tx, now_ms)?;
         let total_agents: i64 = tx.query_row("SELECT COUNT(*) FROM agents", [], |row| row.get(0))?;
+        let (lifecycle, connectivity) = lifecycle_overview(&tx, now_ms)?;
         tx.commit()?;
         Ok(serde_json::json!({
             "source": "persisted_risk_guard_evidence",
             "generated_at_ms": now_ms,
-            "gateway_connectivity": null,
-            "sandbox_lifecycle": "not_collected",
+            "gateway_connectivity": connectivity,
+            "sandbox_lifecycle": lifecycle,
             "coverage": "selected_inspected_http_requests_only",
             "transport_provenance": "per_decision_when_recorded_legacy_history_unknown",
             "total_sandboxes": total,
@@ -395,6 +398,38 @@ impl SqliteRiskStore {
         Ok(total_deleted)
     }
 
+    /// Prune decisions recorded before `cutoff_ms` (age-based retention), keeping anything that is still pinned
+    /// (see `UNPINNED_DECISION_SQL`). Works in small transactions so the single writer is never held for long.
+    /// Epochs, restrictions and the clearance audit are never pruned. Returns the number of decisions removed.
+    pub fn prune_decisions_older_than(&self, cutoff_ms: i64) -> Result<usize> {
+        const BATCH: usize = 2_000;
+        let select = format!(
+            "SELECT d.epoch_id, d.request_id FROM decisions d
+             WHERE d.created_at_ms < ?1 {UNPINNED_DECISION_SQL}
+             ORDER BY d.created_at_ms ASC LIMIT ?2"
+        );
+        let mut total = 0usize;
+        loop {
+            let mut conn = self.lock_conn()?;
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let rows = {
+                let mut stmt = tx.prepare(&select)?;
+                stmt.query_map(params![cutoff_ms, BATCH as i64], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+            };
+            for (epoch_id, request_id) in &rows {
+                total += delete_decision_row(&tx, epoch_id, request_id)?;
+            }
+            tx.commit()?;
+            drop(conn);
+            if rows.len() < BATCH {
+                return Ok(total);
+            }
+        }
+    }
+
     fn lock_conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
         self.conn
             .lock()
@@ -442,7 +477,7 @@ fn operator_epoch_summary(
         "last_request_score": last_score,
         "active_restriction_count": restrictions,
         "sandbox_compromise_probability": null,
-        "sandbox_lifecycle": "unknown"
+        "sandbox_lifecycle": lifecycle_state(last_observed.unwrap_or(0).max(epoch.created_at_ms), now_ms)
     }))
 }
 
@@ -467,8 +502,8 @@ impl RiskStore for SqliteRiskStore {
 
         if epoch.active {
             tx.execute(
-                "UPDATE epochs SET active = 0 WHERE sandbox_id = ?1 AND epoch_id != ?2 AND active != 0",
-                params![epoch.sandbox_id, epoch.epoch_id],
+                "UPDATE epochs SET active = 0, closed_at_ms = ?3 WHERE sandbox_id = ?1 AND epoch_id != ?2 AND active != 0",
+                params![epoch.sandbox_id, epoch.epoch_id, current_time_ms()],
             )?;
         }
 
@@ -547,8 +582,8 @@ impl RiskStore for SqliteRiskStore {
         let mut conn = self.lock_conn()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute(
-            "UPDATE epochs SET active = 0 WHERE epoch_id = ?1",
-            params![epoch_id],
+            "UPDATE epochs SET active = 0, closed_at_ms = ?2 WHERE epoch_id = ?1",
+            params![epoch_id, now],
         )?;
         let bound_run: Option<String> = tx
             .query_row(
@@ -757,6 +792,105 @@ fn ensure_binding_audit_provider_column(conn: &Connection) -> Result<()> {
         )?;
     }
     Ok(())
+}
+
+fn ensure_epoch_closed_at_column(conn: &Connection) -> Result<()> {
+    let present: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('epochs') WHERE name = 'closed_at_ms'",
+        [],
+        |row| row.get(0),
+    )?;
+    if present == 0 {
+        conn.execute_batch("ALTER TABLE epochs ADD COLUMN closed_at_ms INTEGER")?;
+    }
+    Ok(())
+}
+
+/// A sandbox that has produced no request for this long is "idle": still governed, but quiet.
+const SANDBOX_RECENT_ACTIVITY_MS: i64 = 15 * 60_000;
+/// An active epoch with no activity for this long is "not seen": its sandbox is most likely gone and the
+/// delete event was missed (OpenShell's post-commit hook is fail-open, so a restart or outage can drop one).
+const SANDBOX_NOT_SEEN_AFTER_MS: i64 = 6 * 3_600_000;
+
+/// How recently an epoch was seen, from observed evidence only (its creation and its decisions).
+fn lifecycle_state(last_activity_ms: i64, now_ms: i64) -> &'static str {
+    let age = now_ms.saturating_sub(last_activity_ms);
+    if age <= SANDBOX_RECENT_ACTIVITY_MS {
+        "recently_active"
+    } else if age <= SANDBOX_NOT_SEEN_AFTER_MS {
+        "idle"
+    } else {
+        "not_seen_recently"
+    }
+}
+
+/// Lifecycle and connectivity as Risk Guard can honestly know them. It learns about sandboxes only from the calls
+/// it receives (gateway interceptor events and supervisor requests); it never queries the gateway.
+fn lifecycle_overview(conn: &Connection, now_ms: i64) -> Result<(serde_json::Value, serde_json::Value)> {
+    let recorded: i64 = conn.query_row("SELECT COUNT(DISTINCT sandbox_id) FROM epochs", [], |r| r.get(0))?;
+    let active: i64 = conn.query_row(
+        "SELECT COUNT(DISTINCT sandbox_id) FROM epochs WHERE active != 0",
+        [],
+        |r| r.get(0),
+    )?;
+    let mut recently_active = 0_i64;
+    let mut idle = 0_i64;
+    let mut not_seen = 0_i64;
+    {
+        let mut stmt = conn.prepare(
+            "SELECT MAX(e.created_at_ms, COALESCE((SELECT MAX(d.created_at_ms) FROM decisions d
+                    WHERE d.epoch_id = e.epoch_id), 0))
+             FROM epochs e WHERE e.active != 0",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, i64>(0))?;
+        for last in rows {
+            match lifecycle_state(last?, now_ms) {
+                "recently_active" => recently_active += 1,
+                "idle" => idle += 1,
+                _ => not_seen += 1,
+            }
+        }
+    }
+    let decisions_total: i64 = conn.query_row("SELECT COUNT(*) FROM decisions", [], |r| r.get(0))?;
+    let decisions_on_active: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM decisions d JOIN epochs e USING(epoch_id) WHERE e.active != 0",
+        [],
+        |r| r.get(0),
+    )?;
+    let last_request: Option<i64> = conn.query_row("SELECT MAX(created_at_ms) FROM decisions", [], |r| r.get(0))?;
+    let last_event: Option<i64> = conn.query_row(
+        "SELECT MAX(MAX(created_at_ms), COALESCE(MAX(closed_at_ms), 0)) FROM epochs",
+        [],
+        |r| r.get(0),
+    )?;
+    let newest = last_request.into_iter().chain(last_event).max();
+    let status = match newest {
+        None => "never_seen",
+        Some(ts) if now_ms.saturating_sub(ts) <= SANDBOX_RECENT_ACTIVITY_MS => "receiving",
+        Some(_) => "quiet",
+    };
+    let lifecycle = serde_json::json!({
+        "source": "gateway_events_and_request_activity",
+        "sandboxes_recorded": recorded,
+        "sandboxes_with_active_epoch": active,
+        "sandboxes_closed": recorded - active,
+        "recently_active": recently_active,
+        "idle": idle,
+        "not_seen_recently": not_seen,
+        "recent_activity_window_ms": SANDBOX_RECENT_ACTIVITY_MS,
+        "not_seen_after_ms": SANDBOX_NOT_SEEN_AFTER_MS,
+        "decisions_recorded": decisions_total,
+        "decisions_on_active_epochs": decisions_on_active,
+        "note": "Risk Guard learns of sandboxes only from gateway interceptor events and supervisor requests. \
+An epoch with no activity for the not-seen window most likely belongs to a deleted sandbox whose event was missed.",
+    });
+    let connectivity = serde_json::json!({
+        "status": status,
+        "last_supervisor_request_ms": last_request,
+        "last_gateway_event_ms": last_event.filter(|ts| *ts > 0),
+        "evidence": "Inferred from calls Risk Guard has received. It does not probe the gateway.",
+    });
+    Ok((lifecycle, connectivity))
 }
 
 fn state_owner<'a>(epoch: &'a EpochRecord, identity: Option<&'a AgentIdentity>) -> StateOwner<'a> {
@@ -1551,29 +1685,45 @@ fn prune_epoch_decisions(
 
     let mut deleted = 0usize;
     for request_id in prunable_request_ids {
-        tx.execute(
-            "DELETE FROM decision_guardrail_revisions WHERE epoch_id = ?1 AND request_id = ?2",
-            params![epoch_id, request_id],
-        )?;
-        tx.execute(
-            "DELETE FROM adaptive_assessments WHERE epoch_id = ?1 AND request_id = ?2",
-            params![epoch_id, request_id],
-        )?;
-        tx.execute(
-            "DELETE FROM native_decision_provenance WHERE epoch_id = ?1 AND request_id = ?2",
-            params![epoch_id, request_id],
-        )?;
-        tx.execute(
-            "DELETE FROM decision_identity WHERE epoch_id = ?1 AND request_id = ?2",
-            params![epoch_id, request_id],
-        )?;
-        deleted += tx.execute(
-            "DELETE FROM decisions WHERE epoch_id = ?1 AND request_id = ?2",
-            params![epoch_id, request_id],
-        )?;
+        deleted += delete_decision_row(tx, epoch_id, &request_id)?;
     }
     Ok(deleted)
 }
+
+/// Delete one decision and the rows that hang off it. Callers must have checked that nothing pins the decision.
+fn delete_decision_row(tx: &Transaction<'_>, epoch_id: &str, request_id: &str) -> Result<usize> {
+    tx.execute(
+        "DELETE FROM decision_guardrail_revisions WHERE epoch_id = ?1 AND request_id = ?2",
+        params![epoch_id, request_id],
+    )?;
+    tx.execute(
+        "DELETE FROM adaptive_assessments WHERE epoch_id = ?1 AND request_id = ?2",
+        params![epoch_id, request_id],
+    )?;
+    tx.execute(
+        "DELETE FROM native_decision_provenance WHERE epoch_id = ?1 AND request_id = ?2",
+        params![epoch_id, request_id],
+    )?;
+    tx.execute(
+        "DELETE FROM decision_identity WHERE epoch_id = ?1 AND request_id = ?2",
+        params![epoch_id, request_id],
+    )?;
+    Ok(tx.execute(
+        "DELETE FROM decisions WHERE epoch_id = ?1 AND request_id = ?2",
+        params![epoch_id, request_id],
+    )?)
+}
+
+/// Decisions that something still depends on are never pruned: adaptive training data, restriction origins and the
+/// request that triggered a lock. Appended to a query over `decisions d`.
+const UNPINNED_DECISION_SQL: &str = "
+    AND NOT EXISTS (SELECT 1 FROM adaptive_observations ao
+                    WHERE ao.epoch_id = d.epoch_id AND ao.request_id = d.request_id)
+    AND NOT EXISTS (SELECT 1 FROM agent_restriction_origins aro
+                    WHERE aro.epoch_id = d.epoch_id AND aro.request_id = d.request_id)
+    AND NOT EXISTS (SELECT 1 FROM restrictions r
+                    WHERE r.epoch_id = d.epoch_id AND r.trigger_request_id = d.request_id)
+    AND NOT EXISTS (SELECT 1 FROM agent_restrictions ar WHERE ar.trigger_request_id = d.request_id)";
 
 fn insert_identity(
     tx: &Transaction<'_>,
@@ -2388,6 +2538,143 @@ mod tests {
             .list_normalized_requests("sbx-wal-read")
             .expect("list_normalized_requests via read_conn");
         assert_eq!(requests.len(), 1);
+    }
+
+    #[test]
+    fn inventory_reports_lifecycle_and_connectivity_from_observed_activity() {
+        let store = SqliteRiskStore::open_in_memory().expect("open in-memory store");
+        let detector = ScriptedDetector::new(|req, ctx| {
+            Ok(RiskEvaluation {
+                request_id: req.request_id.clone(),
+                sandbox_id: req.sandbox_id.clone(),
+                epoch_id: ctx.epoch.epoch_id.clone(),
+                mode: ctx.epoch.mode,
+                outcome: DecisionOutcome::Allow,
+                reason_code: "ok".to_string(),
+                risk_score: 0,
+                threshold: 70,
+                ratchet_action: RatchetAction::None,
+                signals: Vec::new(),
+                missing_context: Vec::new(),
+                baseline_maturity: BaselineMaturity::Mature,
+                baseline_hash: ctx.epoch.baseline_hash.clone(),
+                detector_version: "test-detector-v1".to_string(),
+                state_sequence: 0,
+                decision_timestamp_ms: req.timestamp_ms,
+            })
+        });
+        let now = 1_700_100_000_000_i64;
+        let hour = 3_600_000_i64;
+
+        // Nothing recorded yet: honest "never seen", not a blank.
+        let empty = store.operator_inventory(now).expect("empty inventory");
+        assert_eq!(empty["gateway_connectivity"]["status"], "never_seen");
+        assert_eq!(empty["sandbox_lifecycle"]["sandboxes_recorded"], 0);
+
+        // A busy sandbox (request a minute ago), a quiet one (request 2h ago) and a long-gone one (a day ago).
+        for (sandbox, last_request_age) in [("sbx-busy", 60_000), ("sbx-quiet", 2 * hour), ("sbx-gone", 24 * hour)] {
+            let mut epoch = sample_epoch(sandbox);
+            epoch.created_at_ms = now - 25 * hour;
+            store.upsert_epoch(&epoch).expect("upsert epoch");
+            let req = sample_request(&format!("req-{sandbox}"), sandbox, "GET", "/repos/{owner}/{repo}",
+                "org/docs-site", now - last_request_age, &format!("fp-{sandbox}"));
+            store.evaluate_and_commit_atomic(&req, &detector).expect("decision");
+        }
+        // A fourth sandbox is deleted: its epoch closes, and the close time is recorded.
+        store.upsert_epoch(&sample_epoch("sbx-deleted")).expect("upsert epoch");
+        store.terminate_epoch("ep-sbx-deleted").expect("terminate epoch");
+        {
+            // terminate_epoch stamps the real clock; pin it to this test's synthetic clock.
+            let conn = store.lock_conn().expect("lock");
+            let closed: Option<i64> = conn
+                .query_row("SELECT closed_at_ms FROM epochs WHERE epoch_id = 'ep-sbx-deleted'", [], |r| r.get(0))
+                .expect("closed_at_ms");
+            assert!(closed.is_some(), "closing an epoch records when it closed");
+            conn.execute("UPDATE epochs SET closed_at_ms = ?1 WHERE epoch_id = 'ep-sbx-deleted'", params![now - 3 * hour])
+                .expect("pin close time");
+        }
+
+        let inv = store.operator_inventory(now).expect("inventory");
+        let life = &inv["sandbox_lifecycle"];
+        assert_eq!(life["sandboxes_recorded"], 4);
+        assert_eq!(life["sandboxes_with_active_epoch"], 3);
+        assert_eq!(life["sandboxes_closed"], 1);
+        assert_eq!(life["recently_active"], 1, "only the sandbox with a request a minute ago");
+        assert_eq!(life["idle"], 1, "the one quiet for two hours");
+        assert_eq!(life["not_seen_recently"], 1, "the one quiet for a day, most likely deleted");
+        assert_eq!(life["decisions_recorded"], 3);
+        // The headline total counts active epochs; the lifecycle block explains the difference from "recorded".
+        assert_eq!(inv["total_sandboxes"], 3);
+        assert_eq!(inv["gateway_connectivity"]["status"], "receiving");
+        assert!(inv["gateway_connectivity"]["last_supervisor_request_ms"].is_number());
+        // Each listed sandbox carries its own state.
+        let states: std::collections::BTreeMap<String, String> = inv["sandboxes"].as_array().unwrap().iter()
+            .map(|s| (s["epoch"]["sandbox_id"].as_str().unwrap().to_string(), s["sandbox_lifecycle"].as_str().unwrap().to_string()))
+            .collect();
+        assert_eq!(states["sbx-busy"], "recently_active");
+        assert_eq!(states["sbx-quiet"], "idle");
+        assert_eq!(states["sbx-gone"], "not_seen_recently");
+
+        // Long after the last activity the link is reported as quiet, not as connected.
+        let later = store.operator_inventory(now + 2 * hour).expect("later inventory");
+        assert_eq!(later["gateway_connectivity"]["status"], "quiet");
+    }
+
+    #[test]
+    fn age_based_retention_prunes_old_decisions_but_keeps_what_a_lock_still_needs() {
+        let store = SqliteRiskStore::open_in_memory().expect("open in-memory store");
+        store.upsert_epoch(&sample_epoch("sbx-retention")).expect("upsert epoch");
+        let detector = ScriptedDetector::new(|req, ctx| {
+            // req-2 trips a cooldown, so it becomes the trigger of a restriction and is pinned.
+            let ratchet_action = if req.request_id == "req-2" {
+                RatchetAction::TriggerTier2Cooldown {
+                    scope: req.restriction_scope.clone(),
+                    cooldown_duration_ms: 10_000,
+                }
+            } else {
+                RatchetAction::None
+            };
+            Ok(RiskEvaluation {
+                request_id: req.request_id.clone(),
+                sandbox_id: req.sandbox_id.clone(),
+                epoch_id: ctx.epoch.epoch_id.clone(),
+                mode: ctx.epoch.mode,
+                outcome: DecisionOutcome::Allow,
+                reason_code: "ok".to_string(),
+                risk_score: 0,
+                threshold: 70,
+                ratchet_action,
+                signals: Vec::new(),
+                missing_context: Vec::new(),
+                baseline_maturity: BaselineMaturity::Mature,
+                baseline_hash: ctx.epoch.baseline_hash.clone(),
+                detector_version: "test-detector-v1".to_string(),
+                state_sequence: 0,
+                decision_timestamp_ms: req.timestamp_ms,
+            })
+        });
+        let base = 1_700_000_000_000_i64;
+        for i in 1..=6_i64 {
+            let req = sample_request(&format!("req-{i}"), "sbx-retention", "GET", "/repos/{owner}/{repo}",
+                &format!("org/repo-{i}"), base + i * 20_000, &format!("fp-{i}"));
+            store.evaluate_and_commit_atomic(&req, &detector).expect("eval");
+        }
+        let ids = |store: &SqliteRiskStore| -> Vec<String> {
+            let mut ids: Vec<String> = store.list_decisions("sbx-retention", 100).expect("list")
+                .into_iter().map(|d| d.request_id).collect();
+            ids.sort();
+            ids
+        };
+        assert_eq!(ids(&store).len(), 6);
+
+        // Keep only decisions from req-4 on. req-1 and req-3 are old and unpinned; req-2 is old but still pinned.
+        let deleted = store.prune_decisions_older_than(base + 4 * 20_000).expect("prune by age");
+        assert_eq!(deleted, 2, "the two old, unpinned decisions");
+        assert_eq!(ids(&store), vec!["req-2", "req-4", "req-5", "req-6"]);
+
+        // Pruning again is a no-op, and a cutoff before everything removes nothing.
+        assert_eq!(store.prune_decisions_older_than(base + 4 * 20_000).expect("repeat"), 0);
+        assert_eq!(store.prune_decisions_older_than(base).expect("early cutoff"), 0);
     }
 
     #[test]

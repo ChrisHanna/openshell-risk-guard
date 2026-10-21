@@ -179,9 +179,12 @@ approved behavioral artifacts, risk decisions, temporal features, restrictions,
 coverage evidence, and recommendation records.
 
 Follow the [storage design](design.md#71-storage-decision-independent-sqlite-not-the-gateway-database)
-for schema, constraints, durability, and retention. Initial defaults are 30 days
-for detailed decisions/deduplication, 90 days for coverage/usage aggregates, and
-the active lifetime plus 90 days for epochs, restrictions, and linked artifacts.
+for schema, constraints, durability, and retention. As implemented: detailed decisions
+are kept for 30 days by default (`--decision-retention-days`, pruned hourly, never while a
+lock or an adaptive training window still needs them) with a 10,000-per-epoch cap; the
+usage windows used for scoring keep one hour; epochs, restrictions, the audit of cleared
+locks and linked artifacts are retained and not pruned. Time-based expiry of those is not
+implemented.
 Never expire referenced evidence while a live restriction or retained report
 depends on it. Recommendation intervals cannot exceed available evidence
 without explicitly declaring the missing coverage.
@@ -204,7 +207,7 @@ through a recorded review before unblinding the final evaluation set.
 | G-04 Useful alerts | >= 80% precision on the explicitly declared evaluation mixture. Also report false alerts per 1,000 benign requests and per benign session; precision depends on prevalence. |
 | G-05 Incremental value | Compare static-only, novelty-only, and contextual detection at matched benign false-denial budgets. Publish null or negative improvements. |
 | G-06 Latency | Added end-to-end p95 <= 25 ms and p99 <= 75 ms at 100 requests/s, 20 concurrent clients, warm state, <= 16 KiB bodies. Report hardware, TLS, durability, errors, and saturation curves. |
-| G-07 Deadline | Configure a tested middleware timeout, initially 200 ms subject to OpenShell validation; service deadline budget <= 100 ms including queue and durable state work. |
+| G-07 Deadline | The middleware timeout is 500 ms, advertised by the service and registered in the gateway (OpenShell uses the smaller of the two, so they must match); the service's own deadline budget is <= 100 ms including queue and durable state work, and it fails closed past that, so the gateway never times out first. |
 | G-08 Replay | Identical versioned inputs and initial state yield identical decisions; parallel execution preserves documented serialization semantics. |
 | G-09 Hardening | Every report declares completeness and proof status; no automatic policy writes; known task tests remain replayable. |
 | G-10 Reliability | Fault suite has explicit outcomes for restarts, duplicates, state corruption, full disk, stale baselines, and service disconnection. |

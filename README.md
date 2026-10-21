@@ -93,8 +93,13 @@ Where this document says "the sandboxed process", it means the program running i
 - **Network only.** Risk Guard scores HTTP/S requests that OpenShell inspects.
   Filesystem and process behavior are enforced statically by OpenShell
   (Landlock and policy), not scored.
-- **Bodies are never read.** Routes whose effect depends on the body (GraphQL,
-  unknown POSTs) are treated as high-impact by default.
+- **Bodies and headers are received but never used.** OpenShell's middleware call
+  delivers the request body, headers and query (up to the registered
+  `max_payload_bytes`). Risk Guard discards them unread and never stores or logs
+  them. Routes whose effect depends on the body (GraphQL, unknown POSTs) are treated
+  as high-impact by default. OpenShell treats an oversized payload as a middleware
+  failure, so Risk Guard advertises and is registered for the 4 MiB platform maximum;
+  a large body is never denied just for its size.
 - **Single local operator.** The console uses one private capability token, not
   per-user accounts; its audit records the capability, not a person.
 - **Raw resource names** (for example `org/payments-prod`) are stored for operator

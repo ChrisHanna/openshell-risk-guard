@@ -745,7 +745,10 @@ pub(super) fn agent_inventory(conn: &Connection, now_ms: i64) -> Result<Vec<Valu
           (SELECT COUNT(*) FROM scoring_contexts c WHERE c.agent_id = a.agent_id),
           (SELECT COUNT(*) FROM recommendations x JOIN epoch_bindings b USING(epoch_id)
            JOIN agent_runs r USING(run_id) JOIN scoring_contexts c USING(context_id)
-           WHERE c.agent_id = a.agent_id)
+           WHERE c.agent_id = a.agent_id),
+          (SELECT COUNT(DISTINCT e.sandbox_id) FROM epoch_bindings b JOIN epochs e USING(epoch_id)
+           JOIN agent_runs r USING(run_id) JOIN scoring_contexts c USING(context_id)
+           WHERE c.agent_id = a.agent_id AND e.active != 0)
          FROM agents a ORDER BY a.agent_id LIMIT 200",
     )?;
     Ok(stmt.query_map(params![now_ms], |row| Ok(json!({
@@ -759,7 +762,9 @@ pub(super) fn agent_inventory(conn: &Connection, now_ms: i64) -> Result<Vec<Valu
         "latest_risk_score": row.get::<_, Option<i64>>(10)?,
         "sandbox_count": row.get::<_, i64>(11)?,
         "context_count": row.get::<_, i64>(12)?,
-        "recommendation_count": row.get::<_, i64>(13)?
+        "recommendation_count": row.get::<_, i64>(13)?,
+        // `sandbox_count` is every sandbox ever bound to this workload; this is the subset whose epoch is still open.
+        "active_sandbox_count": row.get::<_, i64>(14)?
     })))?.collect::<std::result::Result<Vec<_>, _>>()?)
 }
 

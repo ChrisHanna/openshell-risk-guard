@@ -41,11 +41,18 @@ pub const DEFAULT_MAX_IN_FLIGHT: usize = 64;
 /// Default per-evaluation store + detector timeout in milliseconds.
 pub const DEFAULT_EVAL_TIMEOUT_MS: u64 = 100;
 
-/// Maximum payload bytes advertised by `openshell/behavioral-risk-guard`.
-pub const MAX_PAYLOAD_BYTES: u64 = 16 * 1024;
+/// Maximum payload bytes advertised by `openshell/behavioral-risk-guard`: the 4 MiB platform maximum. Risk Guard never
+/// uses bodies, but OpenShell delivers them and treats an oversized payload as a middleware failure (which blocks under
+/// `on_error: fail_closed`), so a smaller limit would deny legitimate large requests just for their size.
+pub const MAX_PAYLOAD_BYTES: u64 = 4 * 1024 * 1024;
 
-/// Per-request RPC timeout in nanoseconds advertised in `MiddlewareBinding` (200ms).
-pub const REQUEST_TIMEOUT_NANOS: i32 = 200_000_000;
+/// Largest gRPC message the server accepts: the payload limit plus envelope, as OpenShell advises (at least 4.5 MiB).
+pub const MAX_GRPC_MESSAGE_BYTES: usize = 4 * 1024 * 1024 + 512 * 1024;
+
+/// Per-request RPC timeout advertised in `MiddlewareBinding` (500 ms). OpenShell uses the smaller of this and the
+/// timeout in the gateway registration, so deployments register the same 500 ms. The service itself answers within
+/// `DEFAULT_EVAL_TIMEOUT_MS` and fails closed past it, so the gateway never has to time out first.
+pub const REQUEST_TIMEOUT_NANOS: i32 = 500_000_000;
 
 /// Validated per-stage policy configuration for `openshell/behavioral-risk-guard`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,7 +187,7 @@ impl RiskGuardMiddlewareService {
     /// Wrap this service in a tonic `SupervisorMiddlewareServer`.
     #[must_use]
     pub fn into_server(self) -> SupervisorMiddlewareServer<Self> {
-        SupervisorMiddlewareServer::new(self)
+        SupervisorMiddlewareServer::new(self).max_decoding_message_size(MAX_GRPC_MESSAGE_BYTES)
     }
 
     fn build_manifest(&self) -> MiddlewareManifest {
@@ -647,12 +654,12 @@ mod tests {
             binding.phase,
             SupervisorMiddlewarePhase::PreCredentials as i32
         );
-        assert_eq!(binding.max_payload_bytes, 16 * 1024);
+        assert_eq!(binding.max_payload_bytes, MAX_PAYLOAD_BYTES);
         assert_eq!(
             binding.request_timeout,
             Some(prost_types::Duration {
                 seconds: 0,
-                nanos: 200_000_000,
+                nanos: REQUEST_TIMEOUT_NANOS,
             })
         );
 

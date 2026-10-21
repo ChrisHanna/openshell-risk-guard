@@ -621,8 +621,8 @@ health. No high-cardinality request/resource identity labels.
 [[openshell.supervisor.middleware]]
 name = "risk-guard"
 grpc_endpoint = "https://host.openshell.internal:50061"
-timeout = "200ms"
-max_payload_bytes = 16384
+timeout = "500ms"
+max_payload_bytes = 4194304
 
 [[openshell.gateway.interceptors]]
 name = "risk-guard-governance"

@@ -37,6 +37,15 @@ esac
 "$CLI" provider get "$PROVIDER" >/dev/null 2>&1 || { echo "provider '$PROVIDER' not found; run 12-sync-credentials.ps1" >&2; exit 1; }
 
 NAME="agent-$(date +%H%M%S)"
+# With CLEANUP_SANDBOX=1 (the fleet sets it) the sandbox is deleted on every way out of this script: success, failure,
+# a timeout or a kill. Each sandbox is a Kata VM, so one that outlives its run is a leak. Run the script by hand without
+# it to keep the sandbox for inspection.
+cleanup_sandbox() {
+  [ "${CLEANUP_SANDBOX:-0}" = 1 ] || return 0
+  "$CLI" sandbox delete "$NAME" >/dev/null 2>&1 || true
+}
+trap cleanup_sandbox EXIT
+trap 'exit 143' TERM INT
 echo "creating sandbox $NAME (workload $APPID)"
 # The gateway connection (a kubectl port-forward) can drop mid-request. A dropped create may still have created the
 # sandbox, so after each attempt check for it before trying again; keep the last error for the failure message.

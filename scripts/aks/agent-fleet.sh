@@ -85,7 +85,7 @@ while :; do
   guard=(); [ $((RUNS[$agent] % GUARD_EVERY)) -eq 0 ] && guard=(--guardrails)
 
   echo "=== $(date '+%H:%M:%S')  $agent  ${guard[*]:-no-guardrail}"
-  out="$(AGENT_PROFILE="${PROFILE[$agent]}" AGENT_NAME="openshell-agent-$agent" TAIL_LINES=12 bash "$HERE/scripts/aks/run-agent.sh" "$(appid "$agent")" "$task" "${guard[@]}" 2>&1)"
+  out="$(CLEANUP_SANDBOX=1 AGENT_PROFILE="${PROFILE[$agent]}" AGENT_NAME="openshell-agent-$agent" TAIL_LINES=12 bash "$HERE/scripts/aks/run-agent.sh" "$(appid "$agent")" "$task" "${guard[@]}" 2>&1)"
   echo "$out"
   sandbox="$(printf '%s\n' "$out" | sed -n 's/^sandbox: \([^ ]*\).*/\1/p' | tail -1)"
   [ -n "$sandbox" ] && "$CLI" sandbox delete "$sandbox" >/dev/null 2>&1

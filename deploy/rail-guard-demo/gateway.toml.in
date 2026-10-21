@@ -29,7 +29,7 @@ name = "risk-guard"
 grpc_endpoint = "https://127.0.0.1:50061"
 tls_ca_cert_path = "@STATE_DIR@/risk-guard-tls/ca.crt"
 audience = "urn:openshell:extension:risk-guard"
-max_payload_bytes = 16384
+max_payload_bytes = 4194304
 timeout = "500ms"
 [openshell.drivers.docker]
 socket_path = "@DOCKER_SOCKET@"

@@ -28,5 +28,5 @@ gatewayConfig:
       grpc_endpoint: https://risk-guard.openshell.svc.cluster.local:50061
       tls_ca_cert_path: /etc/openshell-extensions/risk-guard/ca.crt
       audience: urn:openshell:extension:risk-guard
-      max_payload_bytes: 16384
+      max_payload_bytes: 4194304
       timeout: 500ms

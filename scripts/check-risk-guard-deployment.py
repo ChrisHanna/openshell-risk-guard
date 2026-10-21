@@ -55,7 +55,7 @@ def check() -> None:
     assert middleware["name"] == "risk-guard"
     check_authenticated_extensions(interceptor, middleware)
     assert interceptor["failure_policy"] == "fail_closed"
-    assert middleware["max_payload_bytes"] == 16384
+    assert middleware["max_payload_bytes"] == 4194304
     docker = config["drivers"]["docker"]
     assert docker["supervisor_network_mode"] == "host"
     assert docker["image_pull_policy"] == "never"

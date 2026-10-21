@@ -124,7 +124,7 @@ user's active gateway. Registration is static TOML and requires restart.
 The service-reported middleware name is in the reserved `openshell/` namespace,
 but operator registrations cannot claim that namespace. Policy
 `middleware: risk-guard` references the operator name. Both registrations share
-the explicit audience `urn:openshell:extension:risk-guard`; the 16384-byte payload
+the explicit audience `urn:openshell:extension:risk-guard`; the 4 MiB (4194304-byte) payload
 limit matches Risk Guard's manifest. The `network_middlewares` policy attachment
 uses `on_error: fail_closed`; the interceptor uses `failure_policy: fail_closed`.
 

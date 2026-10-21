@@ -96,6 +96,11 @@ pub enum Commands {
         /// label allowlist. For local testing only: that caller proves nothing about who it is.
         #[arg(long = "allow-local-dev-principal", env = "RISK_GUARD_ALLOW_LOCAL_DEV_PRINCIPAL")]
         allow_local_dev_principal: bool,
+        /// Keep detailed decisions this many days; older ones are pruned hourly unless an active lock or an adaptive
+        /// training window still needs them. 0 keeps everything (the per-epoch cap still applies). Epochs, locks and
+        /// the audit of cleared locks are never pruned.
+        #[arg(long = "decision-retention-days", env = "RISK_GUARD_DECISION_RETENTION_DAYS", default_value_t = 30)]
+        decision_retention_days: u32,
     },
     /// Check that a running sidecar is serving, over TLS (for Kubernetes exec probes; exit 0 only if SERVING).
     HealthCheck {
@@ -432,6 +437,7 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             auto_register_agents,
             workload_from_principal,
             allow_local_dev_principal,
+            decision_retention_days,
         } => {
             if public_key_pem.is_none() && !allow_insecure_local_test {
                 return Err(RiskGuardError::InvalidArgument(
@@ -445,6 +451,29 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                 crate::sidecar::resource_hmac_key(hmac_key_file.as_deref(), allow_insecure_local_test)?;
             let store = Arc::new(SqliteRiskStore::open(&db)?);
             store.bind_resource_key(&hmac_key, now_unix_ms())?;
+            if decision_retention_days > 0 {
+                let retention_store = Arc::clone(&store);
+                let window_ms = i64::from(decision_retention_days) * 86_400_000;
+                tokio::spawn(async move {
+                    let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+                    loop {
+                        tick.tick().await;
+                        let store = Arc::clone(&retention_store);
+                        let cutoff = now_unix_ms().saturating_sub(window_ms);
+                        match tokio::task::spawn_blocking(move || store.prune_decisions_older_than(cutoff)).await {
+                            Ok(Ok(0)) => {}
+                            Ok(Ok(deleted)) => tracing::info!(
+                                deleted,
+                                retention_days = decision_retention_days,
+                                "pruned decisions past the retention window"
+                            ),
+                            Ok(Err(err)) => tracing::warn!(error = %err, "decision retention pruning failed"),
+                            Err(err) => tracing::warn!(error = %err, "decision retention task failed"),
+                        }
+                    }
+                });
+                tracing::info!(retention_days = decision_retention_days, "decision retention is enabled");
+            }
             if store.get_baseline(&default_task_profile)?.is_none() {
                 return Err(RiskGuardError::InvalidArgument(format!(
                     "baseline '{default_task_profile}' is not provisioned; use baseline-import"

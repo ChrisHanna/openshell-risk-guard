@@ -346,6 +346,17 @@ pre {
   background: #f2f3f5;
   border-color: #f2f3f5;
 }
+.scope-bar {
+  padding: 6px 24px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-code);
+}
+.scope-bar strong { color: var(--text-secondary); font-weight: 600; }
+.freshness-ok { color: var(--ok-text); }
+.freshness-warn { color: var(--warn-text, #d4b36a); }
+.freshness-bad { color: var(--crit-text); }
 .status-Readout {
   display: inline-flex;
   align-items: center;
@@ -1195,6 +1206,8 @@ tbody tr:focus-within { background: var(--bg-elevated); }
           <span id="updated" role="status">Loading...</span>
         </span>
 
+        <span class="status-Readout" id="freshness" role="status" aria-live="polite" title="How current this page is"></span>
+
         <label class="status-Readout" style="cursor:pointer">
           <input type="checkbox" id="auto-refresh" style="margin:0" checked />
           <span>Auto</span>
@@ -1203,6 +1216,10 @@ tbody tr:focus-within { background: var(--bg-elevated); }
         <button type="button" id="refresh" class="btn">Refresh</button>
       </div>
     </header>
+    <div class="scope-bar" role="note">
+      <strong>Scope.</strong> Risk Guard scores the HTTP requests OpenShell inspects for the hosts it is attached to.
+      Decisions are recorded evidence, not proof that an upstream call succeeded. This console is read-only.
+    </div>
 
     <p id="error" role="alert"></p>
     <p id="agent-loading" class="empty-state" role="status" hidden>Loading agent evidence...</p>
@@ -1235,9 +1252,9 @@ tbody tr:focus-within { background: var(--bg-elevated); }
           <div class="kpi-sub" id="fleet-kpi-blocked-sub">Stopped inline at middleware</div>
         </article>
         <article class="kpi-box">
-          <div class="kpi-label">Sandboxes</div>
+          <div class="kpi-label">Sandboxes recorded</div>
           <div class="kpi-val" id="fleet-kpi-sandboxes">0</div>
-          <div class="kpi-sub">Recorded OpenShell epochs</div>
+          <div class="kpi-sub" id="fleet-kpi-sandboxes-sub">Every sandbox Risk Guard has seen</div>
         </article>
         <article class="kpi-box">
           <div class="kpi-label">Recommendations</div>
@@ -1282,7 +1299,7 @@ tbody tr:focus-within { background: var(--bg-elevated); }
           </div>
         </section>
       </div>
-      <p class="quiet-note" id="inventory-scope">Recorded totals from the loaded inventory, not a time-windowed fleet rollup. Runtime connectivity and sandbox lifecycle are not collected.</p>
+      <p class="quiet-note" id="inventory-scope">Recorded totals from the loaded inventory. Request counts cover the decisions still retained (30 days by default). Connectivity and sandbox lifecycle are inferred from the calls Risk Guard receives; it does not probe the gateway.</p>
     </main>
 
     <main class="content-wrap view-hidden" id="agents-view" aria-label="Agent directory">
@@ -2068,6 +2085,37 @@ const agentName = agent => agent && agent.display_name && agent.display_name !==
 const pretty = value => JSON.stringify(value, null, 2);
 const time = value => value == null ? "Unknown" : new Date(value).toLocaleString();
 const shortTime = value => value == null ? "—" : new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+let lastFetchedAt = null;
+let refreshFailedSince = null;
+const relativeAge = ms => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.round(m / 60);
+  return h < 48 ? `${h} h` : `${Math.round(h / 24)} d`;
+};
+// How current the page is, and whether anything is reaching Risk Guard. Connectivity is inferred from calls Risk
+// Guard has received (it does not probe the gateway), so "quiet" means "nothing recently", not "broken".
+function renderFreshness() {
+  const el = $("freshness");
+  if (!el) return;
+  const set = (cls, text, title) => { el.className = `status-Readout ${cls}`.trim(); el.textContent = text; el.title = title; };
+  if (refreshFailedSince !== null) {
+    set("freshness-bad", `Update failing since ${shortTime(refreshFailedSince)}`, "The last refresh failed, so the numbers on this page may be out of date.");
+    return;
+  }
+  if (!cachedStateData || lastFetchedAt === null) { set("", "", ""); return; }
+  const conn = cachedStateData.gateway_connectivity || {};
+  const last = conn.last_supervisor_request_ms;
+  const age = Number.isFinite(last) ? (cachedStateData.generated_at_ms - last) + (Date.now() - lastFetchedAt) : null;
+  const note = "Inferred from calls Risk Guard has received. It does not probe the gateway.";
+  const quiet = conn.status === "quiet" || (age !== null && age > 15 * 60000);
+  if (conn.status === "never_seen") set("freshness-warn", "No requests received yet", note);
+  else if (quiet) set("freshness-warn", `Quiet · last request ${age === null ? "unknown" : `${relativeAge(age)} ago`}`, `${note} The agents may be idle, or whatever drives them may be stopped.`);
+  else set("freshness-ok", `Receiving · last request ${relativeAge(age ?? 0)} ago`, note);
+}
+setInterval(renderFreshness, 5000);
 const shortId = (value, len = 12) => {
   if (!value) return "—";
   const s = String(value);
@@ -5148,7 +5196,8 @@ function renderFleetDirectory() {
     if (denied > 0) traffic.style.color = "var(--crit-text)";
     const execution = document.createElement("span");
     execution.className = "cell-secondary";
-    execution.textContent = `${sbx} sandboxes · ${item.run_count} runs`;
+    const open = Number(item.active_sandbox_count);
+    execution.textContent = `${sbx} sandboxes${Number.isFinite(open) ? ` (${open} still open)` : ""} · ${item.run_count} runs`;
     c3.append(traffic, execution);
 
     const c4 = document.createElement("td");
@@ -5178,7 +5227,13 @@ function renderFleetDirectory() {
   $("fleet-kpi-agents").textContent = String(data.total_agents || (data.agents || []).length);
   $("fleet-kpi-contained").textContent = String(totalContained);
   $("fleet-kpi-blocked").textContent = String(totalBlocked);
-  $("fleet-kpi-sandboxes").textContent = String(data.total_sandboxes || (data.sandboxes || []).length);
+  // One definition everywhere: "recorded" is every sandbox ever bound (the same basis as each agent's count below).
+  // The lifecycle breakdown says how many of them are still being seen.
+  const life = data.sandbox_lifecycle && typeof data.sandbox_lifecycle === "object" ? data.sandbox_lifecycle : null;
+  $("fleet-kpi-sandboxes").textContent = String(life ? life.sandboxes_recorded : (data.total_sandboxes || (data.sandboxes || []).length));
+  $("fleet-kpi-sandboxes-sub").textContent = life
+    ? `${life.recently_active} active in 15 min · ${life.idle} idle · ${life.not_seen_recently} not seen for 6 h+ · ${life.sandboxes_closed} closed`
+    : "Every sandbox Risk Guard has seen";
   $("fleet-kpi-recs").textContent = String(totalRecs);
   $("dist-contained").textContent = String(totalContained);
   const loaded = (data.agents || []).length;
@@ -5188,7 +5243,7 @@ function renderFleetDirectory() {
   $("directory-count").textContent = `${shown} of ${loaded} loaded agents`;
   $("directory-empty").hidden = shown > 0;
   $("directory-empty").textContent = loaded ? "No agents match these filters." : "No registered agents recorded in this database.";
-  $("inventory-scope").textContent = `Loaded ${loaded} of ${data.total_agents ?? loaded} registered agents. Counts describe recorded inventory, not a time-windowed fleet rollup. Runtime connectivity and sandbox lifecycle are not collected.`;
+  $("inventory-scope").textContent = `Loaded ${loaded} of ${data.total_agents ?? loaded} registered agents. Request counts cover the decisions still retained (30 days by default). Connectivity and sandbox lifecycle are inferred from the calls Risk Guard receives; it does not probe the gateway.`;
 }
 
 async function inspect(kind, id) {
@@ -5364,7 +5419,10 @@ async function refresh() {
     const data = await read("/api/state");
     if (version !== selectionVersion) return;
     cachedStateData = data;
+    lastFetchedAt = Date.now();
+    refreshFailedSince = null;
     $("updated").textContent = shortTime(data.generated_at_ms);
+    renderFreshness();
 
     renderFleetDirectory();
 
@@ -5396,6 +5454,8 @@ async function refresh() {
     hideDetails();
     $("updated").textContent = "Unavailable";
     $("error").textContent = error.message;
+    if (refreshFailedSince === null) refreshFailedSince = Date.now();
+    renderFreshness();
     if (!cachedStateData) {
       for (const id of ["side-fleet-count", "fleet-kpi-agents", "fleet-kpi-contained", "fleet-kpi-blocked", "fleet-kpi-sandboxes", "fleet-kpi-recs", "dist-contained", "dist-healthy"]) $(id).textContent = "—";
       $("directory-count").textContent = "Inventory unavailable";
