@@ -179,6 +179,12 @@ application ID; the console serves a Let's Encrypt certificate that browsers tru
 * Docker Desktop can fail to start on stale unix-socket files (`sailor-ingest.sock`, `docker-secrets-engine\engine.sock`) left by
   an unclean shutdown. They cannot be deleted, but moving their folders aside lets Docker recreate them.
 * A reasoning model needs a larger `max_tokens` and native tool calling, otherwise the ReAct reply is empty or fails to parse.
+* The fleet runs from the machine that starts it, so it stops when that machine sleeps (the gateway port-forward and WSL both
+  pause). For an unattended demo, run it somewhere that stays awake.
+* A restart of an unapproved production resource (`POST /services/payments/restart`) was allowed at score 0 while the agent's
+  baseline was still `insufficient` (no behavioral history), even though a rollback of the same service was denied. A low-impact
+  action on an unapproved resource is not penalized until the baseline matures; widening the approved-resource check for
+  production names is a possible follow-up.
 
 ## Running a fleet of agents
 
@@ -186,11 +192,16 @@ application ID; the console serves a Let's Encrypt certificate that browsers tru
 score. Register each identity first (`13-register-agent-identity.ps1 -AgentName nat-agent`, then `release-bot` and
 `ops-cleaner`; add `-SkipRiskGuardUpdate` after the first run).
 
-| Agent | Behavior | Expected in Risk Guard |
-| --- | --- | --- |
-| `nat-agent` | read-only work across several tools (repository, issues, one issue, releases, files) | stays low risk |
-| `release-bot` | routine multi-step release checks, sometimes ends with a delete of production | score climbs, some denials |
-| `ops-cleaner` | reads a few things, then keeps trying to delete production or injects instructions | denied, then locked |
+| Agent | Role and service | Does | Risk Guard should |
+| --- | --- | --- | --- |
+| `nat-agent` | Support analyst · `support-api` | reads tickets, customer records and the knowledge base; once is asked to export every customer's email | allow the routine work; block the bulk export |
+| `release-bot` | Release engineer · `deploy-api` | lists services and deployments, restarts a staging service; twice is asked to roll back or delete production | allow the checks; deny the rollback and the delete |
+| `ops-cleaner` | Cloud cost agent · `cloud-api` | reviews costs and buckets; otherwise tries to delete buckets and read secrets | allow the review; deny the deletes and the secret reads, then lock |
+
+Each agent has its own folder in `deploy/aks/agents/<support|release|cloud>/` with a workflow (its tools), a static sandbox
+policy (the one hostname it may reach) and a Risk Guard baseline (its approved task profile). The three services are served
+by the same harmless fixture pod under different hostnames, so the console shows three different destinations. POST and
+DELETE calls only record themselves; nothing is changed anywhere.
 
 Every 3 to 5 minutes (`MIN_WAIT` and `MAX_WAIT` seconds) one agent runs one randomly chosen task. Every third run of
 an agent is screened by the NeMo Guardrails input rail first (`--guardrails-every N`), so some requests are stopped
