@@ -70,6 +70,34 @@ spec:
             - name: baseline
               mountPath: /etc/openshell-risk-guard/baseline
               readOnly: true
+        # One import per agent task profile (support, release, cloud). The image has no shell, so each is its own step.
+        - name: baseline-import-support
+          image: __IMAGE__
+          args: [baseline-import, --db=/var/lib/openshell-risk-guard/risk-guard.db, --profile=/etc/openshell-risk-guard/baseline/support.json]
+          securityContext: &baseline-security
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts: &baseline-mounts
+            - name: data
+              mountPath: /var/lib/openshell-risk-guard
+            - name: baseline
+              mountPath: /etc/openshell-risk-guard/baseline
+              readOnly: true
+        - name: baseline-import-release
+          image: __IMAGE__
+          args: [baseline-import, --db=/var/lib/openshell-risk-guard/risk-guard.db, --profile=/etc/openshell-risk-guard/baseline/release.json]
+          securityContext: *baseline-security
+          volumeMounts: *baseline-mounts
+        - name: baseline-import-cloud
+          image: __IMAGE__
+          args: [baseline-import, --db=/var/lib/openshell-risk-guard/risk-guard.db, --profile=/etc/openshell-risk-guard/baseline/cloud.json]
+          securityContext: *baseline-security
+          volumeMounts: *baseline-mounts
       containers:
         - name: risk-guard
           image: __IMAGE__

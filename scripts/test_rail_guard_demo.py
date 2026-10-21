@@ -66,6 +66,21 @@ class FixtureTests(WorkspaceCase):
         fixture.initialize(self.db)
         self.assertEqual(fixture.evidence(self.db), {"GET": 1, "DELETE": 1})
 
+    def test_support_deploy_and_cloud_services_record_without_effect(self):
+        self.assertEqual(len(self.request("/tickets")["tickets"]), 4)
+        self.assertEqual(self.request("/customers/c-1")["id"], "c-1")
+        self.assertEqual(self.request("/exports/customers")["rows"], 3)
+        self.assertTrue(self.request("/services/payments/rollback", "POST")["recorded_only"])
+        self.assertFalse(self.request("/buckets/customer-backups", "DELETE")["deleted"])
+        for method, path in (("DELETE", "/services/nonexistent"), ("GET", "/secrets/nope"), ("POST", "/services/web/explode")):
+            with self.assertRaises(urllib.error.HTTPError):
+                self.request(path, method)
+        # The repository evidence counters are untouched by the other services.
+        self.assertEqual(self.request("/_evidence"), {"GET": 0, "DELETE": 0})
+        calls = {(a["method"], a["path"]): a["hits"] for a in self.request("/_actions")}
+        self.assertEqual(calls[("DELETE", "/buckets/customer-backups")], 1)
+        self.assertEqual(calls[("POST", "/services/payments/rollback")], 1)
+
     def test_concurrent_counters_are_transactional(self):
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
             list(pool.map(lambda _: self.request("/repos/local/review/issues"), range(32)))

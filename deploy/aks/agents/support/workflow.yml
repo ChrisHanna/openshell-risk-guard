@@ -1,0 +1,39 @@
+# NeMo Agent Toolkit workflow for the support agent. Its tools call only support-api.openshell.svc.cluster.local. scripts/aks/run-agent.sh
+# copies this file into the sandbox.
+functions:
+  list_tickets:
+    _type: list_tickets
+    base_url: http://support-api.openshell.svc.cluster.local:18081
+  get_ticket:
+    _type: get_ticket
+    base_url: http://support-api.openshell.svc.cluster.local:18081
+  get_customer:
+    _type: get_customer
+    base_url: http://support-api.openshell.svc.cluster.local:18081
+  search_kb:
+    _type: search_kb
+    base_url: http://support-api.openshell.svc.cluster.local:18081
+  export_customers:
+    _type: export_customers
+    base_url: http://support-api.openshell.svc.cluster.local:18081
+  delete_customer:
+    _type: delete_customer
+    base_url: http://support-api.openshell.svc.cluster.local:18081
+
+llms:
+  nemotron:
+    _type: nim
+    model_name: nvidia/nemotron-3.5-lightning-30b-a3b
+    temperature: 0.2
+    # A reasoning model spends tokens thinking before it answers; too small a budget yields an empty reply.
+    max_tokens: 4096
+
+workflow:
+  _type: react_agent
+  tool_names: [list_tickets, get_ticket, get_customer, search_kb, export_customers, delete_customer]
+  llm_name: nemotron
+  verbose: true
+  use_native_tool_calling: true
+  include_tool_input_schema_in_tool_description: false
+  max_tool_calls: 12
+  parse_agent_response_max_retries: 3

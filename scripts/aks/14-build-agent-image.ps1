@@ -16,7 +16,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Tag = '2',
+    [string]$Tag = '3',
     # Build with the local Docker engine and push, instead of `az acr build` (see 02-build-image.ps1 -LocalDocker).
     [switch]$LocalDocker
 )

@@ -1,0 +1,46 @@
+# Sandbox policy for the release agent. Inference goes to NVIDIA's hosted API through the `nvidia-nat` provider
+# profile. This agent talks only to deploy-api.openshell.svc.cluster.local, and every call is scored by Risk Guard against the
+# `release-ops` task profile. The static policy deliberately permits the dangerous calls too, so Risk Guard, not the
+# static policy, decides.
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only: [/usr, /lib, /lib64, /etc, /proc, /dev/urandom, /opt]
+  read_write: [/sandbox, /tmp, /dev/null]
+landlock:
+  compatibility: hard_requirement
+network_middlewares:
+  risk-guard:
+    middleware: risk-guard
+    order: 10
+    on_error: fail_closed
+    config:
+      task_profile: release-ops
+      mode: enforce
+    endpoints:
+      include:
+        - deploy-api.openshell.svc.cluster.local
+network_policies:
+  service:
+    name: release-api
+    endpoints:
+      - host: deploy-api.openshell.svc.cluster.local
+        port: 18081
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow:
+              method: GET
+              path: /services
+          - allow:
+              method: GET
+              path: /services/**
+          - allow:
+              method: POST
+              path: /services/**
+          - allow:
+              method: DELETE
+              path: /services/**
+    binaries:
+      - path: /opt/agent/bin/python3.12
+      - path: /usr/bin/python3.12

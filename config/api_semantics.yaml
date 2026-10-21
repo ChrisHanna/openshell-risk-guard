@@ -163,3 +163,121 @@ routes:
     semantic_category: read_only
     high_impact: false
     resource_template: "/sensitive"
+
+  # ---- Demo services used by the AKS agent fleet (scripts/aks/agent-fleet.sh) ---------------------------------
+  # Rules are scoped to their own host, so they never apply to other APIs. Resource names group what the agent
+  # touches (for example every ticket route is the "tickets" resource) so a normal run is not read as fan-out.
+
+  # Support API: tickets, customer records, knowledge base, bulk export.
+  - host: support-api.openshell.svc.cluster.local
+    method: GET
+    route_template: /tickets
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "tickets"
+  - host: support-api.openshell.svc.cluster.local
+    method: GET
+    route_template: /tickets/{id}
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "tickets"
+  - host: support-api.openshell.svc.cluster.local
+    method: GET
+    route_template: /customers/{id}
+    semantic_category: read_sensitive
+    high_impact: false
+    resource_template: "customers"
+  - host: support-api.openshell.svc.cluster.local
+    method: GET
+    route_template: /kb
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "kb"
+  - host: support-api.openshell.svc.cluster.local
+    method: GET
+    route_template: /exports/customers
+    semantic_category: bulk_export
+    high_impact: true
+    resource_template: "customer-export"
+  - host: support-api.openshell.svc.cluster.local
+    method: DELETE
+    route_template: /customers/{id}
+    semantic_category: destructive_admin
+    high_impact: true
+    resource_template: "customers"
+
+  # Deploy API: services, deployments, restart, rollback, delete.
+  - host: deploy-api.openshell.svc.cluster.local
+    method: GET
+    route_template: /services
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "services"
+  - host: deploy-api.openshell.svc.cluster.local
+    method: GET
+    route_template: /services/{svc}
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "{svc}"
+  - host: deploy-api.openshell.svc.cluster.local
+    method: GET
+    route_template: /services/{svc}/deployments
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "{svc}"
+  - host: deploy-api.openshell.svc.cluster.local
+    method: POST
+    route_template: /services/{svc}/restart
+    semantic_category: write_mutation
+    high_impact: false
+    resource_template: "{svc}"
+  - host: deploy-api.openshell.svc.cluster.local
+    method: POST
+    route_template: /services/{svc}/rollback
+    semantic_category: write_mutation
+    high_impact: true
+    resource_template: "{svc}"
+  - host: deploy-api.openshell.svc.cluster.local
+    method: DELETE
+    route_template: /services/{svc}
+    semantic_category: destructive_admin
+    high_impact: true
+    resource_template: "{svc}"
+
+  # Cloud API: storage buckets, costs, secrets.
+  - host: cloud-api.openshell.svc.cluster.local
+    method: GET
+    route_template: /buckets
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "buckets"
+  - host: cloud-api.openshell.svc.cluster.local
+    method: GET
+    route_template: /buckets/{name}
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "buckets"
+  - host: cloud-api.openshell.svc.cluster.local
+    method: GET
+    route_template: /costs
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "costs"
+  - host: cloud-api.openshell.svc.cluster.local
+    method: GET
+    route_template: /secrets
+    semantic_category: read_sensitive
+    high_impact: true
+    resource_template: "secrets"
+  - host: cloud-api.openshell.svc.cluster.local
+    method: GET
+    route_template: /secrets/{name}
+    semantic_category: read_sensitive
+    high_impact: true
+    resource_template: "secrets"
+  - host: cloud-api.openshell.svc.cluster.local
+    method: DELETE
+    route_template: /buckets/{name}
+    semantic_category: destructive_admin
+    high_impact: true
+    resource_template: "{name}"

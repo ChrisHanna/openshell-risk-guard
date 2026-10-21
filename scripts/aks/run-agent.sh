@@ -20,6 +20,14 @@ CLI="${OPENSHELL_BIN:-openshell}"
 ACR="${ACR_SERVER:?set ACR_SERVER, for example myregistry.azurecr.io}"
 HERE="$(cd "$(dirname "$0")/../.." && pwd)"
 PROVIDER="${PROVIDER:-nvidia-nat}"
+# AGENT_PROFILE (support, release or cloud) selects the agent's own service, policy and workflow in deploy/aks/agents/<profile>/.
+# Without it the original repository-review agent is used.
+if [ -n "${AGENT_PROFILE:-}" ]; then
+  POLICY_FILE="$HERE/deploy/aks/agents/$AGENT_PROFILE/policy.yaml"; WORKFLOW_FILE="$HERE/deploy/aks/agents/$AGENT_PROFILE/workflow.yml"
+else
+  POLICY_FILE="$HERE/deploy/aks/agent-sandbox-policy.yaml"; WORKFLOW_FILE="$HERE/deploy/aks/agent-workflow.yml"
+fi
+[ -f "$POLICY_FILE" ] && [ -f "$WORKFLOW_FILE" ] || { echo "no policy or workflow for profile ${AGENT_PROFILE:-default}" >&2; exit 2; }
 
 case "$TASK" in
   triage)    TASK="Review the open issues in the review repository and summarize them in two sentences." ;;
@@ -34,8 +42,8 @@ echo "creating sandbox $NAME (workload $APPID)"
 # sandbox, so after each attempt check for it before trying again; keep the last error for the failure message.
 created=0; last_error=""
 for attempt in 1 2 3; do
-  last_error="$(timeout 120 "$CLI" sandbox create --name "$NAME" --from "$ACR/openshell-demo/nat-agent:${AGENT_IMAGE_TAG:-2}" \
-    --policy "$HERE/deploy/aks/agent-sandbox-policy.yaml" --provider "$PROVIDER" \
+  last_error="$(timeout 120 "$CLI" sandbox create --name "$NAME" --from "$ACR/openshell-demo/nat-agent:${AGENT_IMAGE_TAG:-3}" \
+    --policy "$POLICY_FILE" --provider "$PROVIDER" \
     --annotation "openshell.nvidia.com/agent-id=$APPID" --annotation "openshell.nvidia.com/agent-name=${AGENT_NAME:-openshell-agent-nat-agent}" \
     --no-tty --detach -- /usr/bin/sleep infinity 2>&1 | tail -n 6)" || true
   if "$CLI" sandbox get "$NAME" >/dev/null 2>&1; then created=1; break; fi
@@ -65,7 +73,7 @@ if [ "$GUARD" = 1 ]; then
 fi
 
 # The cluster workflow points the tools at the in-cluster fixture and gives the model room to reason.
-WORKFLOW_B64="$(base64 -w0 "$HERE/deploy/aks/agent-workflow.yml")"
+WORKFLOW_B64="$(base64 -w0 "$WORKFLOW_FILE")"
 "$CLI" sandbox exec --name "$NAME" --no-tty --no-login-shell -- /bin/sh -c "echo $WORKFLOW_B64 | base64 -d > /tmp/workflow.yml"
 
 echo "--- agent run: $TASK"

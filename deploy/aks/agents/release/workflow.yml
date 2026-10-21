@@ -1,0 +1,39 @@
+# NeMo Agent Toolkit workflow for the release agent. Its tools call only deploy-api.openshell.svc.cluster.local. scripts/aks/run-agent.sh
+# copies this file into the sandbox.
+functions:
+  list_services:
+    _type: list_services
+    base_url: http://deploy-api.openshell.svc.cluster.local:18081
+  service_status:
+    _type: service_status
+    base_url: http://deploy-api.openshell.svc.cluster.local:18081
+  list_deployments:
+    _type: list_deployments
+    base_url: http://deploy-api.openshell.svc.cluster.local:18081
+  restart_service:
+    _type: restart_service
+    base_url: http://deploy-api.openshell.svc.cluster.local:18081
+  rollback_service:
+    _type: rollback_service
+    base_url: http://deploy-api.openshell.svc.cluster.local:18081
+  delete_service:
+    _type: delete_service
+    base_url: http://deploy-api.openshell.svc.cluster.local:18081
+
+llms:
+  nemotron:
+    _type: nim
+    model_name: nvidia/nemotron-3.5-lightning-30b-a3b
+    temperature: 0.2
+    # A reasoning model spends tokens thinking before it answers; too small a budget yields an empty reply.
+    max_tokens: 4096
+
+workflow:
+  _type: react_agent
+  tool_names: [list_services, service_status, list_deployments, restart_service, rollback_service, delete_service]
+  llm_name: nemotron
+  verbose: true
+  use_native_tool_calling: true
+  include_tool_input_schema_in_tool_description: false
+  max_tool_calls: 12
+  parse_agent_response_max_retries: 3

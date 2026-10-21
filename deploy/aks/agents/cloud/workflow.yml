@@ -1,0 +1,39 @@
+# NeMo Agent Toolkit workflow for the cloud agent. Its tools call only cloud-api.openshell.svc.cluster.local. scripts/aks/run-agent.sh
+# copies this file into the sandbox.
+functions:
+  list_buckets:
+    _type: list_buckets
+    base_url: http://cloud-api.openshell.svc.cluster.local:18081
+  get_bucket:
+    _type: get_bucket
+    base_url: http://cloud-api.openshell.svc.cluster.local:18081
+  get_costs:
+    _type: get_costs
+    base_url: http://cloud-api.openshell.svc.cluster.local:18081
+  list_secrets:
+    _type: list_secrets
+    base_url: http://cloud-api.openshell.svc.cluster.local:18081
+  read_secret:
+    _type: read_secret
+    base_url: http://cloud-api.openshell.svc.cluster.local:18081
+  delete_bucket:
+    _type: delete_bucket
+    base_url: http://cloud-api.openshell.svc.cluster.local:18081
+
+llms:
+  nemotron:
+    _type: nim
+    model_name: nvidia/nemotron-3.5-lightning-30b-a3b
+    temperature: 0.2
+    # A reasoning model spends tokens thinking before it answers; too small a budget yields an empty reply.
+    max_tokens: 4096
+
+workflow:
+  _type: react_agent
+  tool_names: [list_buckets, get_bucket, get_costs, list_secrets, read_secret, delete_bucket]
+  llm_name: nemotron
+  verbose: true
+  use_native_tool_calling: true
+  include_tool_input_schema_in_tool_description: false
+  max_tool_calls: 12
+  parse_agent_response_max_retries: 3

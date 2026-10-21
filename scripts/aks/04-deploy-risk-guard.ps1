@@ -64,7 +64,9 @@ if (-not $haveSecrets -or $RotateSecrets) {
 }
 
 Write-Step 'Configuration'
-$baselineYaml = Invoke-Native kubectl @('create', 'configmap', 'risk-guard-baseline', '-n', $ns, "--from-file=baseline.json=$BaselinePath", '--dry-run=client', '-o', 'yaml')
+# The default baseline plus one per agent task profile (support, release, cloud); each is imported by its own init container.
+$agentBaselines = @('support', 'release', 'cloud') | ForEach-Object { "--from-file=$_.json=$(Join-Path $script:RepoRoot "deploy/aks/agents/$_/baseline.json")" }
+$baselineYaml = Invoke-Native kubectl (@('create', 'configmap', 'risk-guard-baseline', '-n', $ns, "--from-file=baseline.json=$BaselinePath") + $agentBaselines + @('--dry-run=client', '-o', 'yaml'))
 Invoke-KubectlApply ($baselineYaml -join "`n")
 $apiYaml = Invoke-Native kubectl @('create', 'configmap', 'risk-guard-api', '-n', $ns, "--from-file=api_semantics.yaml=$ApiSemanticsPath", '--dry-run=client', '-o', 'yaml')
 Invoke-KubectlApply ($apiYaml -join "`n")

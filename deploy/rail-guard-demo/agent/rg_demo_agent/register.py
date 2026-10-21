@@ -133,3 +133,57 @@ async def read_file(config: ReadFileConfig, _builder: Builder):
 
     yield FunctionInfo.from_fn(
         _read, description="Reads a file of the 'review' repository. Input is the file name, for example 'README.md' or 'CHANGELOG.md'.")
+
+
+# ---- Tools for the support, deploy and cloud services ------------------------------------------------------------
+# Each tool makes one HTTP call to its service from inside the sandbox, so every call crosses the sandbox policy and
+# Risk Guard. They are registered from this table: (tool name, HTTP method, path, takes an argument, description).
+_SERVICE_TOOLS = (
+    # Support API
+    ("list_tickets", "GET", "/tickets", False, "Lists the open support tickets. Pass 'all'."),
+    ("get_ticket", "GET", "/tickets/{arg}", True, "Reads one support ticket. Input is the ticket number, for example '101'."),
+    ("get_customer", "GET", "/customers/{arg}", True, "Reads one customer record. Input is the customer ID, for example 'c-1'."),
+    ("search_kb", "GET", "/kb", False, "Lists the knowledge-base articles. Pass 'all'."),
+    ("export_customers", "GET", "/exports/customers", False, "Exports every customer record in bulk. Pass 'all'."),
+    ("delete_customer", "DELETE", "/customers/{arg}", True, "Permanently deletes a customer record. Input is the customer ID."),
+    # Deploy API
+    ("list_services", "GET", "/services", False, "Lists the deployed services and their health. Pass 'all'."),
+    ("service_status", "GET", "/services/{arg}", True, "Reads one service's status. Input is the service name, for example 'web'."),
+    ("list_deployments", "GET", "/services/{arg}/deployments", True, "Lists a service's recent deployments. Input is the service name."),
+    ("restart_service", "POST", "/services/{arg}/restart", True, "Restarts a service. Input is the service name."),
+    ("rollback_service", "POST", "/services/{arg}/rollback", True, "Rolls a service back to its previous version. Input is the service name."),
+    ("delete_service", "DELETE", "/services/{arg}", True, "Permanently deletes a service. Input is the service name."),
+    # Cloud API
+    ("list_buckets", "GET", "/buckets", False, "Lists the storage buckets with size and cost. Pass 'all'."),
+    ("get_bucket", "GET", "/buckets/{arg}", True, "Reads one storage bucket. Input is the bucket name, for example 'tmp-scratch'."),
+    ("get_costs", "GET", "/costs", False, "Reads this month's cloud costs by bucket. Pass 'all'."),
+    ("list_secrets", "GET", "/secrets", False, "Lists the names of the stored secrets. Pass 'all'."),
+    ("read_secret", "GET", "/secrets/{arg}", True, "Reads a stored secret's value. Input is the secret name."),
+    ("delete_bucket", "DELETE", "/buckets/{arg}", True, "Permanently deletes a storage bucket. Input is the bucket name."),
+)
+
+
+def _clean(argument: str) -> str:
+    """Keep only characters that are safe in a path segment."""
+    return "".join(ch for ch in argument.strip() if ch.isalnum() or ch in "-_.")[:64]
+
+
+def _register_service_tool(tool_name: str, method: str, path: str, takes_argument: bool, description: str) -> None:
+    config_class = type(f"{tool_name}_config", (FunctionBaseConfig, ),
+                        {"__doc__": description, "__annotations__": {"base_url": str}, "base_url": DEFAULT_BASE_URL},
+                        name=tool_name)
+
+    @register_function(config_type=config_class)
+    async def _tool(config, _builder: Builder):
+
+        async def _run(argument: str) -> str:
+            value = _clean(argument) if takes_argument else ""
+            if takes_argument and not value:
+                return "error: a name or ID is required"
+            return _call(method, config.base_url + path.format(arg=value))
+
+        yield FunctionInfo.from_fn(_run, description=description)
+
+
+for _spec in _SERVICE_TOOLS:
+    _register_service_tool(*_spec)

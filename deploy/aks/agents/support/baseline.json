@@ -1,0 +1,17 @@
+{
+  "task_profile": "support-triage",
+  "version": "v1",
+  "approved_by": "local-demo-operator",
+  "normalizer_version": "v1",
+  "training_sessions": 0,
+  "training_requests": 0,
+  "expected_binaries": ["/opt/agent/bin/python3.12", "/usr/bin/python3.12"],
+  "approved_resources": ["tickets", "customers", "kb"],
+  "allowed_action_classes": ["GET /tickets", "GET /tickets/{id}", "GET /customers/{id}", "GET /kb"],
+  "forbidden_action_classes": [],
+  "forbid_unfamiliar_high_impact": true,
+  "max_req_1m_p95": 60,
+  "max_req_1m_p99": 120,
+  "max_distinct_resources_15m_p95": 4,
+  "max_distinct_resources_15m_p99": 6
+}

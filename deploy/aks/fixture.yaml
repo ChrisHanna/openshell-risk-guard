@@ -15,6 +15,47 @@ spec:
       port: 18081
       targetPort: http
 ---
+# The agents each work against their own service hostname (support, deploy, cloud). All three are served by the same
+# harmless fixture pod, so Risk Guard sees three different destinations without three extra workloads.
+apiVersion: v1
+kind: Service
+metadata:
+  name: support-api
+  namespace: openshell
+spec:
+  selector:
+    app.kubernetes.io/name: risk-guard-fixture
+  ports:
+    - name: http
+      port: 18081
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deploy-api
+  namespace: openshell
+spec:
+  selector:
+    app.kubernetes.io/name: risk-guard-fixture
+  ports:
+    - name: http
+      port: 18081
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloud-api
+  namespace: openshell
+spec:
+  selector:
+    app.kubernetes.io/name: risk-guard-fixture
+  ports:
+    - name: http
+      port: 18081
+      targetPort: http
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

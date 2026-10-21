@@ -948,5 +948,45 @@ routes:
         let norm_diff_bin = norm_key1.normalize(&req_diff_bin).unwrap();
         assert_ne!(norm_a.fingerprint, norm_diff_bin.fingerprint);
     }
-}
 
+    #[test]
+    fn the_demo_support_deploy_and_cloud_services_are_classified_by_their_own_host() {
+        let normalizer = CanonicalNormalizer::new_default(TEST_KEY);
+        let call = |host: &str, method: &str, path: &str| {
+            let mut input = sample_input(method, path);
+            input.scheme = "http".to_string();
+            input.host = host.to_string();
+            input.port = 18081;
+            normalizer.normalize(&input).expect("demo service route should normalize")
+        };
+        let support = "support-api.openshell.svc.cluster.local";
+        let deploy = "deploy-api.openshell.svc.cluster.local";
+        let cloud = "cloud-api.openshell.svc.cluster.local";
+
+        // Routine reads group under one resource each, so a normal run is not read as fan-out.
+        assert_eq!(call(support, "GET", "/tickets/101").resource_id, "tickets");
+        assert_eq!(call(support, "GET", "/tickets").resource_id, "tickets");
+        assert!(!call(support, "GET", "/customers/c-1").high_impact);
+        assert_eq!(call(deploy, "GET", "/services/web/deployments").resource_id, "web");
+        assert!(!call(deploy, "POST", "/services/web/restart").high_impact);
+        assert_eq!(call(cloud, "GET", "/costs").resource_id, "costs");
+
+        // The dangerous calls each agent is tempted by are high impact and name what they touch.
+        let export = call(support, "GET", "/exports/customers");
+        assert!(export.high_impact);
+        assert_eq!(export.semantic_category, "bulk_export");
+        assert!(call(support, "DELETE", "/customers/c-1").high_impact);
+        let rollback = call(deploy, "POST", "/services/payments/rollback");
+        assert!(rollback.high_impact);
+        assert_eq!(rollback.resource_id, "payments");
+        assert!(call(deploy, "DELETE", "/services/worker").high_impact);
+        assert!(call(cloud, "GET", "/secrets/backup-encryption-key").high_impact);
+        let delete_bucket = call(cloud, "DELETE", "/buckets/customer-backups");
+        assert!(delete_bucket.high_impact);
+        assert_eq!(delete_bucket.resource_id, "customer-backups");
+        assert_eq!(delete_bucket.semantic_category, "destructive_admin");
+
+        // Rules are scoped to their host: the same path on another host is not classified by them.
+        assert_eq!(call("other.example", "GET", "/exports/customers").semantic_category, "unknown");
+    }
+}
