@@ -1133,6 +1133,36 @@ tbody tr:focus-within { background: var(--bg-elevated); }
 .audit-deny { color: var(--crit-text); font-weight: 600; }
 .audit-allow { color: var(--ok-text); }
 .quiet-inline { color: var(--text-muted); font-size: 12px; font-weight: 400; margin-left: 8px; }
+/* ---- Enforcement ---- */
+.enf-status { font-size: 16px; font-weight: 600; color: var(--text-primary); margin: 0 0 14px; }
+.enf-h { margin: 0 0 8px; font-size: 14px; font-weight: 600; color: var(--text-secondary); }
+.enf-text { margin: 0 0 8px; color: var(--text-primary); font-size: 14px; }
+.enf-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; background: var(--bg-code); }
+.enf-strip { display: flex; gap: 10px; align-items: stretch; flex-wrap: wrap; }
+.enf-box { flex: 1 1 240px; border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--bg-code); }
+.enf-box:nth-child(1) { border-color: #7aa2f7; }
+.enf-box:nth-child(3) { border-color: #4fd1c5; }
+.enf-box-title { font-weight: 600; color: var(--text-primary); }
+.enf-box-sub { color: var(--text-muted); font-size: 12px; margin: 2px 0 8px; }
+.enf-box-line { color: var(--text-secondary); font-size: 13px; overflow-wrap: anywhere; }
+.enf-arrow { align-self: center; color: var(--text-muted); font-size: 22px; }
+.enf-table th, .enf-table td { white-space: normal; text-align: left; padding: 8px 10px; font-size: 13px; vertical-align: top; }
+.enf-table td.mono { font-family: var(--mono, monospace); font-size: 12.5px; overflow-wrap: anywhere; }
+.enf-meter { padding: 6px 4px 0; }
+.enf-track { position: relative; height: 78px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-panel, #1b1d21); margin: 6px 0 2px; }
+.enf-zone { position: absolute; top: 0; bottom: 0; right: 0; background: var(--crit-bg); opacity: .55; border-left: 0; }
+.enf-tick { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--text-muted); }
+.enf-tick span { position: absolute; top: 2px; left: 4px; font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
+.enf-dot { position: absolute; width: 9px; height: 9px; margin-left: -4px; background: var(--ok); border: 1px solid var(--bg-code); border-radius: 50%; }
+.enf-dot.deny { background: var(--crit); border-radius: 2px; }
+.enf-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); padding: 0 2px; }
+.enf-fs { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin-bottom: 6px; }
+.enf-fs-label { color: var(--text-muted); font-size: 12px; min-width: 72px; }
+.enf-fs code { font-size: 12px; }
+.enf-code-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; }
+.enf-code-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+.enf-code-actions { margin-left: auto; display: flex; gap: 6px; }
+#enf-yaml, #enf-json { max-height: 380px; overflow: auto; margin: 0; }
 /* ---- How it works ---- */
 .how-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; align-self: flex-start; }
 .how-toggle button { background: transparent; border: 0; color: var(--text-secondary); padding: 7px 14px; font-size: 13px; cursor: pointer; }
@@ -1886,16 +1916,67 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
         <div class="panel-header">
           <div class="panel-title-group">
             <h2>Enforcement</h2>
-            <p>Save desired settings in SQLite. Risk Guard changes affect subsequent evaluations; task profiles and filesystem changes require a new run or sandbox.</p>
+            <p>What this workload may do, what is blocked, and how strict enforcement is. Editing needs an operator token; this console is read-only.</p>
           </div>
           <span id="cfg-access-badge" class="badge badge-neutral">Read-only</span>
         </div>
         <div class="panel-body">
-          <div class="setting-card" style="margin-bottom:16px">
-            <h3><span>What is enforced for this workload</span><span class="badge badge-neutral">Overview</span></h3>
-            <p class="quiet-note" style="margin:0 0 8px">Two layers apply. OpenShell's static policy decides what the sandbox can reach at all. Risk Guard then scores every allowed request against this workload's approved behavior and latches a lock when it is risky. A lock never loosens the static policy.</p>
-            <div class="audit-facts" id="guardrail-glance-rows"></div>
+          <div id="enf-view">
+            <p class="enf-status" id="enf-status" role="status"></p>
+
+            <div class="enf-strip" id="enf-strip" aria-label="The two enforcement layers"></div>
+            <p class="quiet-note" id="enf-strip-note" style="margin:8px 0 18px"></p>
+
+            <h3 class="enf-h">What this workload may do</h3>
+            <div class="table-scroll" tabindex="0" role="region" aria-label="Actions and how each layer treats them">
+              <table class="enf-table" id="enf-table">
+                <caption class="sr-only">Each action, whether OpenShell's policy reaches it, whether the approved task includes it, and what happens</caption>
+                <thead><tr><th scope="col">Action</th><th scope="col">OpenShell policy</th><th scope="col">Approved task</th><th scope="col">What happens</th><th scope="col">Recorded</th></tr></thead>
+                <tbody id="enf-rows"></tbody>
+              </table>
+            </div>
+            <p class="quiet-note" id="enf-table-note" style="margin:8px 0 18px"></p>
+
+            <div class="grid-2">
+              <section class="enf-card">
+                <h3 class="enf-h">How strict, and where scores landed</h3>
+                <div id="enf-meter"></div>
+                <p class="quiet-note" id="enf-meter-note"></p>
+              </section>
+              <section class="enf-card">
+                <h3 class="enf-h">Last tripped</h3>
+                <div id="enf-last"></div>
+                <h3 class="enf-h" style="margin-top:16px">Normal behavior</h3>
+                <p id="enf-pace" class="enf-text"></p>
+                <h3 class="enf-h" style="margin-top:16px">Filesystem</h3>
+                <div id="enf-fs"></div>
+              </section>
+            </div>
+
+            <section class="enf-card" style="margin-top:16px">
+              <h3 class="enf-h">Who approved it, and what changed</h3>
+              <div class="audit-facts" id="enf-change"></div>
+              <div class="evidence-chips" id="enf-hashes" style="margin-top:10px"></div>
+              <p class="quiet-note" id="enf-change-note" style="margin-top:10px"></p>
+            </section>
+
+            <details class="detail-fold" id="enf-code">
+              <summary>Policy as code <span class="quiet-inline">the exact policy and task profile this workload runs</span></summary>
+              <div class="enf-code-grid">
+                <div>
+                  <div class="enf-code-head"><strong>OpenShell sandbox policy (YAML)</strong><span id="enf-yaml-meta" class="quiet-inline"></span><span class="enf-code-actions"><button type="button" class="btn" id="enf-yaml-copy">Copy</button><button type="button" class="btn" id="enf-yaml-download">Download</button></span></div>
+                  <pre id="enf-yaml" tabindex="0" role="region" aria-label="Sandbox policy YAML"></pre>
+                </div>
+                <div>
+                  <div class="enf-code-head"><strong>Approved task profile (JSON)</strong><span id="enf-json-meta" class="quiet-inline"></span><span class="enf-code-actions"><button type="button" class="btn" id="enf-json-copy">Copy</button><button type="button" class="btn" id="enf-json-download">Download</button></span></div>
+                  <pre id="enf-json" tabindex="0" role="region" aria-label="Approved task profile JSON"></pre>
+                </div>
+              </div>
+            </details>
           </div>
+
+          <details class="detail-fold" id="settings-fold">
+            <summary>Settings as recorded <span class="quiet-inline">the saved values, operator access and lock recovery (technical)</span></summary>
           <div class="setting-card" style="margin-bottom:16px" id="cfg-access-card">
             <h3>Operator access</h3>
             <p id="cfg-access-status" class="muted" role="status">Checking operator controls. This dashboard is read-only until explicitly unlocked.</p>
@@ -2039,6 +2120,7 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
             <p id="cfg-restrictions-status" class="muted" role="status"></p>
             <div id="cfg-restrictions-list"></div>
           </div>
+          </details>
         </div>
       </section>
 
@@ -2844,6 +2926,7 @@ function renderGuardrails() {
   $("cfg-access-badge").className = `badge ${editable ? "badge-green" : "badge-neutral"}`;
   // With writes disabled there is nothing to unlock or save, so hide the controls rather than show dead buttons.
   const viewOnly = operatorCapability === "disabled";
+  if (editable && !settingsFoldAutoOpened) { $("settings-fold").open = true; settingsFoldAutoOpened = true; }
   for (const id of ["cfg-token-help", "cfg-unlock-form"]) $(id).hidden = viewOnly;
   for (const id of ["cfg-save", "cfg-reload", "cfg-policy-download"]) $(id).hidden = viewOnly;
   if (viewOnly) $("cfg-access-badge").textContent = "View-only";
@@ -5827,7 +5910,7 @@ function renderAllForCurrentAgent() {
   for (const r of periodRuns) for (const sb of r.sandboxes || []) if (sb.sandbox_id) distinctSandboxes.add(sb.sandbox_id);
   for (const d of periodDecisions) if (d?.request?.sandbox_id) distinctSandboxes.add(d.request.sandbox_id);
 
-  const ctx = (data.contexts || [])[0] || {};
+  const ctx = currentContext(data);
   const baseline = ctx.baseline || {};
   const fsSummary = extractFilesystemSummary(data);
 
@@ -5874,7 +5957,7 @@ function renderAllForCurrentAgent() {
   $("graph-filter-summary").hidden = !activeGraphNodeFilter || !["map", "detections"].includes(activeAgentTab);
 
   if (activeTopView === "agent") $("nav-agent-lbl").textContent = nameText || data.agent.agent_id;
-  renderGuardrailGlance(data);
+  renderEnforcement(data);
   renderGuardrails();
 }
 
@@ -6808,7 +6891,7 @@ function renderAuditSummary(data) {
   const times = decisions.map(d => d?.request?.timestamp_ms).filter(Number.isFinite);
   const locks = (data.contexts || []).reduce((n, c) => n + (Array.isArray(c.active_restrictions) ? c.active_restrictions.length : 0), 0);
   const sandboxes = new Set(decisions.map(d => d?.request?.sandbox_id).filter(Boolean));
-  const ctx = (data.contexts || [])[0] || {};
+  const ctx = currentContext(data);
   const sources = [...new Set(decisions.map(d => d?.transport_provenance).filter(Boolean))].map(x => PROVENANCE_TEXT[x] || x);
   const facts = [
     ["Name", agentName(data.agent) || "Not set"],
@@ -6864,37 +6947,307 @@ $("audit-download").addEventListener("click", () => {
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 });
 
-// ---- Enforcement overview ----------------------------------------------------------------------------------
-function renderGuardrailGlance(data) {
-  const box = $("guardrail-glance-rows");
-  if (!box) return;
-  const ctx = (data.contexts || [])[0] || {};
-  const base = ctx.baseline || {};
-  const saved = data.guardrails?.settings || {};
-  const mode = saved.mode || ctx.mode || "not recorded";
-  const enforce = saved.enforce_threshold ?? 70;
-  const observe = saved.observe_threshold ?? 20;
-  const locks = (data.contexts || []).reduce((n, c) => n + (Array.isArray(c.active_restrictions) ? c.active_restrictions.length : 0), 0);
-  const list = values => Array.isArray(values) && values.length ? values.join(", ") : "none recorded";
-  const fs = saved.filesystem;
-  const rows = [
-    ["Mode", mode === "enforce"
-      ? `Enforcing. A request scoring ${enforce} or more is blocked; ${observe} or more is flagged.`
-      : mode === "observe" ? "Observing only. Nothing is blocked; scores are recorded." : mode],
-    ["Approved task", `${ctx.task_profile || "not recorded"} · ${ctx.agent_revision || "revision not recorded"}`],
-    ["Allowed actions", list(base.allowed_action_classes)],
-    ["Approved resources", list(base.approved_resources)],
-    ["Expected programs", list(base.expected_binaries)],
-    ["Unfamiliar high-impact actions", base.forbid_unfamiliar_high_impact === false
-      ? "Scored, not forbidden" : "Forbidden, for example deleting a repository the task never touched"],
-    ["Normal traffic", Number.isFinite(base.max_req_1m_p95)
-      ? `Typically up to ${base.max_req_1m_p95} requests a minute (${base.max_req_1m_p99} at most), and ${base.max_distinct_resources_15m_p95} to ${base.max_distinct_resources_15m_p99} distinct resources in 15 minutes`
-      : "not recorded"],
-    ["Filesystem", fs ? `Writable: ${list(fs.read_write)}. Read-only: ${list(fs.read_only)}` : "Not managed by Risk Guard"],
-    ["Active locks", locks ? `${locks}, latched until an operator clears them` : "None"],
-  ];
-  box.replaceChildren(...rows.map(([l, v]) => auditFact(l, v)));
+// ---- Enforcement: what this workload may do, what is blocked, how strict, and who approved it ------------------------
+// Two layers decide every request. OpenShell's static policy says what is reachable at all; Risk Guard then holds each
+// reachable request to the workload's approved task. Risk Guard can only tighten, never widen. Everything here is read
+// from recorded evidence; the policy is "recorded at create_sandbox", not proven loaded at runtime.
+
+// The context in force is the one whose baseline matches the saved settings. (contexts[0] is the oldest, so using it
+// would describe a profile the workload no longer runs.)
+function currentContext(data) {
+  const contexts = data.contexts || [];
+  const hash = data.guardrails?.source_profile_hash;
+  return contexts.find(c => c.baseline_hash === hash) || contexts[contexts.length - 1] || contexts[0] || {};
 }
+
+function currentPolicySnapshot(data, profile) {
+  const snaps = (data.policy_snapshots || []).slice().sort((a, b) => Number(b.captured_at_ms || 0) - Number(a.captured_at_ms || 0));
+  const forProfile = snaps.find(s => Object.values(s.parsed_policy?.network_middlewares || {}).some(m => m?.config?.task_profile === profile));
+  return forProfile || snaps[0] || null;
+}
+
+function policyRules(snapshot) {
+  const rules = [];
+  for (const policy of Object.values(snapshot?.parsed_policy?.network_policies || {})) {
+    for (const endpoint of policy.endpoints || []) {
+      for (const rule of endpoint.rules || []) {
+        const allow = rule.allow || {};
+        if (allow.method && allow.path) rules.push({ host: endpoint.host, port: endpoint.port, method: String(allow.method).toUpperCase(), path: allow.path });
+      }
+    }
+  }
+  return rules;
+}
+
+const escapeRegex = text => text.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+function globToRegex(glob) {
+  const body = escapeRegex(glob).replace(/\*\*/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\u0000/g, ".*");
+  return new RegExp(`^${body}$`);
+}
+const sampleFromTemplate = template => String(template).replace(/\{[^}]+\}/g, "x").replace(/\*\*/g, "x");
+const splitActionClass = cls => { const i = String(cls).indexOf(" "); return [cls.slice(0, i).toUpperCase(), cls.slice(i + 1)]; };
+const ruleReaches = (rule, method, template) => rule.method === method && globToRegex(rule.path).test(sampleFromTemplate(template));
+
+function buildEnforcementRows(decisions, settings, rules) {
+  const approved = settings.allowed_action_classes || [];
+  const byClass = new Map();
+  for (const d of decisions) {
+    const cls = d.request?.action_class;
+    if (!cls) continue;
+    if (!byClass.has(cls)) byClass.set(cls, []);
+    byClass.get(cls).push(d);
+  }
+  const recorded = list => {
+    if (!list || !list.length) return null;
+    const sorted = list.slice().sort((a, b) => Number(b.evaluation?.decision_timestamp_ms || 0) - Number(a.evaluation?.decision_timestamp_ms || 0));
+    const denied = list.filter(d => d.evaluation?.outcome === "deny").length;
+    return { count: list.length, denied, last: sorted[0], top: Math.max(...list.map(d => Number(d.evaluation?.risk_score || 0))) };
+  };
+  const rows = [];
+  const seenClasses = new Set();
+  for (const cls of approved) {
+    const [method, template] = splitActionClass(cls);
+    seenClasses.add(cls);
+    const reachable = rules.some(r => ruleReaches(r, method, template));
+    rows.push({ action: cls, reach: reachable, approved: true, kind: reachable ? "allowed" : "approved-unreachable", rec: recorded(byClass.get(cls)) });
+  }
+  for (const [cls, list] of byClass) {
+    if (seenClasses.has(cls)) continue;
+    const [method, template] = splitActionClass(cls);
+    seenClasses.add(cls);
+    const reachable = rules.some(r => ruleReaches(r, method, template));
+    const rec = recorded(list);
+    rows.push({ action: cls, reach: reachable, approved: false, kind: rec.denied === rec.count ? "blocked" : "unapproved-allowed", rec });
+  }
+  // Patterns the policy opens that no approved or observed action explains: reachable, held to Risk Guard's scoring.
+  for (const rule of rules) {
+    const covered = [...seenClasses].some(cls => { const [m, t] = splitActionClass(cls); return ruleReaches(rule, m, t) && rule.method === m; });
+    const pattern = `${rule.method} ${rule.path}`;
+    if (covered && rows.some(r => r.action === pattern)) continue;
+    const hasUnapprovedSibling = !covered;
+    if (hasUnapprovedSibling) rows.push({ action: pattern, reach: true, approved: false, kind: "held", pattern: true, rec: null });
+  }
+  const order = { allowed: 0, "approved-unreachable": 1, blocked: 2, "unapproved-allowed": 3, held: 4 };
+  return rows.sort((a, b) => order[a.kind] - order[b.kind] || a.action.localeCompare(b.action));
+}
+
+const ENF_RESULT = {
+  allowed: { cls: "sev-allowed", icon: "✓", text: "Allowed", why: "Reachable by policy and in the approved task." },
+  blocked: { cls: "sev-blocked", icon: "✕", text: "Blocked by Risk Guard", why: "The policy lets the request through, but it is outside the approved task, so Risk Guard denies it." },
+  "unapproved-allowed": { cls: "sev-flagged", icon: "▲", text: "Not approved, but allowed", why: "Not in the approved task, and Risk Guard let it through. It blocks an action only when the action is explicitly forbidden, is high impact on a resource outside the approved task, or scores over the line; the approved-action list alone does not block." },
+  held: { cls: "sev-flagged", icon: "▲", text: "Reachable, not approved", why: "The policy reaches it and the approved task does not include it. Risk Guard blocks it only if it is explicitly forbidden or is high impact on a resource outside the approved task; otherwise it is allowed and scored." },
+  "approved-unreachable": { cls: "sev-flagged", icon: "–", text: "Approved, not reachable", why: "In the approved task, but OpenShell's policy does not reach it, so it can have no effect." },
+};
+
+function enfFact(label, valueNode) {
+  const wrap = document.createElement("div");
+  wrap.className = "audit-fact";
+  const l = document.createElement("span"); l.className = "audit-fact-label"; l.textContent = label;
+  const v = document.createElement("span"); v.className = "audit-fact-value";
+  if (typeof valueNode === "string") v.textContent = valueNode; else v.append(valueNode);
+  wrap.append(l, v);
+  return wrap;
+}
+
+let enfSignature = "";
+let settingsFoldAutoOpened = false;
+let enfCtx = null;
+
+function renderEnforcement(data) {
+  if (!$("enf-view")) return;
+  const ctx = currentContext(data);
+  const baseline = ctx.baseline || {};
+  const settings = data.guardrails?.settings || {};
+  const profile = ctx.task_profile || settings.task_profile || "";
+  const snapshot = currentPolicySnapshot(data, profile);
+  const rules = policyRules(snapshot);
+  const middleware = Object.values(snapshot?.parsed_policy?.network_middlewares || {})[0] || null;
+  const enforce = Number.isInteger(settings.enforce_threshold) ? settings.enforce_threshold : 70;
+  const observe = Number.isInteger(settings.observe_threshold) ? settings.observe_threshold : 20;
+  // Evidence under the profile in force. Decisions made under older profiles describe a policy this workload no longer runs.
+  const allDecisions = data.decisions || [];
+  const decisions = ctx.baseline_hash ? allDecisions.filter(d => d.evaluation?.baseline_hash === ctx.baseline_hash) : allDecisions;
+  const olderCount = allDecisions.length - decisions.length;
+  const signature = JSON.stringify([data.agent?.agent_id, profile, snapshot?.policy_hash, settings.allowed_action_classes, enforce, observe,
+    decisions.length, decisions[0]?.evaluation?.decision_timestamp_ms, (data.guardrails?.revision ?? null)]);
+  enfCtx = { data, ctx, baseline, settings, snapshot, rules, enforce, observe, profile };
+  if (signature === enfSignature) return;
+  enfSignature = signature;
+
+  const mode = settings.mode || ctx.mode || "not recorded";
+  $("enf-status").textContent = mode === "enforce"
+    ? `Enforcement is on. Requests scoring ${enforce} or more are blocked; ${observe} or more are flagged.`
+    : mode === "observe" ? "Observe only: nothing is blocked, scores are recorded." : `Mode: ${mode}.`;
+
+  // The two layers
+  const hosts = [...new Set(rules.map(r => String(r.host).split(".")[0]))];
+  const attached = middleware?.endpoints?.include ? middleware.endpoints.include.map(h => String(h).split(".")[0]) : [];
+  const box = (n, title, sub, lines) => {
+    const el = document.createElement("div");
+    el.className = "enf-box";
+    const h = document.createElement("div"); h.className = "enf-box-title"; h.textContent = `${n} · ${title}`;
+    const s = document.createElement("div"); s.className = "enf-box-sub"; s.textContent = sub;
+    el.append(h, s);
+    for (const line of lines) { const p = document.createElement("div"); p.className = "enf-box-line"; p.textContent = line; el.append(p); }
+    return el;
+  };
+  const arrow = text => { const a = document.createElement("div"); a.className = "enf-arrow"; a.setAttribute("aria-hidden", "true"); a.textContent = text; return a; };
+  $("enf-strip").replaceChildren(
+    box("1", "OpenShell policy", "What can be reached at all", [
+      snapshot ? `${rules.length} allow rule${rules.length === 1 ? "" : "s"} for ${hosts.join(", ") || "no host"}` : "No policy recorded",
+      snapshot ? `Policy ${snapshot.policy_hash.slice(0, 8)} · recorded at ${snapshot.source}` : "",
+    ].filter(Boolean)),
+    arrow("→"),
+    box("2", "Risk Guard", "Is this normal for the approved task?", [
+      `Task profile ${profile || "not recorded"}${baseline.version ? ` ${baseline.version}` : ""}`,
+      middleware ? `Attached to ${attached.join(", ") || "no host"} · on error: ${middleware.on_error === "fail_closed" ? "deny (fail-closed)" : middleware.on_error}` : "Not attached in the recorded policy",
+    ]),
+    arrow("→"),
+    box("3", "Result", "Both must agree", ["Allowed only if the policy reaches it and Risk Guard does not object.", "Risk Guard can only tighten; it never widens the policy."]),
+  );
+  const loadState = data.guardrails?.application?.filesystem?.runtime_load_state;
+  $("enf-strip-note").textContent = loadState === "not_collected"
+    ? "The policy shown is what was recorded when the sandbox was created. Whether the runtime loaded exactly that is not collected, so nothing here claims it was verified."
+    : "";
+
+  // The actions
+  const rows = buildEnforcementRows(decisions, settings, rules);
+  $("enf-rows").replaceChildren(...rows.map(r => {
+    const tr = document.createElement("tr");
+    const res = ENF_RESULT[r.kind];
+    const td = (text, cls) => { const c = document.createElement("td"); c.textContent = text; if (cls) c.className = cls; return c; };
+    const action = td(r.action, "mono"); action.title = r.pattern ? "A pattern the policy allows" : "Action class";
+    const reach = td(r.reach ? "Reachable" : "Not reachable");
+    const task = td(r.approved ? "Approved" : "Not approved");
+    const result = document.createElement("td");
+    const chip = document.createElement("span"); chip.className = `sev ${res.cls}`; chip.textContent = `${res.icon} ${res.text}`; chip.title = res.why;
+    result.append(chip);
+    const rec = document.createElement("td");
+    rec.className = "muted";
+    if (r.rec) {
+      const ts = Number(r.rec.last.evaluation?.decision_timestamp_ms || 0);
+      rec.textContent = `${r.rec.count}× · ${r.rec.denied ? `${r.rec.denied} denied, ` : ""}top score ${r.rec.top} · last ${relativeAge(Date.now() - ts)} ago`;
+    } else rec.textContent = r.pattern ? "not requested" : "none yet";
+    tr.append(action, reach, task, result, rec);
+    return tr;
+  }));
+  const notes = [];
+  if (rows.some(r => r.kind === "unapproved-allowed")) {
+    notes.push("Rows marked \"Not approved, but allowed\" show a gap in the current rules: the approved-action list is advisory. Risk Guard blocks an action when it is explicitly forbidden or is high impact on a resource outside the approved task, so an unapproved action on an approved resource, or a low-impact call on an unapproved one, is allowed and only scored.");
+  }
+  if (rows.some(r => r.pattern)) notes.push("Rows marked \"Reachable, not approved\" are patterns the policy opens that this workload has never been approved to use and has not requested. Whether Risk Guard would block one depends on its resource and impact, as described above.");
+  notes.push("A pattern in the policy can reach more routes than the ones listed.");
+  if (olderCount > 0) notes.push(`${olderCount} earlier decision${olderCount === 1 ? "" : "s"} made under older task profiles ${olderCount === 1 ? "is" : "are"} left out here; they are in Detections.`);
+  $("enf-table-note").textContent = notes.join(" ");
+
+  // The meter: where recent scores landed relative to the lines that matter
+  const recent = decisions.slice().sort((a, b) => Number(a.evaluation?.decision_timestamp_ms || 0) - Number(b.evaluation?.decision_timestamp_ms || 0)).slice(-60);
+  const meter = document.createElement("div");
+  meter.className = "enf-meter";
+  meter.setAttribute("role", "img");
+  const denied = recent.filter(d => d.evaluation?.outcome === "deny");
+  const allowed = recent.length - denied.length;
+  const caption = recent.length
+    ? `The last ${recent.length} requests: ${denied.length} blocked${denied.length ? ` (scores ${Math.min(...denied.map(d => d.evaluation.risk_score))} to ${Math.max(...denied.map(d => d.evaluation.risk_score))})` : ""}, ${allowed} allowed (highest score ${Math.max(0, ...recent.filter(d => d.evaluation?.outcome !== "deny").map(d => Number(d.evaluation?.risk_score || 0)))}). Flag line ${observe}, block line ${enforce}.`
+    : "No requests recorded yet.";
+  meter.setAttribute("aria-label", caption);
+  const track = document.createElement("div"); track.className = "enf-track";
+  const zone = document.createElement("div"); zone.className = "enf-zone"; zone.style.left = `${enforce}%`;
+  track.append(zone);
+  for (const [value, label] of [[observe, `flag ${observe}`], [enforce, `block ${enforce}`]]) {
+    const tick = document.createElement("div"); tick.className = "enf-tick"; tick.style.left = `${value}%`;
+    const t = document.createElement("span"); t.textContent = label; tick.append(t); track.append(tick);
+  }
+  const stack = new Map();
+  for (const d of recent) {
+    const score = Math.max(0, Math.min(100, Number(d.evaluation?.risk_score || 0)));
+    const level = stack.get(score) || 0; stack.set(score, level + 1);
+    const dot = document.createElement("span");
+    dot.className = `enf-dot ${d.evaluation?.outcome === "deny" ? "deny" : "ok"}`;
+    dot.style.left = `${score}%`; dot.style.bottom = `${8 + (level % 6) * 7}px`;
+    dot.title = `${plainAction(d.request || {})}: score ${score}, ${d.evaluation?.outcome}`;
+    track.append(dot);
+  }
+  meter.append(track);
+  const scale = document.createElement("div"); scale.className = "enf-scale";
+  for (const n of [0, 50, 100]) { const s = document.createElement("span"); s.textContent = String(n); scale.append(s); }
+  meter.append(scale);
+  $("enf-meter").replaceChildren(meter);
+  $("enf-meter-note").textContent = `${caption} Squares are blocked requests, circles are allowed ones. A lock keeps blocking an action after its score falls back to 0.`;
+
+  // Last tripped
+  const lastDeny = decisions.filter(d => d.evaluation?.outcome === "deny")
+    .sort((a, b) => Number(b.evaluation?.decision_timestamp_ms || 0) - Number(a.evaluation?.decision_timestamp_ms || 0))[0];
+  const last = $("enf-last");
+  if (!lastDeny) {
+    last.replaceChildren(Object.assign(document.createElement("p"), { className: "enf-text", textContent: "Nothing has been blocked in the loaded window." }));
+  } else {
+    const ts = Number(lastDeny.evaluation.decision_timestamp_ms || 0);
+    const p = document.createElement("p"); p.className = "enf-text";
+    const why = reasonText(lastDeny.evaluation.reason_code);
+    p.textContent = `Blocked: requested to ${plainAction(lastDeny.request || {})} · score ${lastDeny.evaluation.risk_score} · ${relativeAge(Date.now() - ts)} ago. ${why}.`;
+    const open = document.createElement("button"); open.type = "button"; open.className = "btn"; open.textContent = "See it in Detections";
+    open.addEventListener("click", () => $("tab-detections").click());
+    last.replaceChildren(p, open);
+  }
+
+  // Normal behavior
+  const b = Object.keys(baseline).length ? baseline : settings;
+  $("enf-pace").textContent = Number.isFinite(b.max_req_1m_p95)
+    ? `Typically up to ${b.max_req_1m_p95} requests a minute (${b.max_req_1m_p99} at most), touching ${b.max_distinct_resources_15m_p95} to ${b.max_distinct_resources_15m_p99} different resources in 15 minutes. These are a statistical guide, not a hard quota.`
+    : "Not recorded.";
+
+  // Filesystem
+  const fs = snapshot?.parsed_policy?.filesystem_policy;
+  const chips = (title, paths) => {
+    const wrap = document.createElement("div"); wrap.className = "enf-fs";
+    const h = document.createElement("span"); h.className = "enf-fs-label"; h.textContent = title;
+    wrap.append(h, ...(paths || []).map(p => Object.assign(document.createElement("code"), { textContent: p })));
+    return wrap;
+  };
+  $("enf-fs").replaceChildren(...(fs ? [chips("Can write", fs.read_write), chips("Read-only", fs.read_only)] : [Object.assign(document.createElement("p"), { className: "enf-text", textContent: "No filesystem policy recorded." })]));
+
+  // Who approved it, and what changed
+  const g = data.guardrails || {};
+  const profiles = (data.contexts || []).map(c => `${c.task_profile} ${c.baseline?.version || ""}`.trim());
+  const earlier = [...new Set(profiles)].filter(p => p !== `${profile} ${baseline.version || ""}`.trim());
+  const facts = [
+    ["Approved task profile", `${profile || "not recorded"} ${baseline.version || ""}`.trim()],
+    ["Approved by", baseline.approved_by ? `${baseline.approved_by} (recorded text, not a verified signature)` : "not recorded"],
+    ["Settings changes", g.has_saved_settings ? `Revision ${g.revision}, saved by ${g.updated_by || "unknown"} at ${new Date(g.saved_at_ms).toISOString().replace("T", " ").slice(0, 19)} UTC` : "None since provisioning: these are the provisioned values"],
+    ["Earlier profiles", earlier.length ? earlier.join(" → ") + " → current" : "None"],
+    ["Learning", baseline.training_requests === 0 ? "Nothing learned from traffic yet. Scores come from the approved rules, not observed behavior." : `${baseline.training_requests} requests used for learning`],
+  ];
+  $("enf-change").replaceChildren(...facts.map(([l, v]) => enfFact(l, v)));
+  const hashes = [["profile", ctx.baseline_hash], ["policy", snapshot?.policy_hash], ["settings", g.source_profile_hash]].filter(([, v]) => v);
+  $("enf-hashes").replaceChildren(...hashes.map(([k, v]) => evidenceChip(k, v)));
+  $("enf-change-note").textContent = "Changing these needs an operator with the control token; this console only shows them. Separation of duties (the author cannot also approve) is not enforced yet.";
+
+  // Policy as code
+  $("enf-yaml").textContent = snapshot?.policy_yaml || "No policy recorded.";
+  $("enf-yaml-meta").textContent = snapshot ? `hash ${snapshot.policy_hash.slice(0, 12)} · recorded at ${snapshot.source}` : "";
+  const profileJson = JSON.stringify({ baseline_hash: ctx.baseline_hash, ...baseline }, null, 2);
+  $("enf-json").textContent = Object.keys(baseline).length ? profileJson : "No profile recorded.";
+  $("enf-json-meta").textContent = ctx.baseline_hash ? `hash ${ctx.baseline_hash.slice(0, 12)}` : "";
+}
+
+function wireEnforcementDownloads() {
+  const save = (name, text, type) => {
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([text], { type }));
+    link.download = name;
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  };
+  const slug = () => (agentName(enfCtx?.data?.agent) || enfCtx?.data?.agent?.agent_id || "workload").replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 60);
+  $("enf-yaml-copy").addEventListener("click", async () => { await copyToClipboard($("enf-yaml").textContent); });
+  $("enf-json-copy").addEventListener("click", async () => { await copyToClipboard($("enf-json").textContent); });
+  $("enf-yaml-download").addEventListener("click", () => save(`${slug()}-sandbox-policy.yaml`, $("enf-yaml").textContent, "text/yaml"));
+  $("enf-json-download").addEventListener("click", () => save(`${slug()}-task-profile.json`, $("enf-json").textContent, "application/json"));
+}
+wireEnforcementDownloads();
+
+
 
 new ResizeObserver(() => {
   if (activeTopView === "agent" && activeAgentTab === "map" && currentAgentData
