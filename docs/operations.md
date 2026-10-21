@@ -122,6 +122,27 @@ is high-impact (denied as unfamiliar when that constraint is on), reads use the
 full path as the resource, and adaptive learning never trains on them. Review map
 changes like policy changes, and re-import baselines whose resources change.
 
+## Rule modes: shadow first, then enforce
+
+Task rules that can block each run in one of three modes: `off`, `shadow` (record what the rule would have blocked, change
+nothing) or `enforce` (deny). The rules are the explicit deny list (always enforced), high-impact actions on unapproved
+resources, actions outside the approved-action list, and resources outside the approved-resource list; see
+[anomaly detection](anomaly-detection.md#layer-a-operator-owned-safeguards). The two approved-list rules default to shadow, so
+adding a list changes nothing until someone promotes the rule.
+
+A sensible rollout:
+
+1. Leave the rule in shadow. The Enforcement tab lists each rule with its mode and how many requests it would have blocked
+   (counted from the recorded decisions; requests checked before rule modes existed carry no record).
+2. Look at what it would have blocked. If the list is incomplete, add the missing actions or resources to the approved task first.
+3. Promote it. In the console, an administrator clicks **Promote to enforce** on the rule and then **Save & apply**; from the API,
+   save the settings with `rule_modes` set (for example `{"unapproved_action": "enforce"}`). The change is a new settings revision,
+   recorded against the verified account, and applies to the next request.
+
+Pre-promote a rule for a profile by adding `"rule_modes": {"unapproved_action": "enforce"}` to its baseline and bumping the
+`version`; a profile with a changed rule set is a new profile, so its history starts fresh. The AKS fleet profiles do this for
+the approved-action rule. Existing baselines and saved settings without `rule_modes` keep their hashes and behavior.
+
 ## Recovering from a false positive
 
 Restrictions never expire or clear on their own. After reviewing the evidence,

@@ -27,6 +27,44 @@ pub const REASON_TASK_CONSTRAINT_DENIED: &str = "task_constraint_denied";
 /// Stable machine-readable reason code when risk state is unavailable in fail-closed mode.
 pub const REASON_RISK_STATE_UNAVAILABLE: &str = "risk_state_unavailable";
 
+/// Rule that denies any action listed in `forbidden_action_classes`. An explicit deny list: it always enforces.
+pub const RULE_FORBIDDEN_ACTION: &str = "forbidden_action";
+/// Rule that denies a high-impact action on a resource the task does not approve.
+pub const RULE_UNFAMILIAR_HIGH_IMPACT: &str = "unfamiliar_high_impact";
+/// Rule for an action class the task's allowed-action list does not contain.
+pub const RULE_UNAPPROVED_ACTION: &str = "unapproved_action";
+/// Rule for a resource the task's approved-resource list does not contain.
+pub const RULE_UNAPPROVED_RESOURCE: &str = "unapproved_resource";
+/// The rules an operator can run in shadow or enforce mode, in display order.
+pub const CONFIGURABLE_RULES: [&str; 3] = [
+    RULE_UNFAMILIAR_HIGH_IMPACT,
+    RULE_UNAPPROVED_ACTION,
+    RULE_UNAPPROVED_RESOURCE,
+];
+
+/// What a rule does when a request trips it.
+///
+/// A `shadow` rule is evaluated and recorded as a would-block signal but never changes the outcome, so its effect can
+/// be measured before anyone promotes it to `enforce`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleMode {
+    Off,
+    Shadow,
+    Enforce,
+}
+
+impl RuleMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Shadow => "shadow",
+            Self::Enforce => "enforce",
+        }
+    }
+}
+
 /// Operating mode for an epoch or middleware evaluation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -167,6 +205,10 @@ pub struct BaselineProfile {
     /// Whether high-impact operations on unfamiliar resources are strictly forbidden by task constraint.
     #[serde(default)]
     pub forbid_unfamiliar_high_impact: bool,
+    /// Per-rule overrides of the default mode. Empty means every rule uses its default, and an empty map is left out of
+    /// the serialized profile so existing baselines keep their hash.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub rule_modes: BTreeMap<String, RuleMode>,
     /// 95th-percentile 1-minute request rate envelope.
     pub max_req_1m_p95: u32,
     /// 99th-percentile 1-minute request rate envelope.
@@ -178,6 +220,24 @@ pub struct BaselineProfile {
 }
 
 impl BaselineProfile {
+    /// The mode a rule runs in for this profile.
+    ///
+    /// Defaults keep today's behavior: the explicit deny list always enforces, the high-impact rule follows
+    /// `forbid_unfamiliar_high_impact` (an override can only soften it to shadow), and the two approved-list rules
+    /// observe in shadow until an operator promotes them.
+    #[must_use]
+    pub fn rule_mode(&self, rule: &str) -> RuleMode {
+        match rule {
+            RULE_FORBIDDEN_ACTION => RuleMode::Enforce,
+            RULE_UNFAMILIAR_HIGH_IMPACT if !self.forbid_unfamiliar_high_impact => RuleMode::Off,
+            RULE_UNFAMILIAR_HIGH_IMPACT => match self.rule_modes.get(rule) {
+                Some(RuleMode::Shadow) => RuleMode::Shadow,
+                _ => RuleMode::Enforce,
+            },
+            _ => self.rule_modes.get(rule).copied().unwrap_or(RuleMode::Shadow),
+        }
+    }
+
     #[must_use]
     pub fn maturity(&self) -> BaselineMaturity {
         if self.training_sessions >= 20 && self.training_requests >= 200 {

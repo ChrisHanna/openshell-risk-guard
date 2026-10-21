@@ -277,6 +277,24 @@ that explicitly prohibits cross-resource mutation.
 These can deny without historical data because they encode explicit operator
 intent. Label them `task_constraint`, not an anomaly-model discovery.
 
+Layer A is a set of named rules, and each runs in a mode:
+
+| Rule | Trips when | Default |
+|---|---|---|
+| `forbidden_action` | The action is on the explicit deny list (or matches a `prefix*` pattern). | Always enforces |
+| `unfamiliar_high_impact` | A high-impact action targets a resource the task does not approve. | Enforce while `forbid_unfamiliar_high_impact` is on; an override can soften it to shadow |
+| `unapproved_action` | The action class is not in the task's allowed-action list. | Shadow |
+| `unapproved_resource` | The resource is not in the task's approved-resource list. | Shadow |
+
+A **shadow** rule is evaluated and recorded but never changes the outcome: the decision gets a zero-point `shadow_rule`
+signal (`rule=<id>; mode=shadow`, support `would_block`) so an operator can see what promoting the rule would block. An
+**enforce** rule denies with `task_constraint_denied` and names the rule in the `task_constraint` signal (`rules=<ids>`).
+An `off` rule is skipped. The two approved-list rules apply from the first request, because they encode the operator's
+declared task rather than learned behavior, and an empty list means "not specified": it trips nothing and never blocks
+everything. A denial from the deny list or the high-impact rule scores at least 85 and latches Tier 1. A denial from an
+approved-list rule scores at least the block line and latches Tier 1 only when the request is high impact; otherwise it
+denies that request and nothing more, so it cannot cool down the approved resources and actions that share the route.
+
 ### Layer B: interpretable behavioral features
 
 Initial candidates:

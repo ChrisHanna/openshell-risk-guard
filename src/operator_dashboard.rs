@@ -283,6 +283,11 @@ mod tests {
             "enf-view",
             "enf-table",
             "enf-meter",
+            // Rule modes: which rules block and which only record, and the settings that change them.
+            "enf-rules",
+            "cfg-rule-action",
+            "cfg-rule-resource",
+            "cfg-rule-hi",
             "settings-fold",
             // Sign-in: the screen anonymous visitors get instead of data.
             "signin-gate",

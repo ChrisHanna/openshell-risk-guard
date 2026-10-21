@@ -488,3 +488,74 @@ fn task_profile_changes_are_pending_and_new_runs_use_the_approved_profile() {
         )
         .unwrap();
 }
+
+fn shadow_hits(evaluation: &RiskEvaluation) -> Vec<String> {
+    evaluation
+        .signals
+        .iter()
+        .filter(|signal| signal.feature == "shadow_rule")
+        .map(|signal| signal.baseline_summary.clone())
+        .collect()
+}
+
+#[test]
+fn an_operator_can_promote_a_shadow_rule_and_it_takes_effect_on_the_next_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("rules.db");
+    let evaluator = open_and_seed_store(&db).unwrap();
+    evaluator.register_agent("a", "Agent A").unwrap();
+    bind(&evaluator, "a", "sandbox-a", "run-a");
+    let detector = InteractionRiskDetector::new_default();
+
+    // A read of a repository the task does not approve: allowed, but recorded as something the rule would block.
+    let before = evaluator
+        .evaluate_authenticated(
+            &request("sandbox-a", "before", "GET", "unseen", 60_000),
+            &detector,
+            "gateway",
+            true,
+        )
+        .unwrap();
+    assert_ne!(before.outcome, DecisionOutcome::Deny, "a shadow rule never blocks");
+    assert_eq!(shadow_hits(&before), vec!["rule=unapproved_resource; mode=shadow"]);
+
+    // An administrator promotes the rule from another connection, as the console does.
+    let operator = SqliteRiskStore::open(&db).unwrap();
+    let mut desired = settings(&operator, "a");
+    desired.rule_modes.insert("unapproved_resource".into(), RuleMode::Enforce);
+    let saved = save(&operator, "a", desired, 0);
+    assert_eq!(saved["revision"], 1);
+    assert_eq!(saved["settings"]["rule_modes"]["unapproved_resource"], "enforce");
+
+    let after = evaluator
+        .evaluate_authenticated(
+            &request("sandbox-a", "after", "GET", "unseen-2", 61_000),
+            &detector,
+            "gateway",
+            true,
+        )
+        .unwrap();
+    assert_eq!(after.outcome, DecisionOutcome::Deny);
+    assert_eq!(after.reason_code, REASON_TASK_CONSTRAINT_DENIED);
+    assert!(shadow_hits(&after).is_empty(), "an enforced rule is no longer reported as shadow");
+    assert!(after.signals.iter().any(|s| s.feature == "guardrails_revision"), "the decision names the settings revision");
+
+    // The approved resource still passes, and the promotion is on the audit trail with who made it.
+    let approved = evaluator
+        .evaluate_authenticated(
+            &request("sandbox-a", "approved", "GET", "docs-site", 62_000),
+            &detector,
+            "gateway",
+            true,
+        )
+        .unwrap();
+    assert_ne!(approved.outcome, DecisionOutcome::Deny);
+    let view = operator.agent_guardrails("a", 62_000).unwrap().unwrap();
+    assert_eq!(view["history"][0]["updated_by"], "test-operator");
+
+    // Promotion survives a restart.
+    drop(operator);
+    drop(evaluator);
+    let reopened = SqliteRiskStore::open(&db).unwrap();
+    assert_eq!(settings(&reopened, "a").rule_modes.get("unapproved_resource"), Some(&RuleMode::Enforce));
+}

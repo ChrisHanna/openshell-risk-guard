@@ -1960,7 +1960,7 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
         <div class="panel-header">
           <div class="panel-title-group">
             <h2>Enforcement</h2>
-            <p>What this workload may do, what is blocked, and how strict enforcement is. Editing needs an operator token; this console is read-only.</p>
+            <p>What this workload may do, what is blocked, and how strict enforcement is. Changing settings needs an administrator.</p>
           </div>
           <span id="cfg-access-badge" class="badge badge-neutral">Read-only</span>
         </div>
@@ -1970,6 +1970,16 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
 
             <div class="enf-strip" id="enf-strip" aria-label="The two enforcement layers"></div>
             <p class="quiet-note" id="enf-strip-note" style="margin:8px 0 18px"></p>
+
+            <h3 class="enf-h">Rules, and which ones block</h3>
+            <div class="table-scroll" tabindex="0" role="region" aria-label="Task rules and their modes">
+              <table class="enf-table" id="enf-rules-table">
+                <caption class="sr-only">Each task rule, whether it blocks or only records, and what it has caught</caption>
+                <thead><tr><th scope="col">Rule</th><th scope="col">Checks for</th><th scope="col">Mode</th><th scope="col">What it has caught</th><th scope="col"><span class="sr-only">Change</span></th></tr></thead>
+                <tbody id="enf-rules"></tbody>
+              </table>
+            </div>
+            <p class="quiet-note" id="enf-rules-note" style="margin:8px 0 18px"></p>
 
             <h3 class="enf-h">What this workload may do</h3>
             <div class="table-scroll" tabindex="0" role="region" aria-label="Actions and how each layer treats them">
@@ -2098,6 +2108,30 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
                   <option value="false">false (Use remaining constraints and scoring)</option>
                 </select>
               </div>
+              <div class="setting-row">
+                <label for="cfg-rule-hi">High-impact rule mode</label>
+                <select id="cfg-rule-hi" disabled>
+                  <option value="enforce">enforce (block)</option>
+                  <option value="shadow">shadow (record only)</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <label for="cfg-rule-action">Approved-action rule mode</label>
+                <select id="cfg-rule-action" disabled>
+                  <option value="off">off</option>
+                  <option value="shadow">shadow (record only)</option>
+                  <option value="enforce">enforce (block)</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <label for="cfg-rule-resource">Approved-resource rule mode</label>
+                <select id="cfg-rule-resource" disabled>
+                  <option value="off">off</option>
+                  <option value="shadow">shadow (record only)</option>
+                  <option value="enforce">enforce (block)</option>
+                </select>
+              </div>
+              <p class="quiet-note">A shadow rule records what it would have blocked without blocking it. Promote a rule to enforce once its record looks right. A rule whose list is empty is skipped.</p>
               <div class="setting-row">
                 <label for="cfg-rate-p95">1m request envelope · p95</label>
                 <input type="number" id="cfg-rate-p95" min="1" max="1000000" step="1" disabled />
@@ -2529,7 +2563,7 @@ const guardrailNumberFields = {
 };
 const guardrailFieldIds = [
   "cfg-profile", "cfg-mode", ...Object.keys(guardrailNumberFields), "cfg-repos", "cfg-routes",
-  "cfg-forbid-hi", "cfg-manage-filesystem", "cfg-workdir", "cfg-ro-paths", "cfg-rw-paths"
+  "cfg-forbid-hi", "cfg-rule-hi", "cfg-rule-action", "cfg-rule-resource", "cfg-manage-filesystem", "cfg-workdir", "cfg-ro-paths", "cfg-rw-paths"
 ];
 const filesystemFieldIds = ["cfg-workdir", "cfg-ro-paths", "cfg-rw-paths"];
 let operatorToken = "";
@@ -2916,6 +2950,9 @@ function guardrailForm(settings) {
     "cfg-repos": settings.approved_resources.join("\n"),
     "cfg-routes": settings.allowed_action_classes.join("\n"),
     "cfg-forbid-hi": String(settings.forbid_unfamiliar_high_impact),
+    "cfg-rule-hi": ruleModeOf(settings, "unfamiliar_high_impact") === "shadow" ? "shadow" : "enforce",
+    "cfg-rule-action": ruleModeOf(settings, "unapproved_action"),
+    "cfg-rule-resource": ruleModeOf(settings, "unapproved_resource"),
     "cfg-manage-filesystem": settings.filesystem !== null,
     "cfg-workdir": settings.filesystem === null ? "" : String(settings.filesystem.include_workdir),
     "cfg-ro-paths": settings.filesystem?.read_only.join("\n") || "",
@@ -2941,6 +2978,7 @@ function validateGuardrailView(view, agentId) {
         || !["observe", "enforce"].includes(settings.mode)
         || !strings(settings.approved_resources) || !strings(settings.allowed_action_classes)
         || typeof settings.forbid_unfamiliar_high_impact !== "boolean"
+        || !validRuleModes(settings.rule_modes)
         || Object.values(guardrailNumberFields).some(key => !Number.isSafeInteger(settings[key]))
         || (filesystem !== null && (!filesystem || typeof filesystem.include_workdir !== "boolean"
           || !strings(filesystem.read_only) || !strings(filesystem.read_write)))))
@@ -3435,6 +3473,10 @@ function settingsFromGuardrailDraft(raw) {
     invalid("cfg-profile", "Enter an already imported approved profile name (1–128 bytes, no control characters). The server validates profile availability.");
   if (!["observe", "enforce"].includes(raw["cfg-mode"])) invalid("cfg-mode", "Choose an operating mode.");
   if (!["true", "false"].includes(raw["cfg-forbid-hi"])) invalid("cfg-forbid-hi", "Choose whether unfamiliar high-impact actions are forbidden.");
+  if (!["enforce", "shadow"].includes(raw["cfg-rule-hi"])) invalid("cfg-rule-hi", "Choose whether the high-impact rule blocks or only records.");
+  for (const id of ["cfg-rule-action", "cfg-rule-resource"]) {
+    if (!["off", "shadow", "enforce"].includes(raw[id])) invalid(id, "Choose off, shadow or enforce.");
+  }
   const settings = {
     task_profile: profile, mode: raw["cfg-mode"],
     observe_threshold: integer("cfg-obs-thresh", 0, 99),
@@ -3443,6 +3485,7 @@ function settingsFromGuardrailDraft(raw) {
     approved_resources: list("cfg-repos", 256, 512),
     allowed_action_classes: list("cfg-routes", 256, 512),
     forbid_unfamiliar_high_impact: raw["cfg-forbid-hi"] === "true",
+    ...ruleModesPayload(raw),
     max_req_1m_p95: integer("cfg-rate-p95", 1, 1000000),
     max_req_1m_p99: integer("cfg-rate-p99", 1, 1000000),
     max_distinct_resources_15m_p95: integer("cfg-fanout-p95", 1, 4096),
@@ -5209,7 +5252,7 @@ function buildRiskyItems(data, periodDecisions, fsSummary) {
 
       if (!groups.has(groupKey)) {
         const signals = (Array.isArray(ev.signals) ? ev.signals : [])
-          .filter(s => !String(s.feature || "").startsWith("adaptive_"));
+          .filter(s => !String(s.feature || "").startsWith("adaptive_") && s.feature !== "shadow_rule");
         const factors = signals.map(s => {
           const c = Number(s.contribution || 0);
           if (s.feature === "task_constraint") {
@@ -5360,6 +5403,7 @@ function buildRiskyItems(data, periodDecisions, fsSummary) {
 const SIGNAL_TEXT = {
   I: "High-impact API call",
   task_constraint: "Outside the approved task rules",
+  shadow_rule: "A shadow rule would have blocked this",
   "restriction:strict_epoch": "A lock from an earlier block applies",
   N_r: "A resource this workload has not touched before",
   N_a: "An action this workload has not done before",
@@ -7223,6 +7267,113 @@ const sampleFromTemplate = template => String(template).replace(/\{[^}]+\}/g, "x
 const splitActionClass = cls => { const i = String(cls).indexOf(" "); return [cls.slice(0, i).toUpperCase(), cls.slice(i + 1)]; };
 const ruleReaches = (rule, method, template) => rule.method === method && globToRegex(rule.path).test(sampleFromTemplate(template));
 
+// ---- Task rules: shadow or enforce ----------------------------------------------------------------------------------
+// Each rule that can block runs in a mode. A shadow rule never blocks: it records what it would have blocked, so an
+// operator can see its effect before promoting it. The deny list always enforces.
+const TASK_RULES = [
+  { id: "forbidden_action", name: "Forbidden actions", fixed: true,
+    checks: () => "An action on the explicit deny list." },
+  { id: "unfamiliar_high_impact", name: "High-impact action on an unapproved resource", select: "cfg-rule-hi",
+    checks: () => "A destructive or high-impact call on a resource the approved task does not list." },
+  { id: "unapproved_action", name: "Action outside the approved list", select: "cfg-rule-action",
+    list: s => s.allowed_action_classes,
+    checks: s => { const n = (s.allowed_action_classes || []).length; return `A method and route that is not among the ${n} approved action${n === 1 ? "" : "s"}.`; } },
+  { id: "unapproved_resource", name: "Resource outside the approved list", select: "cfg-rule-resource",
+    list: s => s.approved_resources,
+    checks: s => { const n = (s.approved_resources || []).length; return `A resource that is not among the ${n} approved resource${n === 1 ? "" : "s"}.`; } },
+];
+
+function ruleModeOf(settings, rule) {
+  const modes = settings?.rule_modes || {};
+  if (rule === "forbidden_action") return "enforce";
+  if (rule === "unfamiliar_high_impact") return settings?.forbid_unfamiliar_high_impact ? (modes[rule] === "shadow" ? "shadow" : "enforce") : "off";
+  return ["off", "shadow", "enforce"].includes(modes[rule]) ? modes[rule] : "shadow";
+}
+
+// Only modes that differ from the server's defaults are sent, so saving without touching them changes nothing.
+function ruleModesPayload(raw) {
+  const modes = {};
+  if (raw["cfg-rule-hi"] === "shadow") modes.unfamiliar_high_impact = "shadow";
+  if (raw["cfg-rule-action"] !== "shadow") modes.unapproved_action = raw["cfg-rule-action"];
+  if (raw["cfg-rule-resource"] !== "shadow") modes.unapproved_resource = raw["cfg-rule-resource"];
+  return Object.keys(modes).length ? { rule_modes: modes } : {};
+}
+
+function validRuleModes(modes) {
+  if (modes === undefined) return true;
+  return Boolean(modes) && typeof modes === "object" && !Array.isArray(modes)
+    && Object.entries(modes).every(([rule, mode]) => TASK_RULES.some(r => r.id === rule) && ["off", "shadow", "enforce"].includes(mode));
+}
+
+// What a rule has done, counted from the recorded decisions. Requests evaluated before rule modes existed carry no
+// record of these rules, so the counts start from the first request that does.
+function ruleEvidence(decisions, rule) {
+  let shadow = 0, blocked = 0, lastTs = 0, since = 0;
+  for (const d of decisions) {
+    const ts = Number(d.evaluation?.decision_timestamp_ms || 0);
+    for (const s of d.evaluation?.signals || []) {
+      const isShadow = s.feature === "shadow_rule";
+      const rules = s.feature === "task_constraint" ? /^rules=([^;]*);/.exec(s.baseline_summary || "") : null;
+      if (isShadow || rules) since = since ? Math.min(since, ts) : ts;
+      if (isShadow && String(s.baseline_summary || "").startsWith(`rule=${rule};`)) { shadow++; lastTs = Math.max(lastTs, ts); }
+      if (rules && rules[1].split(",").includes(rule) && d.evaluation?.outcome === "deny") { blocked++; lastTs = Math.max(lastTs, ts); }
+    }
+  }
+  return { shadow, blocked, lastTs, since };
+}
+
+function setRuleSelect(selectId, value) {
+  $("settings-fold").open = true;
+  const select = $(selectId);
+  if (select.disabled) return;
+  select.value = value;
+  select.dispatchEvent(new Event("input", { bubbles: true }));
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+  $("cfg-save").scrollIntoView({ block: "center" });
+  $("cfg-save").focus();
+  $("enf-rules-note").textContent = `Review the change in the settings below, then click Save & apply. Nothing changes until you save.`;
+}
+
+function renderRules(settings, decisions) {
+  const rows = TASK_RULES.map(rule => {
+    const mode = ruleModeOf(settings, rule.id);
+    const empty = rule.list && !(rule.list(settings) || []).length;
+    const ev = ruleEvidence(decisions, rule.id);
+    const tr = document.createElement("tr");
+    const td = (content, cls) => { const c = document.createElement("td"); if (typeof content === "string") c.textContent = content; else c.append(content); if (cls) c.className = cls; return c; };
+    const chip = document.createElement("span");
+    if (empty) { chip.className = "badge badge-neutral"; chip.textContent = "Skipped: empty list"; chip.title = "An empty approved list means nothing was specified, so the rule never blocks everything."; }
+    else if (mode === "enforce") { chip.className = "sev sev-blocked"; chip.textContent = "✕ Enforcing"; chip.title = "A request that trips this rule is denied."; }
+    else if (mode === "shadow") { chip.className = "sev sev-flagged"; chip.textContent = "▲ Shadow"; chip.title = "Recorded as a would-block. The request is not denied."; }
+    else { chip.className = "badge badge-neutral"; chip.textContent = "Off"; }
+    let caught;
+    if (rule.fixed) caught = ev.blocked ? `Blocked ${ev.blocked} request${ev.blocked === 1 ? "" : "s"}` : "Always on.";
+    else if (empty) caught = "Not checking: the list is empty.";
+    else if (mode === "off") caught = "Not checking.";
+    else if (mode === "shadow") caught = ev.shadow ? `Would have blocked ${ev.shadow} request${ev.shadow === 1 ? "" : "s"}, most recently ${relativeAge(Date.now() - ev.lastTs)} ago.` : "Has not matched anything yet.";
+    else caught = ev.blocked ? `Blocked ${ev.blocked} request${ev.blocked === 1 ? "" : "s"}, most recently ${relativeAge(Date.now() - ev.lastTs)} ago.` : "Has not blocked anything yet.";
+    const action = document.createElement("td");
+    if (rule.select && !empty && (mode === "shadow" || mode === "enforce")) {
+      if (operatorToken) {
+        const button = document.createElement("button");
+        button.type = "button"; button.className = "btn";
+        button.textContent = mode === "shadow" ? "Promote to enforce" : "Return to shadow";
+        button.addEventListener("click", () => setRuleSelect(rule.select, mode === "shadow" ? "enforce" : "shadow"));
+        action.append(button);
+      } else {
+        action.className = "muted";
+        action.textContent = AUTH.offered ? "Administrators change this at /admin" : "Needs operator access";
+      }
+    }
+    tr.append(td(rule.name), td(rule.checks(settings)), td(chip), td(caught, "muted"), action);
+    return tr;
+  });
+  $("enf-rules").replaceChildren(...rows);
+  const since = Math.min(...TASK_RULES.map(r => ruleEvidence(decisions, r.id).since).filter(Boolean), Infinity);
+  $("enf-rules-note").textContent = "Shadow rules record what they would have blocked without blocking it; promote one once its record looks right."
+    + (Number.isFinite(since) ? ` Counts cover requests checked since ${new Date(since).toISOString().replace("T", " ").slice(0, 16)} UTC.` : " No request has been checked against these rules yet.");
+}
+
 function buildEnforcementRows(decisions, settings, rules) {
   const approved = settings.allowed_action_classes || [];
   const byClass = new Map();
@@ -7252,7 +7403,8 @@ function buildEnforcementRows(decisions, settings, rules) {
     seenClasses.add(cls);
     const reachable = rules.some(r => ruleReaches(r, method, template));
     const rec = recorded(list);
-    rows.push({ action: cls, reach: reachable, approved: false, kind: rec.denied === rec.count ? "blocked" : "unapproved-allowed", rec });
+    const wouldBlock = list.some(d => (d.evaluation?.signals || []).some(sig => sig.feature === "shadow_rule" && String(sig.baseline_summary || "").startsWith("rule=unapproved_action;")));
+    rows.push({ action: cls, reach: reachable, approved: false, kind: rec.denied === rec.count ? "blocked" : wouldBlock ? "shadow-allowed" : "unapproved-allowed", rec });
   }
   // Patterns the policy opens that no approved or observed action explains: reachable, held to Risk Guard's scoring.
   for (const rule of rules) {
@@ -7262,17 +7414,28 @@ function buildEnforcementRows(decisions, settings, rules) {
     const hasUnapprovedSibling = !covered;
     if (hasUnapprovedSibling) rows.push({ action: pattern, reach: true, approved: false, kind: "held", pattern: true, rec: null });
   }
-  const order = { allowed: 0, "approved-unreachable": 1, blocked: 2, "unapproved-allowed": 3, held: 4 };
+  const order = { allowed: 0, "approved-unreachable": 1, blocked: 2, "shadow-allowed": 3, "unapproved-allowed": 4, held: 5 };
   return rows.sort((a, b) => order[a.kind] - order[b.kind] || a.action.localeCompare(b.action));
 }
 
 const ENF_RESULT = {
   allowed: { cls: "sev-allowed", icon: "✓", text: "Allowed", why: "Reachable by policy and in the approved task." },
   blocked: { cls: "sev-blocked", icon: "✕", text: "Blocked by Risk Guard", why: "The policy lets the request through, but it is outside the approved task, so Risk Guard denies it." },
-  "unapproved-allowed": { cls: "sev-flagged", icon: "▲", text: "Not approved, but allowed", why: "Not in the approved task, and Risk Guard let it through. It blocks an action only when the action is explicitly forbidden, is high impact on a resource outside the approved task, or scores over the line; the approved-action list alone does not block." },
-  held: { cls: "sev-flagged", icon: "▲", text: "Reachable, not approved", why: "The policy reaches it and the approved task does not include it. Risk Guard blocks it only if it is explicitly forbidden or is high impact on a resource outside the approved task; otherwise it is allowed and scored." },
   "approved-unreachable": { cls: "sev-flagged", icon: "–", text: "Approved, not reachable", why: "In the approved task, but OpenShell's policy does not reach it, so it can have no effect." },
 };
+
+// What an action outside the approved list means depends on whether the approved-action rule blocks or only records.
+function enfResult(kind, actionRuleMode) {
+  if (ENF_RESULT[kind]) return ENF_RESULT[kind];
+  const how = actionRuleMode === "enforce"
+    ? "The approved-action rule is enforcing, so a request for it is denied."
+    : actionRuleMode === "shadow"
+      ? "The approved-action rule is in shadow: a request is allowed and recorded as something the rule would block. Promote the rule to block it."
+      : "The approved-action rule is off, so a request is allowed and only scored.";
+  if (kind === "shadow-allowed") return { cls: "sev-flagged", icon: "▲", text: "Allowed (shadow rule would block)", why: "Not in the approved task. " + how };
+  if (kind === "unapproved-allowed") return { cls: "sev-flagged", icon: "▲", text: "Not approved, allowed", why: "Not in the approved task, and it was allowed. " + how + " Requests made before the rule was promoted, or by a profile that predates rule modes, are not rechecked." };
+  return { cls: "sev-flagged", icon: "▲", text: actionRuleMode === "enforce" ? "Reachable, would be blocked" : "Reachable, not approved", why: "The policy reaches it and the approved task does not include it. " + how };
+}
 
 function enfFact(label, valueNode) {
   const wrap = document.createElement("div");
@@ -7304,7 +7467,8 @@ function renderEnforcement(data) {
   const decisions = ctx.baseline_hash ? allDecisions.filter(d => d.evaluation?.baseline_hash === ctx.baseline_hash) : allDecisions;
   const olderCount = allDecisions.length - decisions.length;
   const signature = JSON.stringify([data.agent?.agent_id, profile, snapshot?.policy_hash, settings.allowed_action_classes, enforce, observe,
-    decisions.length, decisions[0]?.evaluation?.decision_timestamp_ms, (data.guardrails?.revision ?? null)]);
+    decisions.length, decisions[0]?.evaluation?.decision_timestamp_ms, (data.guardrails?.revision ?? null),
+    settings.rule_modes || null, settings.forbid_unfamiliar_high_impact, settings.approved_resources, Boolean(operatorToken)]);
   enfCtx = { data, ctx, baseline, settings, snapshot, rules, enforce, observe, profile };
   if (signature === enfSignature) return;
   enfSignature = signature;
@@ -7346,10 +7510,11 @@ function renderEnforcement(data) {
     : "";
 
   // The actions
+  renderRules(settings, decisions);
   const rows = buildEnforcementRows(decisions, settings, rules);
   $("enf-rows").replaceChildren(...rows.map(r => {
     const tr = document.createElement("tr");
-    const res = ENF_RESULT[r.kind];
+    const res = enfResult(r.kind, ruleModeOf(settings, "unapproved_action"));
     const td = (text, cls) => { const c = document.createElement("td"); c.textContent = text; if (cls) c.className = cls; return c; };
     const action = td(r.action, "mono"); action.title = r.pattern ? "A pattern the policy allows" : "Action class";
     const reach = td(r.reach ? "Reachable" : "Not reachable");
@@ -7367,10 +7532,11 @@ function renderEnforcement(data) {
     return tr;
   }));
   const notes = [];
-  if (rows.some(r => r.kind === "unapproved-allowed")) {
-    notes.push("Rows marked \"Not approved, but allowed\" show a gap in the current rules: the approved-action list is advisory. Risk Guard blocks an action when it is explicitly forbidden or is high impact on a resource outside the approved task, so an unapproved action on an approved resource, or a low-impact call on an unapproved one, is allowed and only scored.");
+  const actionMode = ruleModeOf(settings, "unapproved_action");
+  if (actionMode !== "enforce" && rows.some(r => r.kind === "shadow-allowed" || r.kind === "unapproved-allowed")) {
+    notes.push(`The approved-action rule is ${actionMode === "shadow" ? "in shadow" : "off"}, so an action outside the approved list is allowed${actionMode === "shadow" ? " and recorded as a would-block" : " and only scored"}.`);
   }
-  if (rows.some(r => r.pattern)) notes.push("Rows marked \"Reachable, not approved\" are patterns the policy opens that this workload has never been approved to use and has not requested. Whether Risk Guard would block one depends on its resource and impact, as described above.");
+  if (rows.some(r => r.pattern)) notes.push("Rows marked \"Reachable, not approved\" are patterns the policy opens that this workload has never been approved to use and has not requested. Whether it would be blocked depends on the approved-action rule above.");
   notes.push("A pattern in the policy can reach more routes than the ones listed.");
   if (olderCount > 0) notes.push(`${olderCount} earlier decision${olderCount === 1 ? "" : "s"} made under older task profiles ${olderCount === 1 ? "is" : "are"} left out here; they are in Detections.`);
   $("enf-table-note").textContent = notes.join(" ");

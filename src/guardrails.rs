@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use openshell_policy_schema::FilesystemPolicy;
 use serde::{Deserialize, Serialize};
@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::detector::InteractionRiskDetector;
 use crate::error::{Result, RiskGuardError};
-use crate::types::{BaselineProfile, EnforcementMode};
+use crate::types::{BaselineProfile, CONFIGURABLE_RULES, EnforcementMode, RuleMode};
 
 pub const MAX_FANOUT_ENVELOPE: u32 = 4096;
 
@@ -21,6 +21,10 @@ pub struct AgentGuardrails {
     pub approved_resources: BTreeSet<String>,
     pub allowed_action_classes: BTreeSet<String>,
     pub forbid_unfamiliar_high_impact: bool,
+    /// Per-rule shadow or enforce choice. Omitted (or empty) means every rule uses its default, and an empty map is not
+    /// serialized, so settings saved before rule modes existed keep their hash.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub rule_modes: BTreeMap<String, RuleMode>,
     pub max_req_1m_p95: u32,
     pub max_req_1m_p99: u32,
     pub max_distinct_resources_15m_p95: u32,
@@ -79,6 +83,7 @@ impl AgentGuardrails {
             approved_resources: baseline.approved_resources.clone(),
             allowed_action_classes: baseline.allowed_action_classes.clone(),
             forbid_unfamiliar_high_impact: baseline.forbid_unfamiliar_high_impact,
+            rule_modes: baseline.rule_modes.clone(),
             max_req_1m_p95: baseline.max_req_1m_p95,
             max_req_1m_p99: baseline.max_req_1m_p99,
             max_distinct_resources_15m_p95: baseline.max_distinct_resources_15m_p95,
@@ -98,6 +103,19 @@ impl AgentGuardrails {
             return Err(RiskGuardError::InvalidArgument(
                 "cooldown_seconds must be between 1 and 86400".into(),
             ));
+        }
+        for (rule, mode) in &self.rule_modes {
+            if !CONFIGURABLE_RULES.contains(&rule.as_str()) {
+                return Err(RiskGuardError::InvalidArgument(format!(
+                    "unknown rule '{rule}'; configurable rules are {}",
+                    CONFIGURABLE_RULES.join(", ")
+                )));
+            }
+            if rule == crate::types::RULE_UNFAMILIAR_HIGH_IMPACT && *mode == RuleMode::Off {
+                return Err(RiskGuardError::InvalidArgument(
+                    "turn the high-impact rule off with forbid_unfamiliar_high_impact, not with a rule mode".into(),
+                ));
+            }
         }
         envelope(
             self.max_req_1m_p95,
@@ -189,6 +207,7 @@ impl AgentGuardrails {
         effective.approved_resources = self.approved_resources.clone();
         effective.allowed_action_classes = self.allowed_action_classes.clone();
         effective.forbid_unfamiliar_high_impact = self.forbid_unfamiliar_high_impact;
+        effective.rule_modes = self.rule_modes.clone();
         effective.max_req_1m_p95 = self.max_req_1m_p95;
         effective.max_req_1m_p99 = self.max_req_1m_p99;
         effective.max_distinct_resources_15m_p95 = self.max_distinct_resources_15m_p95;
@@ -217,6 +236,46 @@ mod tests {
                 read_write: vec!["/tmp".into()],
             }),
         )
+    }
+
+    #[test]
+    fn rule_modes_are_validated_and_default_to_the_baseline() {
+        let mut value = valid();
+        assert!(value.rule_modes.is_empty());
+        value.rule_modes.insert("unapproved_action".into(), RuleMode::Enforce);
+        value.rule_modes.insert("unapproved_resource".into(), RuleMode::Shadow);
+        value.rule_modes.insert("unfamiliar_high_impact".into(), RuleMode::Shadow);
+        assert!(value.validate().is_ok());
+
+        let mut unknown = valid();
+        unknown.rule_modes.insert("made_up_rule".into(), RuleMode::Enforce);
+        assert!(unknown.validate().is_err(), "an unknown rule name must be refused, not silently ignored");
+
+        let mut off = valid();
+        off.rule_modes.insert("unfamiliar_high_impact".into(), RuleMode::Off);
+        assert!(off.validate().is_err(), "the high-impact rule is switched off with its own setting");
+
+        let mut forbidden = valid();
+        forbidden.rule_modes.insert("forbidden_action".into(), RuleMode::Off);
+        assert!(forbidden.validate().is_err(), "the deny list is not configurable");
+    }
+
+    #[test]
+    fn settings_saved_before_rule_modes_existed_still_load_and_keep_their_form() {
+        let value = valid();
+        let json = serde_json::to_value(&value).unwrap();
+        assert!(json.get("rule_modes").is_none(), "an empty map is not serialized");
+        let loaded: AgentGuardrails = serde_json::from_value(json).unwrap();
+        assert_eq!(loaded, value);
+
+        let mut promoted = valid();
+        promoted.rule_modes.insert("unapproved_action".into(), RuleMode::Enforce);
+        let baseline = crate::fixture::build_standard_corpus().default_baseline;
+        assert_eq!(
+            promoted.apply_live_baseline(&baseline).rule_mode("unapproved_action"),
+            RuleMode::Enforce,
+            "saved settings apply to the live baseline"
+        );
     }
 
     #[test]

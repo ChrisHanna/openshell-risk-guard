@@ -100,6 +100,9 @@ Where this document says "the sandboxed process", it means the program running i
 - **One gateway, one writer.** A single SQLite writer is what makes the ratchet
   durable and linearizable. Move to a shared store only when you need several
   gateway replicas or exceed measured single-writer throughput.
+- **Rules run in shadow or enforce.** The approved-action and approved-resource rules default to shadow: they record what
+  they would have blocked without blocking it, and an operator promotes one to enforce once its record looks right. The deny
+  list and the high-impact rule enforce. See [Operating Risk Guard](docs/operations.md#rule-modes-shadow-first-then-enforce).
 - **Network only.** Risk Guard scores HTTP/S requests that OpenShell inspects.
   Filesystem and process behavior are enforced statically by OpenShell
   (Landlock and policy), not scored.
