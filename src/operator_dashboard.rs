@@ -213,16 +213,27 @@ mod tests {
         let page = include_str!("operator_ui.html");
         for id in [
             "fleet-view",
-            "agents-view",
+            // The workload directory is a section of the Fleet page, next to the needs-attention cards.
+            "directory-section",
+            "attention-section",
+            "fleet-verdict",
             "agent-tab-map",
             "agent-tab-detections",
             "agent-tab-recommendations",
             "agent-tab-runs",
             "agent-tab-settings",
             "audit-modal",
+            // Detections: one row per kind of action, with the evidence and the technical view folded away.
+            "incidents-list",
+            "incident-tiles",
+            "technical-fold",
+            // Honest-scope and freshness cues that stay on every page.
+            "freshness",
         ] {
             assert!(page.contains(&format!("id=\"{id}\"")), "missing view: {id}");
         }
+        assert!(page.contains("class=\"scope-bar\""), "the scope statement must be on every page");
+        assert!(!page.contains("id=\"agents-view\""), "the directory is part of the Fleet page now");
         assert!(page.contains("aria-label=\"Agent workspace\""));
         assert!(page.contains("Agent evidence"));
         assert!(page.contains("Context-scoped restrictions"));
