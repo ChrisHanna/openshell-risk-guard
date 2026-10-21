@@ -1133,6 +1133,57 @@ tbody tr:focus-within { background: var(--bg-elevated); }
 .audit-deny { color: var(--crit-text); font-weight: 600; }
 .audit-allow { color: var(--ok-text); }
 .quiet-inline { color: var(--text-muted); font-size: 12px; font-weight: 400; margin-left: 8px; }
+/* ---- Blocked & flagged actions ---- */
+.incident-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 16px 0 14px; }
+.incident-filter { display: flex; flex-wrap: wrap; gap: 6px; }
+.incident-filter button {
+  background: transparent; border: 1px solid var(--border); color: var(--text-secondary);
+  border-radius: 6px; padding: 5px 12px; font-size: 13px; cursor: pointer;
+}
+.incident-filter button[aria-pressed="true"] { background: var(--bg-hover); color: var(--text-primary); border-color: var(--text-muted); }
+.incident-hero {
+  border: 1px solid var(--crit-border); background: var(--crit-bg); border-radius: 8px; padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.incident-hero .hero-label { font-size: 12px; color: var(--crit-text); text-transform: uppercase; letter-spacing: .04em; }
+.incident-hero .hero-title { font-size: 18px; font-weight: 600; color: var(--text-primary); }
+.incident-hero .hero-sub { color: var(--text-secondary); font-size: 13px; }
+details.incident { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; background: var(--bg-code); }
+details.incident > summary {
+  list-style: none; cursor: pointer; padding: 12px 14px; display: grid;
+  grid-template-columns: auto 1fr auto; gap: 4px 12px; align-items: center;
+}
+details.incident > summary::-webkit-details-marker { display: none; }
+details.incident[open] > summary { border-bottom: 1px solid var(--border); }
+.sev { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
+.sev-blocked { color: var(--crit-text); background: var(--crit-bg); border-color: var(--crit-border); }
+.sev-flagged { color: var(--warn-text, #d4b36a); background: transparent; border-color: var(--warn-text, #d4b36a); }
+.sev-allowed { color: var(--ok-text); background: transparent; border-color: var(--ok-border, var(--border)); }
+.incident-title { font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
+.incident-score { font-variant-numeric: tabular-nums; color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
+.incident-meta { grid-column: 2 / 4; color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.incident-body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 14px; }
+.incident-body h4 { margin: 0 0 4px; font-size: 13px; color: var(--text-secondary); font-weight: 600; }
+.incident-body p { margin: 0; color: var(--text-primary); font-size: 14px; }
+table.why-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.why-table td { padding: 4px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.why-table td.pts { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.why-table td.raw { color: var(--text-muted); font-family: var(--mono, monospace); font-size: 11px; text-align: right; white-space: nowrap; }
+table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
+.evidence-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.evidence-chip {
+  display: inline-flex; gap: 6px; align-items: baseline; border: 1px solid var(--border); background: transparent;
+  color: var(--text-secondary); border-radius: 6px; padding: 3px 8px; font-size: 12px; cursor: pointer;
+}
+.evidence-chip .k { color: var(--text-muted); }
+.evidence-chip .v { font-family: var(--mono, monospace); color: var(--text-primary); }
+.evidence-chip:hover { background: var(--bg-hover); }
+.incident-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.detail-fold { margin-top: 18px; border: 1px solid var(--border); border-radius: 8px; padding: 0 14px; }
+.detail-fold > summary { cursor: pointer; padding: 11px 0; color: var(--text-secondary); font-weight: 600; }
+.detail-fold[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.detail-fold[open] { padding-bottom: 14px; }
 #audit-raw { margin-top: 18px; }
 #audit-raw > summary { cursor: pointer; color: var(--text-secondary); margin-bottom: 10px; }
 </style>
@@ -1490,29 +1541,46 @@ tbody tr:focus-within { background: var(--bg-elevated); }
         <section class="panel workspace-panel view-hidden" id="agent-tab-detections" role="tabpanel" aria-labelledby="tab-detections" tabindex="0">
           <div class="panel-header">
             <div class="panel-title-group">
-              <h2>Detections &amp; exposures</h2>
-              <p><span id="summary-blocked">0</span> blocked actions &middot; <span id="summary-restrictions">0</span> active context locks</p>
-              <p id="agent-posture-summary">Grouped incident patterns scored across network requests and container volume mounts</p>
+              <h2>Blocked &amp; flagged actions</h2>
+              <p id="incidents-subtitle">What this workload asked to do that Risk Guard blocked or flagged. Each row is one kind of action; open it for the reason and the evidence.</p>
+              <!-- Legacy counters, still written by the renderer; the tiles below replace them on screen. -->
+              <span hidden><span id="summary-blocked">0</span><span id="summary-restrictions">0</span></span>
+              <p id="agent-posture-summary" hidden></p>
             </div>
-            <div class="filter-row">
-              <select id="hunt-outcome" aria-label="Filter by action risk level">
-                <option value="risky_only">Detections &amp; Exposures Only</option>
-                <option value="all">All Evaluated Actions</option>
-                <option value="deny">Blocked Network Calls Only</option>
-                <option value="allow">Allowed Network Calls Only</option>
-                <option value="learned">Learned Model Would Block</option>
-              </select>
-              <input type="search" id="hunt-search" placeholder="Route, resource, or sandbox..." aria-label="Search detections" />
+            <div class="inline-actions">
+              <button type="button" class="btn" id="incidents-download">Download incidents (JSON)</button>
             </div>
           </div>
 
           <div class="panel-body">
+            <div id="incidents-hero"></div>
+            <div class="incident-tiles" id="incident-tiles"></div>
+            <div class="incident-filter" id="incident-filter" role="group" aria-label="Which actions to show"></div>
+            <p class="quiet-note" id="incidents-note" style="margin:8px 0 12px"></p>
+            <div id="incidents-list"></div>
+
+            <details class="detail-fold" id="locks-fold">
+              <summary>Locks in force <span class="badge badge-neutral" id="locks-fold-count">0</span></summary>
             <div class="setting-card" id="detections-restrictions-card" style="margin-bottom:16px">
-              <h3><span>Active restrictions &amp; lock recovery</span><span class="badge badge-neutral" id="detections-restrictions-badge">0 active</span></h3>
-              <p class="quiet-note">Clearing an active restriction records an audited operator clearance and allows subsequent requests in that scope to be scored again without altering past evidence or OpenShell policy.</p>
+              <h3><span>Active restrictions</span><span class="badge badge-neutral" id="detections-restrictions-badge">0 active</span></h3>
+              <p class="quiet-note">A lock keeps blocking one kind of action on one target for this workload, across runs and sandboxes. It has no expiry. An operator clears it with an audited clearance; this console is read-only, so it only shows them.</p>
               <p id="detections-restrictions-status" class="muted" role="status"></p>
               <div id="detections-restrictions-list"></div>
             </div>
+            </details>
+
+            <details class="detail-fold" id="technical-fold">
+              <summary>Technical signal view <span class="quiet-inline">every evaluated action, learned-model comparison, raw signals</span></summary>
+              <div class="filter-row" style="margin:12px 0">
+                <select id="hunt-outcome" aria-label="Filter by action risk level">
+                  <option value="risky_only">Detections &amp; Exposures Only</option>
+                  <option value="all">All Evaluated Actions</option>
+                  <option value="deny">Blocked Network Calls Only</option>
+                  <option value="allow">Allowed Network Calls Only</option>
+                  <option value="learned">Learned Model Would Block</option>
+                </select>
+                <input type="search" id="hunt-search" placeholder="Route, resource, or sandbox..." aria-label="Search detections" />
+              </div>
             <div class="risky-layout">
               <div id="agent-decisions"></div>
 
@@ -1525,6 +1593,7 @@ tbody tr:focus-within { background: var(--bg-elevated); }
                 <div id="inspector-factors"></div>
               </aside>
             </div>
+            </details>
           </div>
         </section>
 
@@ -4692,6 +4761,403 @@ function buildRiskyItems(data, periodDecisions, fsSummary) {
   return Array.from(groups.values()).sort((a, b) => b.riskScore - a.riskScore);
 }
 
+// ---- Blocked & flagged actions: one row per kind of action, in plain language ----------------------------------------
+// Everything shown here is a RECORDED decision. The wording stays factual ("requested", "recorded as denied"): the data
+// shows what a workload asked for and what Risk Guard answered, not intent, and upstream delivery is not observed.
+const SIGNAL_TEXT = {
+  I: "High-impact API call",
+  task_constraint: "Outside the approved task rules",
+  "restriction:strict_epoch": "A lock from an earlier block applies",
+  N_r: "A resource this workload has not touched before",
+  N_a: "An action this workload has not done before",
+  J_Nr_I: "Unfamiliar resource combined with a high-impact action",
+  T: "Program not expected for this task",
+  C: "Endpoint that carries credentials",
+  V: "Request rate above normal",
+  F: "Unusually many different resources",
+};
+let incidentFilter = "attention";
+let incidentList = [];
+let incidentCtx = null;
+let incidentSignature = "";
+const openIncidentKeys = new Set();
+
+function plainAction(req) {
+  const method = String(req.method || "").toUpperCase();
+  const last = String(req.route_template || "").split("/").filter(Boolean).pop() || "";
+  const target = req.resource_id ? `'${req.resource_id}'` : "the target";
+  if (method === "DELETE") return `delete ${target}`;
+  if (last === "rollback") return `roll back ${target}`;
+  if (last === "restart") return `restart ${target}`;
+  if (req.semantic_category === "bulk_export") return `export ${target} in bulk`;
+  if (req.semantic_category === "read_sensitive") return `read ${target}`;
+  if (method === "GET" || method === "HEAD") return `read ${target}`;
+  if (method === "POST") return `send a change to ${target}`;
+  if (method === "PUT" || method === "PATCH") return `modify ${target}`;
+  return `${method} ${req.route_template || ""} on ${target}`.trim();
+}
+
+function incidentKind(ev, observe) {
+  if (ev.outcome === "deny") return "blocked";
+  const score = Number(ev.risk_score || 0);
+  if (ev.outcome === "allow_with_observation" || (score > 0 && score >= observe)) return "flagged";
+  return "allowed";
+}
+
+function buildIncidents(data, periodDecisions) {
+  const settings = data.guardrails?.settings || {};
+  const observe = Number.isInteger(settings.observe_threshold) ? settings.observe_threshold : 20;
+  const enforce = Number.isInteger(settings.enforce_threshold) ? settings.enforce_threshold : 70;
+  const groups = new Map();
+  for (const d of periodDecisions) {
+    const ev = d.evaluation || {};
+    const req = d.request || {};
+    const kind = incidentKind(ev, observe);
+    const key = JSON.stringify([req.method, req.host, req.route_template, req.resource_id, kind]);
+    let g = groups.get(key);
+    if (!g) {
+      g = { key, kind, req, decisions: [], sandboxes: new Set(), maxScore: 0, lockRepeats: 0, firstTs: Infinity, lastTs: 0, latest: null, cause: null, causeTs: -1 };
+      groups.set(key, g);
+    }
+    const ts = Number(ev.decision_timestamp_ms || req.timestamp_ms || 0);
+    g.decisions.push(d);
+    if (req.sandbox_id) g.sandboxes.add(req.sandbox_id);
+    g.maxScore = Math.max(g.maxScore, Number(ev.risk_score || 0));
+    if (ev.reason_code === "behavioral_risk_restricted") g.lockRepeats++;
+    g.firstTs = Math.min(g.firstTs, ts);
+    if (ts >= g.lastTs) { g.lastTs = ts; g.latest = d; }
+    // The decision that explains the incident is the latest one that was not just a lock repeating an earlier block.
+    if (ev.reason_code !== "behavioral_risk_restricted" && ts >= g.causeTs) { g.causeTs = ts; g.cause = d; }
+  }
+  const order = { blocked: 0, flagged: 1, allowed: 2 };
+  for (const g of groups.values()) g.cause = g.cause || g.latest;
+  const list = [...groups.values()].sort((a, b) => order[a.kind] - order[b.kind] || b.lastTs - a.lastTs);
+  return { list, observe, enforce };
+}
+
+function activeSignals(d) {
+  const signals = (Array.isArray(d.evaluation?.signals) ? d.evaluation.signals : [])
+    .filter(s => !String(s.feature || "").startsWith("adaptive_"));
+  const active = signals.filter(s => Number(s.contribution || 0) > 0)
+    .sort((a, b) => Number(b.contribution) - Number(a.contribution));
+  return { active, zeroCount: signals.length - active.length };
+}
+
+function whyLine(g) {
+  if (g.lockRepeats > 0 && g.lockRepeats === g.decisions.length) return "A lock from an earlier block still applies to this action on this target.";
+  const { active } = activeSignals(g.cause);
+  if (!active.length) return g.kind === "allowed" ? "Nothing about it looked unusual." : "No individual signal is recorded for it.";
+  const lcFirst = text => text.charAt(0).toLowerCase() + text.slice(1);
+  const parts = active.slice(0, 2).map(s => `${lcFirst(SIGNAL_TEXT[s.feature] || s.feature)} (+${Math.round(s.contribution)})`);
+  return `${parts.join(", ")}.`.replace(/^./, c => c.toUpperCase());
+}
+
+function whatRiskGuardDid(ev) {
+  const type = ev.ratchet_action?.type || "";
+  if (ev.outcome === "deny") {
+    if (ev.reason_code === "behavioral_risk_restricted") return "Denied it, because a lock from an earlier block still applies to this action on this target.";
+    if (type.startsWith("latch_tier1")) return "Denied the request and locked this action on this target for this workload. The lock has no expiry; an operator has to clear it.";
+    if (type.startsWith("trigger_tier2")) {
+      const seconds = Math.round(Number(ev.ratchet_action?.cooldown_duration_ms || 0) / 1000);
+      return `Denied the request and paused this action for ${seconds} s.`;
+    }
+    return "Denied the request before it left the sandbox.";
+  }
+  if (ev.outcome === "allow_with_observation") return "Allowed it and recorded it for review.";
+  return "Allowed it.";
+}
+
+function policyHashFor(sandboxId) {
+  const row = (cachedStateData?.sandboxes || []).find(s => s.epoch?.sandbox_id === sandboxId);
+  return row?.epoch?.active_policy_hash || null;
+}
+
+function evidenceEntries(d) {
+  const ev = d.evaluation || {};
+  const req = d.request || {};
+  return [
+    ["request", ev.request_id || req.request_id],
+    ["sandbox", req.sandbox_id],
+    ["epoch", ev.epoch_id],
+    ["sequence", ev.state_sequence],
+    ["policy", policyHashFor(req.sandbox_id)],
+    ["source", PROVENANCE_TEXT[d.transport_provenance] || d.transport_provenance],
+    ["detector", ev.detector_version],
+    ["history", ev.baseline_maturity],
+  ].filter(([, v]) => v !== null && v !== undefined && v !== "");
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const box = document.createElement("textarea");
+    box.value = text;
+    box.style.cssText = "position:fixed;opacity:0";
+    document.body.append(box);
+    box.select();
+    try { document.execCommand("copy"); } catch { /* the browser refused; nothing more to do */ }
+    box.remove();
+  }
+}
+
+function evidenceChip(label, value) {
+  const text = String(value);
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = "evidence-chip";
+  chip.title = `${label}: ${text} (click to copy)`;
+  chip.setAttribute("aria-label", `Copy ${label} ${text}`);
+  const k = document.createElement("span"); k.className = "k"; k.textContent = label;
+  // Shorten id-like values (hashes, UUIDs); keep readable phrases whole.
+  const shown = text.length > 18 && !/\s/.test(text) ? `${text.slice(0, 8)}…${text.slice(-4)}` : text;
+  const v = document.createElement("span"); v.className = "v"; v.textContent = shown;
+  chip.append(k, v);
+  chip.addEventListener("click", async event => {
+    event.stopPropagation();
+    await copyToClipboard(text);
+    v.textContent = "copied";
+    setTimeout(() => { v.textContent = shown; }, 1000);
+  });
+  return chip;
+}
+
+function incidentSummaryText(g, ctx) {
+  const d = g.cause, ev = d.evaluation || {}, req = d.request || {};
+  const agent = ctx.data.agent;
+  const { active } = activeSignals(d);
+  return [
+    `Risk Guard ${g.kind === "blocked" ? "blocked a request" : g.kind === "flagged" ? "flagged a request" : "recorded a request"}`,
+    `Workload: ${agentName(agent) || agent.agent_id} (${identityKind(agent.agent_id)} ${agent.agent_id})`,
+    `Requested: ${req.method} ${req.host}${req.route_template} on '${req.resource_id}' (${plainAction(req)})`,
+    `Outcome: ${ev.outcome}, score ${ev.risk_score} (block at ${ctx.enforce}); recorded ${g.decisions.length} time(s) across ${g.sandboxes.size} sandbox(es); last ${new Date(g.lastTs).toISOString()}`,
+    `Why: ${active.length ? active.map(s => `${SIGNAL_TEXT[s.feature] || s.feature} +${Math.round(s.contribution)}`).join("; ") : "no individual signal recorded"}`,
+    `Action taken: ${whatRiskGuardDid(ev)}`,
+    `Evidence: ${evidenceEntries(d).map(([k, v]) => `${k}=${v}`).join(", ")}`,
+    "Note: a recorded decision, not proof of intent or of upstream delivery (upstream outcome is not observed).",
+  ].join("\n");
+}
+
+function incidentBody(g, ctx) {
+  // Explain from the decision that caused the incident; later requests stopped by its lock are counted, not re-explained.
+  const d = g.cause, ev = d.evaluation || {}, req = d.request || {};
+  const body = document.createElement("div");
+  body.className = "incident-body";
+  const section = (title, node) => {
+    const wrap = document.createElement("div");
+    const h = document.createElement("h4");
+    h.textContent = title;
+    wrap.append(h, node);
+    return wrap;
+  };
+  const para = text => { const p = document.createElement("p"); p.textContent = text; return p; };
+
+  const when = new Date(g.lastTs).toISOString().replace("T", " ").slice(0, 19);
+  body.append(section("What happened", para(
+    `At ${when} UTC a request ${req.method} ${req.host}${req.route_template} for '${req.resource_id}' was recorded as ` +
+    `${ev.outcome === "deny" ? "denied" : "allowed"}. This kind of request was recorded ${g.decisions.length} time${g.decisions.length === 1 ? "" : "s"} ` +
+    `across ${g.sandboxes.size} sandbox${g.sandboxes.size === 1 ? "" : "es"}. Upstream delivery is not observed.` +
+    (g.lockRepeats ? ` ${g.lockRepeats} of those ${g.lockRepeats === 1 ? "was" : "were"} stopped by the lock set by the first block.` : ""))));
+
+  const table = document.createElement("table");
+  table.className = "why-table";
+  const caption = document.createElement("caption");
+  caption.className = "sr-only";
+  caption.textContent = "How the score was made up";
+  table.append(caption);
+  const row = (label, points, raw, cls) => {
+    const tr = document.createElement("tr");
+    if (cls) tr.className = cls;
+    const a = document.createElement("td"); a.textContent = label;
+    const b = document.createElement("td"); b.className = "pts"; b.textContent = points;
+    const c = document.createElement("td"); c.className = "raw"; c.textContent = raw || "";
+    tr.append(a, b, c);
+    table.append(tr);
+  };
+  const { active, zeroCount } = activeSignals(d);
+  for (const s of active) row(SIGNAL_TEXT[s.feature] || s.feature, `+${Math.round(s.contribution)}`, s.feature);
+  if (ev.baseline_maturity === "insufficient") row("Learned behavior history", "0", "not enough history yet");
+  if (zeroCount > 0) row(`${zeroCount} other signal${zeroCount === 1 ? "" : "s"} checked`, "0", "");
+  row("Score", String(ev.risk_score ?? "—"), `blocks at ${ctx.enforce}`, "total");
+  const why = section("Why", table);
+  if (ev.baseline_maturity === "insufficient") {
+    const note = document.createElement("p");
+    note.className = "quiet-note";
+    note.textContent = "No learned history yet: this score comes from the approved task rules and a fixed API-risk map, not from past behavior.";
+    why.append(note);
+  }
+  body.append(why);
+
+  body.append(section("What Risk Guard did", para(whatRiskGuardDid(ev))));
+
+  const chips = document.createElement("div");
+  chips.className = "evidence-chips";
+  for (const [k, v] of evidenceEntries(d)) chips.append(evidenceChip(k, v));
+  body.append(section("Evidence (click a value to copy it)", chips));
+
+  const actions = document.createElement("div");
+  actions.className = "incident-actions";
+  const mk = (label, text) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "btn"; b.textContent = label;
+    b.addEventListener("click", async () => { await copyToClipboard(text()); b.textContent = "Copied"; setTimeout(() => { b.textContent = label; }, 1200); });
+    return b;
+  };
+  actions.append(mk("Copy summary", () => incidentSummaryText(g, ctx)), mk("Copy decision JSON", () => JSON.stringify(d, null, 2)));
+  body.append(actions);
+  return body;
+}
+
+const SEVERITY = {
+  blocked: { cls: "sev-blocked", icon: "✕", label: "Blocked" },
+  flagged: { cls: "sev-flagged", icon: "▲", label: "Flagged" },
+  allowed: { cls: "sev-allowed", icon: "✓", label: "Allowed" },
+};
+
+function incidentRow(g, ctx) {
+  const d = g.latest, ev = d.evaluation || {}, req = d.request || {};
+  const sev = SEVERITY[g.kind];
+  const details = document.createElement("details");
+  details.className = "incident";
+  details.dataset.key = g.key;
+  if (openIncidentKeys.has(g.key)) details.open = true;
+  details.addEventListener("toggle", () => { if (details.open) openIncidentKeys.add(g.key); else openIncidentKeys.delete(g.key); });
+  const summary = document.createElement("summary");
+  const chip = document.createElement("span");
+  chip.className = `sev ${sev.cls}`;
+  chip.textContent = `${sev.icon} ${sev.label}`;
+  const title = document.createElement("span");
+  title.className = "incident-title";
+  title.textContent = `Requested to ${plainAction(req)}`;
+  const score = document.createElement("span");
+  score.className = "incident-score";
+  score.textContent = `${g.maxScore} / ${ctx.enforce}`;
+  score.title = "Highest score recorded for this kind of action, and the score at which Risk Guard blocks";
+  const meta = document.createElement("span");
+  meta.className = "incident-meta";
+  const repeats = g.lockRepeats > 0 ? ` · ${g.lockRepeats} stopped by a lock` : "";
+  meta.textContent = `×${g.decisions.length} · ${g.sandboxes.size} sandbox${g.sandboxes.size === 1 ? "" : "es"} · last ${relativeAge(Date.now() - g.lastTs)} ago${repeats} · ${req.method} ${req.route_template} · ${String(req.host || "").split(".")[0]}`;
+  summary.append(chip, title, score, meta);
+  details.append(summary, incidentBody(g, ctx));
+  return details;
+}
+
+function tile(label, value, sub, valueColor) {
+  const box = document.createElement("article");
+  box.className = "kpi-box";
+  const l = document.createElement("div"); l.className = "kpi-label"; l.textContent = label;
+  const v = document.createElement("div"); v.className = "kpi-val"; v.textContent = String(value);
+  if (valueColor) v.style.color = valueColor;
+  const s = document.createElement("div"); s.className = "kpi-sub"; s.textContent = sub;
+  box.append(l, v, s);
+  return box;
+}
+
+function paintIncidents(force) {
+  if (!incidentCtx || !$("incidents-list")) return;
+  const ctx = incidentCtx;
+  const signature = JSON.stringify([incidentFilter, ctx.total, ctx.locks, ctx.list.map(g => [g.key, g.decisions.length, g.lastTs, g.maxScore])]);
+  if (!force && signature === incidentSignature) return;
+  incidentSignature = signature;
+
+  const blocked = ctx.list.filter(g => g.kind === "blocked");
+  const flagged = ctx.list.filter(g => g.kind === "flagged");
+  const count = groups => groups.reduce((n, g) => n + g.decisions.length, 0);
+  const tiles = $("incident-tiles");
+  tiles.replaceChildren(
+    tile("Blocked", count(blocked), `${blocked.length} kind${blocked.length === 1 ? "" : "s"} of action`, count(blocked) ? "var(--crit-text)" : null),
+    tile("Flagged", count(flagged), `scored ${ctx.observe}+ but not blocked`),
+    tile("Locks in force", ctx.locks, ctx.locks ? "no expiry; an operator clears them" : "none", ctx.locks ? "var(--crit-text)" : null),
+    tile("Highest score", ctx.top, `blocks at ${ctx.enforce}`),
+  );
+
+  const hero = $("incidents-hero");
+  const latest = blocked.slice().sort((a, b) => b.lastTs - a.lastTs)[0];
+  if (!latest) {
+    hero.replaceChildren();
+  } else {
+    const card = document.createElement("section");
+    card.className = "incident-hero";
+    const label = document.createElement("div"); label.className = "hero-label"; label.textContent = "Latest block";
+    const title = document.createElement("div"); title.className = "hero-title"; title.textContent = `Blocked: requested to ${plainAction(latest.req)}`;
+    const sub = document.createElement("div"); sub.className = "hero-sub";
+    sub.textContent = `Score ${latest.maxScore} of ${ctx.enforce} · ${relativeAge(Date.now() - latest.lastTs)} ago · recorded ${latest.decisions.length} time${latest.decisions.length === 1 ? "" : "s"}. ${whyLine(latest)}`;
+    const chips = document.createElement("div"); chips.className = "evidence-chips";
+    for (const [k, v] of evidenceEntries(latest.cause).slice(0, 2)) chips.append(evidenceChip(k, v));
+    const see = document.createElement("button");
+    see.type = "button"; see.className = "btn"; see.textContent = "See the reason and evidence";
+    see.addEventListener("click", () => {
+      openIncidentKeys.add(latest.key);
+      paintIncidents(true);
+      const node = [...document.querySelectorAll("details.incident")].find(n => n.dataset.key === latest.key);
+      node?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    card.append(label, title, sub, chips, see);
+    hero.replaceChildren(card);
+  }
+
+  const filters = [["attention", "Needs attention"], ["blocked", "Blocked only"], ["all", "Everything recorded"]];
+  $("incident-filter").replaceChildren(...filters.map(([id, text]) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = text; b.setAttribute("aria-pressed", String(incidentFilter === id));
+    b.addEventListener("click", () => { incidentFilter = id; paintIncidents(true); });
+    return b;
+  }));
+
+  const visible = ctx.list.filter(g => incidentFilter === "all" ? true : incidentFilter === "blocked" ? g.kind === "blocked" : g.kind !== "allowed").slice(0, 100);
+  const list = $("incidents-list");
+  if (!visible.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = ctx.total === 0
+      ? "No requests are recorded in this window."
+      : `Nothing was blocked or flagged in this window. Risk Guard scored ${ctx.total} request${ctx.total === 1 ? "" : "s"}; none reached the flag line (${ctx.observe}) or the block line (${ctx.enforce}).`;
+    list.replaceChildren(empty);
+  } else {
+    list.replaceChildren(...visible.map(g => incidentRow(g, ctx)));
+  }
+  const capped = ctx.total >= (ctx.data.limits?.decisions || 100);
+  $("incidents-note").textContent =
+    `${ctx.total} recorded decision${ctx.total === 1 ? "" : "s"} in this window${capped ? " (the most recent ones; older decisions are not loaded here)" : ""}, grouped into ${ctx.list.length} kind${ctx.list.length === 1 ? "" : "s"} of action. ` +
+    "A count of decisions and a count of kinds of action are different numbers.";
+  $("locks-fold-count").textContent = String(ctx.locks);
+  $("locks-fold-count").className = `badge ${ctx.locks ? "badge-red" : "badge-neutral"}`;
+}
+
+function renderIncidents(data, periodDecisions) {
+  if (!$("incidents-list")) return;
+  const { list, observe, enforce } = buildIncidents(data, periodDecisions);
+  const locks = (data.contexts || []).reduce((n, c) => n + (Array.isArray(c.active_restrictions) ? c.active_restrictions.length : 0), 0);
+  const top = periodDecisions.reduce((m, d) => Math.max(m, Number(d.evaluation?.risk_score || 0)), 0);
+  incidentCtx = { data, list, observe, enforce, locks, top, total: periodDecisions.length };
+  paintIncidents(false);
+}
+
+$("incidents-download").addEventListener("click", () => {
+  if (!incidentCtx) return;
+  const { data, list, enforce, observe } = incidentCtx;
+  const payload = {
+    exported_at: new Date().toISOString(),
+    note: "Recorded Risk Guard decisions for one workload, grouped by kind of action. Not proof of intent or of upstream delivery.",
+    agent: data.agent,
+    thresholds: { observe, enforce },
+    incidents: list.map(g => ({
+      outcome: g.kind, requested: plainAction(g.req), method: g.req.method, host: g.req.host,
+      route_template: g.req.route_template, resource_id: g.req.resource_id,
+      decisions_recorded: g.decisions.length, sandboxes: [...g.sandboxes], highest_score: g.maxScore,
+      first_recorded_ms: g.firstTs, last_recorded_ms: g.lastTs, decisions: g.decisions,
+    })),
+  };
+  const slug = (agentName(data.agent) || data.agent.agent_id).replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 60);
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+  link.download = `risk-guard-incidents-${slug}-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+});
+
 function renderRiskySection(allItems) {
   const filterMode = $("hunt-outcome").value;
   const q = ($("hunt-search").value || "").trim().toLowerCase();
@@ -5128,6 +5594,7 @@ function renderAllForCurrentAgent() {
 
   const riskyItems = buildRiskyItems(data, periodDecisions, fsSummary);
   renderRiskySection(riskyItems);
+  renderIncidents(data, periodDecisions);
   renderRecommendationsSection(data, fsSummary);
   $("graph-filter-summary").hidden = !activeGraphNodeFilter || !["map", "detections"].includes(activeAgentTab);
 
