@@ -14,7 +14,8 @@
       redirects everything else to HTTPS. Until the first certificate arrives (usually under a minute) the console
       presents a certificate from a cluster CA (saved to .aks/console-ca.crt). The name appears in public
       certificate-transparency logs, as for any Let's Encrypt certificate.
-    * HTTP basic auth with a generated password, saved to .aks/console-credentials.txt (git-ignored).
+    * No login by default: the console is read-only, so the allowlist and GET/HEAD-only access are the protection.
+      Pass -RequirePassword to add HTTP basic auth with a generated password (.aks/console-credentials.txt).
     * GET and HEAD only.
 
   Re-run with a new -AllowedIp when your address changes. -AcmeStaging uses Let's Encrypt's staging service
@@ -28,6 +29,8 @@ param(
     # Contact address registered with Let's Encrypt (expiry notices). Defaults to the signed-in Azure user.
     [string]$AcmeEmail,
     [switch]$AcmeStaging,
+    # Ask for a password (HTTP basic auth). Off by default: the console is read-only and the allowlist applies.
+    [switch]$RequirePassword,
     [string]$NginxImage = 'mcr.microsoft.com/azurelinux/base/nginx:1.30.6-1-azl3.0.20261015',
     [string]$LegoImage,
     [switch]$RotatePassword,
@@ -80,7 +83,7 @@ if (-not $haveTls -or $RotatePassword) {
 # --- Password: random, stored only as a hash in the cluster; the plain value goes to a local git-ignored file
 $haveAuth = Invoke-Native kubectl @('get', 'secret', 'risk-guard-console-auth', '-n', $ns, '-o', 'name') -AllowFailure
 $credFile = Join-Path $script:StateDir 'console-credentials.txt'
-if (-not $haveAuth -or $RotatePassword) {
+if ($RequirePassword -and (-not $haveAuth -or $RotatePassword)) {
     Write-Step 'Creating the console password'
     $bytes = New-Object byte[] 24
     $rng = [Security.Cryptography.RandomNumberGenerator]::Create(); $rng.GetBytes($bytes); $rng.Dispose()
@@ -107,7 +110,8 @@ $confDir = Join-Path ([IO.Path]::GetTempPath()) ("rg-console-conf-" + [guid]::Ne
 New-Item -ItemType Directory $confDir | Out-Null
 try {
     $allow = ($ranges | ForEach-Object { "    allow $_;" }) -join "`n"
-    $nginx = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/console-nginx.conf') -Raw).Replace('__ALLOW__', $allow).Replace('__FQDN__', $fqdn)
+    $auth = if ($RequirePassword) { "    auth_basic `"Risk Guard console`";`n    auth_basic_user_file /etc/console-auth/htpasswd;" } else { '    # No login: read-only, allowlisted.' }
+    $nginx = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/console-nginx.conf') -Raw).Replace('__ALLOW__', $allow).Replace('__FQDN__', $fqdn).Replace('__AUTH__', $auth)
     [IO.File]::WriteAllText((Join-Path $confDir 'nginx.conf'), ($nginx -replace "`r`n", "`n"), (New-Object Text.UTF8Encoding($false)))
     $acme = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/console-acme.sh') -Raw) -replace "`r`n", "`n"
     [IO.File]::WriteAllText((Join-Path $confDir 'console-acme.sh'), $acme, (New-Object Text.UTF8Encoding($false)))
@@ -146,6 +150,6 @@ if (-not $ip) { throw 'No public IP yet. Check: kubectl get svc risk-guard-conso
 Write-Host ""
 Write-Host "Console:     https://$fqdn/   (public IP $ip)" -ForegroundColor Green
 Write-Host "Allowed:     $($ranges -join ', ')"
-Write-Host "Credentials: $credFile   (username viewer; the password is in that file)"
+if ($RequirePassword) { Write-Host "Credentials: $credFile   (username viewer; the password is in that file)" } else { Write-Host "Login:       none (read-only, allowlisted). Pass -RequirePassword to add one." }
 Write-Host "Certificate: Let's Encrypt, issued by the console-acme container (kubectl logs deploy/risk-guard -n $ns -c console-acme)"
 if ($AcmeStaging) { Write-Host "             STAGING certificates are not trusted by browsers; re-run without -AcmeStaging for a real one." -ForegroundColor Yellow }

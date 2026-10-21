@@ -34,7 +34,7 @@ echo "creating sandbox $NAME (workload $APPID)"
 # sandbox, so after each attempt check for it before trying again; keep the last error for the failure message.
 created=0; last_error=""
 for attempt in 1 2 3; do
-  last_error="$(timeout 120 "$CLI" sandbox create --name "$NAME" --from "$ACR/openshell-demo/nat-agent:1" \
+  last_error="$(timeout 120 "$CLI" sandbox create --name "$NAME" --from "$ACR/openshell-demo/nat-agent:${AGENT_IMAGE_TAG:-2}" \
     --policy "$HERE/deploy/aks/agent-sandbox-policy.yaml" --provider "$PROVIDER" \
     --annotation "openshell.nvidia.com/agent-id=$APPID" --annotation "openshell.nvidia.com/agent-name=${AGENT_NAME:-openshell-agent-nat-agent}" \
     --no-tty --detach -- /usr/bin/sleep infinity 2>&1 | tail -n 6)" || true

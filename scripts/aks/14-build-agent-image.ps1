@@ -15,12 +15,34 @@
   (11-set-secret.ps1) and copy it into the provider with 12-sync-credentials.ps1.
 #>
 [CmdletBinding()]
-param([string]$Tag = '1')
+param(
+    [string]$Tag = '2',
+    # Build with the local Docker engine and push, instead of `az acr build` (see 02-build-image.ps1 -LocalDocker).
+    [switch]$LocalDocker
+)
 . "$PSScriptRoot/common.ps1"
 Assert-Tool az 'Install the Azure CLI.'
 $state = Get-ClusterContext
 $base = "$($state.acr).azurecr.io/openshell-demo/workload:1"
 $agentDir = Join-Path $script:RepoRoot 'deploy/rail-guard-demo/agent'
+
+if ($LocalDocker) {
+    Assert-Tool docker 'Install and start Docker Desktop.'
+    $server = "$($state.acr).azurecr.io"
+    Write-Step "Signing in to $server"
+    Connect-AcrDocker $server
+    Write-Step "Building nat-agent:$Tag locally on $base"
+    $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        & docker build --progress=plain --build-arg "BASE=$base" -t "$server/openshell-demo/nat-agent:$Tag" -f (Join-Path $agentDir 'Dockerfile') $agentDir 2>&1 | ForEach-Object { "$_" } | Select-Object -Last 15
+        if ($LASTEXITCODE -ne 0) { throw 'docker build failed' }
+        & docker push "$server/openshell-demo/nat-agent:$Tag" 2>&1 | Select-Object -Last 3
+        if ($LASTEXITCODE -ne 0) { throw 'docker push failed' }
+    } finally { $ErrorActionPreference = $previous }
+    Save-State @{ agentImage = "$server/openshell-demo/nat-agent:$Tag" }
+    Write-Host "Image: $server/openshell-demo/nat-agent:$Tag" -ForegroundColor Green
+    return
+}
 
 Write-Step "Building nat-agent:$Tag on $base (several minutes, runs in Azure)"
 Invoke-Native az @('acr', 'build', '-r', $state.acr, '-t', "openshell-demo/nat-agent:$Tag", '--build-arg', "BASE=$base",

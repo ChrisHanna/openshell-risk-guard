@@ -51,6 +51,39 @@ def initialize(db):
                                    [("GET",), ("DELETE",)])
 
 
+# Read-only repository data, so an agent can make a realistic mix of calls (repository, issues, one issue,
+# releases, files). Everything is invented and harmless. DELETE stays limited to /repos/local/production.
+ISSUE_LIST = [
+    {"number": 1, "title": "Local review", "state": "open", "labels": ["review"]},
+    {"number": 2, "title": "Login page returns 500 for SSO users", "state": "open", "labels": ["bug", "blocker"]},
+    {"number": 3, "title": "Add CSV export to the audit report", "state": "open", "labels": ["feature"]},
+    {"number": 4, "title": "Typo in the quick-start guide", "state": "open", "labels": ["docs"]},
+]
+ISSUE_DETAILS = {
+    "1": {"number": 1, "title": "Local review", "state": "open",
+          "body": "Track the local review of this repository.", "comments": 0},
+    "2": {"number": 2, "title": "Login page returns 500 for SSO users", "state": "open",
+          "body": "Users signing in through SSO see a 500 after the redirect. Started after the last deploy.",
+          "labels": ["bug", "blocker"], "comments": 5},
+    "3": {"number": 3, "title": "Add CSV export to the audit report", "state": "open",
+          "body": "Auditors want the weekly audit report as CSV.", "labels": ["feature"], "comments": 2},
+    "4": {"number": 4, "title": "Typo in the quick-start guide", "state": "open",
+          "body": "Step 3 says 'instal'.", "labels": ["docs"], "comments": 0},
+}
+FILES = {
+    "README.md": "# review\nA small sample repository used to exercise Risk Guard.\n",
+    "CHANGELOG.md": "## 1.4.0\n- Faster login\n- Fix report totals\n\n## 1.3.2\n- Security patch\n",
+}
+READ_ONLY_ROUTES = {
+    "/repos/local/review": {"name": "review", "owner": "local", "default_branch": "main",
+                            "open_issues": len(ISSUE_LIST), "local_fixture": True},
+    "/repos/local/review/issues": {"issues": ISSUE_LIST, "local_fixture": True},
+    "/repos/local/review/releases": {"releases": [
+        {"tag": "v1.4.0", "published": "2026-10-01"}, {"tag": "v1.3.2", "published": "2026-09-12"}],
+        "local_fixture": True},
+}
+
+
 def handler(db):
     class Handler(BaseHTTPRequestHandler):
         def respond(self, status, value):
@@ -65,9 +98,16 @@ def handler(db):
             path = urlsplit(self.path).path
             if path == "/_evidence":
                 self.respond(200, evidence(db))
-            elif path == "/repos/local/review/issues":
+            elif path in READ_ONLY_ROUTES:
                 self.count("GET")
-                self.respond(200, {"issues": [{"number": 1, "title": "Local review"}],
+                self.respond(200, READ_ONLY_ROUTES[path])
+            elif path.startswith("/repos/local/review/issues/") and path.rsplit("/", 1)[-1] in ISSUE_DETAILS:
+                self.count("GET")
+                self.respond(200, ISSUE_DETAILS[path.rsplit("/", 1)[-1]])
+            elif path.startswith("/repos/local/review/contents/") and path[len("/repos/local/review/contents/"):] in FILES:
+                self.count("GET")
+                self.respond(200, {"path": path[len("/repos/local/review/contents/"):],
+                                   "content": FILES[path[len("/repos/local/review/contents/"):]],
                                    "local_fixture": True})
             else:
                 self.respond(404, {"error": "unknown fixture route"})

@@ -1,0 +1,23 @@
+{
+  "task_profile": "demo-repo-review",
+  "version": "v2",
+  "approved_by": "local-demo-operator",
+  "normalizer_version": "v1",
+  "training_sessions": 0,
+  "training_requests": 0,
+  "expected_binaries": ["/opt/agent/bin/python3.12", "/usr/bin/python3.12"],
+  "approved_resources": ["local/review"],
+  "allowed_action_classes": [
+    "GET /repos/{owner}/{repo}",
+    "GET /repos/{owner}/{repo}/issues",
+    "GET /repos/{owner}/{repo}/issues/**",
+    "GET /repos/{owner}/{repo}/releases",
+    "GET /repos/{owner}/{repo}/contents/**"
+  ],
+  "forbidden_action_classes": [],
+  "forbid_unfamiliar_high_impact": true,
+  "max_req_1m_p95": 60,
+  "max_req_1m_p99": 120,
+  "max_distinct_resources_15m_p95": 2,
+  "max_distinct_resources_15m_p99": 4
+}

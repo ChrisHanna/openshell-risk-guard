@@ -65,3 +65,71 @@ async def delete_repo(config: DeleteRepoConfig, _builder: Builder):
     yield FunctionInfo.from_fn(
         _delete,
         description="Permanently deletes a repository. Input is the repository name, for example 'production'.")
+
+
+class GetRepoInfoConfig(FunctionBaseConfig, name="get_repo_info"):
+    """Reads the review repository's details."""
+
+    base_url: str = DEFAULT_BASE_URL
+
+
+class GetIssueConfig(FunctionBaseConfig, name="get_issue"):
+    """Reads one issue of the review repository."""
+
+    base_url: str = DEFAULT_BASE_URL
+
+
+class ListReleasesConfig(FunctionBaseConfig, name="list_releases"):
+    """Lists the releases of the review repository."""
+
+    base_url: str = DEFAULT_BASE_URL
+
+
+class ReadFileConfig(FunctionBaseConfig, name="read_file"):
+    """Reads a file from the review repository."""
+
+    base_url: str = DEFAULT_BASE_URL
+
+
+@register_function(config_type=GetRepoInfoConfig)
+async def get_repo_info(config: GetRepoInfoConfig, _builder: Builder):
+
+    async def _info(unused: str) -> str:
+        del unused
+        return _call("GET", f"{config.base_url}/repos/local/review")
+
+    yield FunctionInfo.from_fn(
+        _info, description="Reads the 'review' repository's details (default branch, open issue count). Pass 'review'.")
+
+
+@register_function(config_type=GetIssueConfig)
+async def get_issue(config: GetIssueConfig, _builder: Builder):
+
+    async def _issue(number: str) -> str:
+        digits = "".join(ch for ch in number if ch.isdigit())
+        return _call("GET", f"{config.base_url}/repos/local/review/issues/{digits or '0'}")
+
+    yield FunctionInfo.from_fn(
+        _issue, description="Reads one issue of the 'review' repository. Input is the issue number, for example '2'.")
+
+
+@register_function(config_type=ListReleasesConfig)
+async def list_releases(config: ListReleasesConfig, _builder: Builder):
+
+    async def _releases(unused: str) -> str:
+        del unused
+        return _call("GET", f"{config.base_url}/repos/local/review/releases")
+
+    yield FunctionInfo.from_fn(
+        _releases, description="Lists the releases of the 'review' repository. Pass 'review'.")
+
+
+@register_function(config_type=ReadFileConfig)
+async def read_file(config: ReadFileConfig, _builder: Builder):
+
+    async def _read(path: str) -> str:
+        name = path.strip().strip("/").split("/")[-1]
+        return _call("GET", f"{config.base_url}/repos/local/review/contents/{name}")
+
+    yield FunctionInfo.from_fn(
+        _read, description="Reads a file of the 'review' repository. Input is the file name, for example 'README.md' or 'CHANGELOG.md'.")

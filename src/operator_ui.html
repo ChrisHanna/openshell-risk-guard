@@ -1106,6 +1106,22 @@ tbody tr:focus-within { background: var(--bg-elevated); }
 .signal-list .learned-pill { border-style: dashed; }
 .learned-section { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); display: grid; gap: 8px; }
 .learned-section .quiet-note { margin: 0; }
+
+.audit-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+.audit-toolbar h3, #audit-summary h3 { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary); }
+.audit-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 24px; }
+.audit-fact { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.audit-fact-label { color: var(--text-muted); font-size: 12px; }
+.audit-fact-value { color: var(--text-primary); font-size: 14px; overflow-wrap: anywhere; }
+.audit-table-wrap { overflow: auto; max-height: 340px; margin-top: 10px; border: 1px solid var(--border); border-radius: 6px; }
+.audit-table th, .audit-table td { text-align: left; padding: 7px 10px; font-size: 13px; white-space: nowrap; vertical-align: top; }
+.audit-table td:nth-child(7) { white-space: normal; min-width: 220px; }
+.audit-table thead th { position: sticky; top: 0; background: var(--bg-code); }
+.audit-deny { color: var(--crit-text); font-weight: 600; }
+.audit-allow { color: var(--ok-text); }
+.quiet-inline { color: var(--text-muted); font-size: 12px; font-weight: 400; margin-left: 8px; }
+#audit-raw { margin-top: 18px; }
+#audit-raw > summary { cursor: pointer; color: var(--text-secondary); margin-bottom: 10px; }
 </style>
 </head>
 <body>
@@ -1178,7 +1194,7 @@ tbody tr:focus-within { background: var(--bg-elevated); }
         </span>
 
         <label class="status-Readout" style="cursor:pointer">
-          <input type="checkbox" id="auto-refresh" style="margin:0" />
+          <input type="checkbox" id="auto-refresh" style="margin:0" checked />
           <span>Auto</span>
         </label>
 
@@ -1518,6 +1534,11 @@ tbody tr:focus-within { background: var(--bg-elevated); }
         </div>
         <div class="panel-body">
           <div class="setting-card" style="margin-bottom:16px">
+            <h3><span>What is enforced for this workload</span><span class="badge badge-neutral">Overview</span></h3>
+            <p class="quiet-note" style="margin:0 0 8px">Two layers apply. OpenShell's static policy decides what the sandbox can reach at all. Risk Guard then scores every allowed request against this workload's approved behavior and latches a lock when it is risky. A lock never loosens the static policy.</p>
+            <div class="audit-facts" id="guardrail-glance-rows"></div>
+          </div>
+          <div class="setting-card" style="margin-bottom:16px" id="cfg-access-card">
             <h3>Operator access</h3>
             <p id="cfg-access-status" class="muted" role="status">Checking operator controls. This dashboard is read-only until explicitly unlocked.</p>
             <p id="cfg-token-help" class="quiet-note">Controls are disabled by default. Enable the service with <code>--operator-token-file</code>, then use the 64-hex token from that private runtime operator-token file. The token stays only in this tab's memory, never in a URL or browser storage. Lock clears it; already-sent requests may still finish.</p>
@@ -1950,6 +1971,22 @@ tbody tr:focus-within { background: var(--bg-elevated); }
         <span id="sandbox-epochs-drawer"></span><span id="empty"></span>
         <table><tbody id="sandboxes"></tbody></table>
       </div>
+      <section id="audit-summary" hidden>
+        <div class="audit-toolbar">
+          <h3>Evidence summary</h3>
+          <button type="button" class="btn" id="audit-download">Download evidence (JSON)</button>
+        </div>
+        <div class="audit-facts" id="audit-facts"></div>
+        <h3 style="margin-top:20px">Decision timeline <span class="quiet-inline" id="audit-timeline-note"></span></h3>
+        <div class="audit-table-wrap">
+          <table class="audit-table">
+            <thead><tr><th>Time</th><th>Outcome</th><th>Score</th><th>Action</th><th>Target</th><th>Sandbox</th><th>Why</th><th>Source</th></tr></thead>
+            <tbody id="audit-timeline"></tbody>
+          </table>
+        </div>
+      </section>
+      <details id="audit-raw">
+      <summary>Raw records (JSON)</summary>
       <section id="detail" hidden style="margin-bottom:14px">
         <h3 id="selected"></h3>
         <div class="grid-2">
@@ -1970,6 +2007,7 @@ tbody tr:focus-within { background: var(--bg-elevated); }
         <div><h4>Raw Hardening Recommendations</h4><pre id="agent-recommendations"></pre></div>
         <div><h4>Recorded Coverage Gaps</h4><pre id="agent-gaps"></pre></div>
       </div>
+      </details>
     </div>
   </div>
 </div>
@@ -2019,6 +2057,10 @@ let adaptiveWorkspace = null;
 const adaptiveScopes = ["local_demo", "verified"];
 const adaptiveMinimumKeys = ["training_runs", "training_requests", "holdout_runs", "holdout_requests", "shadow_runs", "shadow_requests"];
 
+const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// An ID shaped like a GUID is the agent's Microsoft Entra application (client) ID; anything else is a plain workload ID.
+const identityKind = id => GUID_RE.test(String(id)) ? "Application ID" : "Workload ID";
+const agentName = agent => agent && agent.display_name && agent.display_name !== agent.agent_id ? agent.display_name : "";
 const pretty = value => JSON.stringify(value, null, 2);
 const time = value => value == null ? "Unknown" : new Date(value).toLocaleString();
 const shortTime = value => value == null ? "—" : new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -2404,10 +2446,15 @@ function renderGuardrails() {
   $("cfg-access-badge").textContent = !state?.available || !view?.settings || operatorCapability !== "enabled"
     ? "Read-only" : operatorVerifying ? "Verifying…" : operatorToken ? "Unlocked" : "Locked · read-only";
   $("cfg-access-badge").className = `badge ${editable ? "badge-green" : "badge-neutral"}`;
+  // With writes disabled there is nothing to unlock or save, so hide the controls rather than show dead buttons.
+  const viewOnly = operatorCapability === "disabled";
+  for (const id of ["cfg-token-help", "cfg-unlock-form"]) $(id).hidden = viewOnly;
+  for (const id of ["cfg-save", "cfg-reload", "cfg-policy-download"]) $(id).hidden = viewOnly;
+  if (viewOnly) $("cfg-access-badge").textContent = "View-only";
   $("cfg-access-status").textContent = operatorCapability === "checking"
     ? "Checking operator controls. Dashboard remains read-only."
     : operatorCapability === "disabled"
-      ? "Read-only: operator writes are disabled. The service must be started with --operator-token-file to enable verification."
+      ? "This console is view-only. To change guardrails, an operator enables controls on the service (--operator-token-file); the overview above shows what is enforced now."
       : operatorCapability === "unavailable"
         ? "Read-only: operator capability is unavailable. Reload to retry after a compatible backend is running."
         : operatorVerifying ? "Verifying local operator authorization…"
@@ -3826,7 +3873,7 @@ function renderServiceMapGraph(data, periodDecisions, periodRuns, fsSummary) {
   $("zoom-level-lbl").textContent = `${Math.round(mapZoom * 100)}%`;
 
   const colHeaders = [
-    { x: columns[0], text: "Workload ID" },
+    { x: columns[0], text: "Workload" },
     { x: columns[1], text: "Sandboxes" },
     { x: columns[2], text: "Enforcement / policy" },
     { x: columns[3], text: "Destinations" }
@@ -3852,10 +3899,11 @@ function renderServiceMapGraph(data, periodDecisions, periodRuns, fsSummary) {
     x: columns[0],
     y: H / 2 + 10,
     metric: selectedDomain === "filesystem" ? "Policy" : `${totalCalls} req`,
-    label: shortId(data.agent.agent_id, 23),
+    label: shortId(agentName(data.agent) || data.agent.agent_id, 23),
     color: "var(--graph-node)",
-    tooltipTitle: `Principal: ${data.agent.agent_id}`,
+    tooltipTitle: agentName(data.agent) || `Workload: ${data.agent.agent_id}`,
     tooltipLines: [
+      `${identityKind(data.agent.agent_id)}: ${data.agent.agent_id}`,
       `Attributed Runs: ${periodRuns.length}`,
       `Total Requests: ${totalCalls} (${blockedCalls} blocked at gate)`,
       `Requests are recorded decisions, not proof of upstream delivery.`
@@ -4970,14 +5018,18 @@ function renderAllForCurrentAgent() {
   const baseline = ctx.baseline || {};
   const fsSummary = extractFilesystemSummary(data);
 
-  $("agent-title").textContent = data.agent.agent_id;
-  $("agent-title").title = data.agent.display_name || data.agent.agent_id;
-  $("agent-context-label").textContent = `${ctx.task_profile || "Task profile not recorded"} · ${ctx.agent_revision || "Revision not recorded"}`;
-  $("sidebar-agent-id").textContent = data.agent.agent_id;
+  const nameText = agentName(data.agent);
+  $("agent-title").textContent = nameText || data.agent.agent_id;
+  $("agent-title").title = data.agent.agent_id;
+  $("agent-context-label").textContent = [
+    nameText ? `${identityKind(data.agent.agent_id)} ${data.agent.agent_id}` : "",
+    `${ctx.task_profile || "Task profile not recorded"} · ${ctx.agent_revision || "Revision not recorded"}`
+  ].filter(Boolean).join("  ·  ");
+  $("sidebar-agent-id").textContent = nameText || data.agent.agent_id;
   $("selected-agent-shortcut").hidden = false;
   $("period-label-text").textContent = selectedPeriodLabel;
   $("agent-selected").textContent = data.agent.display_name || data.agent.agent_id;
-  $("hub-agent-id").textContent = `agent_id: ${data.agent.agent_id}`;
+  $("hub-agent-id").textContent = `${identityKind(data.agent.agent_id)}: ${data.agent.agent_id}`;
   $("hub-role").textContent = ctx.task_profile || "Task profile not recorded";
   $("hub-approved-repo").textContent = (baseline.approved_resources || []).join(", ") || "Not recorded";
   $("hub-runs").textContent = String(periodRuns.length);
@@ -5007,7 +5059,8 @@ function renderAllForCurrentAgent() {
   renderRecommendationsSection(data, fsSummary);
   $("graph-filter-summary").hidden = !activeGraphNodeFilter || !["map", "detections"].includes(activeAgentTab);
 
-  if (activeTopView === "agent") $("nav-agent-lbl").textContent = data.agent.agent_id;
+  if (activeTopView === "agent") $("nav-agent-lbl").textContent = nameText || data.agent.agent_id;
+  renderGuardrailGlance(data);
   renderGuardrails();
 }
 
@@ -5259,6 +5312,8 @@ async function agentDetail(id, version) {
 async function detail(id, version) {
   const data = await read(`/api/sandboxes/${encodeURIComponent(id)}`);
   if (version !== selectionVersion) return;
+  $("audit-summary").hidden = true;
+  $("audit-raw").open = true;
   openAuditModal(`Sandbox · ${id}`);
   $("selected").textContent = `Sandbox: ${id}`;
   $("context").textContent = pretty({ identity: data.summary.identity || null, epoch: data.summary.epoch, baseline: data.baseline });
@@ -5362,7 +5417,9 @@ for (const btn of document.querySelectorAll("#agent-tab-selector [role=tab]")) {
 
 $("open-audit-modal-btn").addEventListener("click", () => {
   $("detail").hidden = true;
-  openAuditModal(`Agent · ${currentAgentData.agent.agent_id}`);
+  renderAuditSummary(currentAgentData);
+  $("audit-summary").hidden = false;
+  openAuditModal(`Agent · ${agentName(currentAgentData.agent) || currentAgentData.agent.agent_id}`);
 });
 $("close-audit-modal-btn").addEventListener("click", closeAuditModal);
 $("audit-modal").addEventListener("click", e => {
@@ -5556,6 +5613,127 @@ $("auto-refresh").addEventListener("change", e => {
   if (e.target.checked) autoRefreshTimer = setInterval(refresh, 10000);
 });
 
+
+// ---- Audit evidence summary -------------------------------------------------------------------------------
+const REASON_TEXT = {
+  behavioral_risk_restricted: "Behavioral risk over the enforcement threshold",
+  baseline_insufficient: "Allowed: no behavioral history to compare with yet",
+};
+const PROVENANCE_TEXT = { native_supervisor_http_rpc_verified: "Supervisor RPC (verified)" };
+const reasonText = code => REASON_TEXT[code] || String(code || "not recorded").replace(/_/g, " ");
+
+function auditFact(label, value) {
+  const wrap = document.createElement("div");
+  wrap.className = "audit-fact";
+  const l = document.createElement("span");
+  l.className = "audit-fact-label";
+  l.textContent = label;
+  const v = document.createElement("span");
+  v.className = "audit-fact-value";
+  v.textContent = value;
+  wrap.append(l, v);
+  return wrap;
+}
+
+function auditDecisions(data) {
+  return [...(data.decisions || [])].sort((a, b) => (b.request?.timestamp_ms || 0) - (a.request?.timestamp_ms || 0));
+}
+
+function renderAuditSummary(data) {
+  const decisions = auditDecisions(data);
+  const blocked = decisions.filter(d => d?.evaluation?.outcome === "deny").length;
+  const scores = decisions.map(d => d?.evaluation?.risk_score).filter(Number.isFinite);
+  const times = decisions.map(d => d?.request?.timestamp_ms).filter(Number.isFinite);
+  const locks = (data.contexts || []).reduce((n, c) => n + (Array.isArray(c.active_restrictions) ? c.active_restrictions.length : 0), 0);
+  const sandboxes = new Set(decisions.map(d => d?.request?.sandbox_id).filter(Boolean));
+  const ctx = (data.contexts || [])[0] || {};
+  const sources = [...new Set(decisions.map(d => d?.transport_provenance).filter(Boolean))].map(x => PROVENANCE_TEXT[x] || x);
+  const facts = [
+    ["Name", agentName(data.agent) || "Not set"],
+    [identityKind(data.agent.agent_id), data.agent.agent_id],
+    ["Task profile · revision · mode", `${ctx.task_profile || "not recorded"} · ${ctx.agent_revision || "not recorded"} · ${ctx.mode || "not recorded"}`],
+    ["Recorded requests", `${decisions.length} (${decisions.length - blocked} allowed, ${blocked} blocked)`],
+    ["Highest risk score", scores.length ? String(Math.max(...scores)) : "No scored requests"],
+    ["Active locks", locks ? `${locks} (latched until an operator clears them)` : "None"],
+    ["Runs · sandboxes", `${(data.runs || []).length} · ${sandboxes.size}`],
+    ["First · last request", times.length ? `${time(Math.min(...times))} · ${time(Math.max(...times))}` : "None recorded"],
+    ["Evidence source", sources.length ? sources.join(", ") : "None recorded"],
+    ["Integrity", "Recorded decisions, not proof of upstream delivery. Scores describe individual actions."],
+  ];
+  $("audit-facts").replaceChildren(...facts.map(([l, v]) => auditFact(l, v)));
+
+  const rows = decisions.slice(0, 100).map(d => {
+    const tr = document.createElement("tr");
+    const ev = d.evaluation || {};
+    const req = d.request || {};
+    const deny = ev.outcome === "deny";
+    const cell = (text, cls) => { const td = document.createElement("td"); td.textContent = text; if (cls) td.className = cls; tr.append(td); };
+    cell(time(req.timestamp_ms));
+    cell(deny ? "Blocked" : "Allowed", deny ? "audit-deny" : "audit-allow");
+    cell(Number.isFinite(ev.risk_score) ? String(ev.risk_score) : "—");
+    cell(`${req.method || "?"} ${req.route_template || req.action_class || ""}`.trim(), "mono");
+    cell(req.resource_id || req.host || "—", "mono");
+    cell(shortId(req.sandbox_id || "", 8), "mono");
+    const latch = ev.ratchet_action && ev.ratchet_action.type && ev.ratchet_action.type !== "none" ? " · lock applied" : "";
+    cell(`${reasonText(ev.reason_code)}${latch}`);
+    cell(PROVENANCE_TEXT[d.transport_provenance] || d.transport_provenance || "—");
+    return tr;
+  });
+  $("audit-timeline").replaceChildren(...rows);
+  $("audit-timeline-note").textContent = decisions.length > 100 ? `latest 100 of ${decisions.length}` : `${decisions.length} recorded`;
+}
+
+$("audit-download").addEventListener("click", () => {
+  if (!currentAgentData) return;
+  const d = currentAgentData;
+  const payload = {
+    exported_at: new Date().toISOString(),
+    note: "Recorded Risk Guard evidence for one workload. Decisions are not proof of upstream delivery.",
+    agent: d.agent, contexts: d.contexts, runs: d.runs, decisions: auditDecisions(d),
+    recommendations: d.recommendations, recorded_coverage_gaps: d.recorded_coverage_gaps,
+  };
+  const slug = (agentName(d.agent) || d.agent.agent_id).replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 60);
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+  link.download = `risk-guard-evidence-${slug}-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+});
+
+// ---- Guardrails overview ----------------------------------------------------------------------------------
+function renderGuardrailGlance(data) {
+  const box = $("guardrail-glance-rows");
+  if (!box) return;
+  const ctx = (data.contexts || [])[0] || {};
+  const base = ctx.baseline || {};
+  const saved = data.guardrails?.settings || {};
+  const mode = saved.mode || ctx.mode || "not recorded";
+  const enforce = saved.enforce_threshold ?? 70;
+  const observe = saved.observe_threshold ?? 20;
+  const locks = (data.contexts || []).reduce((n, c) => n + (Array.isArray(c.active_restrictions) ? c.active_restrictions.length : 0), 0);
+  const list = values => Array.isArray(values) && values.length ? values.join(", ") : "none recorded";
+  const fs = saved.filesystem;
+  const rows = [
+    ["Mode", mode === "enforce"
+      ? `Enforcing. A request scoring ${enforce} or more is blocked; ${observe} or more is flagged.`
+      : mode === "observe" ? "Observing only. Nothing is blocked; scores are recorded." : mode],
+    ["Approved task", `${ctx.task_profile || "not recorded"} · ${ctx.agent_revision || "revision not recorded"}`],
+    ["Allowed actions", list(base.allowed_action_classes)],
+    ["Approved resources", list(base.approved_resources)],
+    ["Expected programs", list(base.expected_binaries)],
+    ["Unfamiliar high-impact actions", base.forbid_unfamiliar_high_impact === false
+      ? "Scored, not forbidden" : "Forbidden, for example deleting a repository the task never touched"],
+    ["Normal traffic", Number.isFinite(base.max_req_1m_p95)
+      ? `Typically up to ${base.max_req_1m_p95} requests a minute (${base.max_req_1m_p99} at most), and ${base.max_distinct_resources_15m_p95} to ${base.max_distinct_resources_15m_p99} distinct resources in 15 minutes`
+      : "not recorded"],
+    ["Filesystem", fs ? `Writable: ${list(fs.read_write)}. Read-only: ${list(fs.read_only)}` : "Not managed by Risk Guard"],
+    ["Active locks", locks ? `${locks}, latched until an operator clears them` : "None"],
+  ];
+  box.replaceChildren(...rows.map(([l, v]) => auditFact(l, v)));
+}
+
 new ResizeObserver(() => {
   if (activeTopView === "agent" && activeAgentTab === "map" && currentAgentData
       && Math.max(880, document.querySelector(".map-scroll").clientWidth) !== mapLayoutWidth) {
@@ -5565,6 +5743,7 @@ new ResizeObserver(() => {
 
 switchMainView("fleet");
 refresh();
+if ($("auto-refresh").checked) autoRefreshTimer = setInterval(refresh, 10000);
 </script>
 </body>
 </html>

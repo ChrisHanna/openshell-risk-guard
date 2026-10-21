@@ -96,6 +96,7 @@ spec:
           secret:
             secretName: risk-guard-console-auth
             defaultMode: 0440
+            optional: true
         - name: console-acme
           persistentVolumeClaim:
             claimName: risk-guard-acme

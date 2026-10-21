@@ -148,3 +148,19 @@ function Invoke-InCluster {
 function Test-Unix {
     return ($PSVersionTable.PSObject.Properties.Name -contains 'Platform') -and ($PSVersionTable.Platform -eq 'Unix')
 }
+
+# Sign the local Docker engine in to the registry without az's own registry login (some networks reset that
+# connection while curl works): exchange the Azure token for a registry refresh token with curl.
+function Connect-AcrDocker([string]$Server) {
+    $aad = (Invoke-Native az @('account', 'get-access-token', '--resource', 'https://management.azure.com', '--query', 'accessToken', '-o', 'tsv') | Select-Object -First 1)
+    $tenant = (Invoke-Native az @('account', 'show', '--query', 'tenantId', '-o', 'tsv') | Select-Object -First 1)
+    $resp = & curl.exe -sS -m 30 -X POST "https://$Server/oauth2/exchange" -H 'Content-Type: application/x-www-form-urlencoded' --data "grant_type=access_token&service=$Server&tenant=$tenant&access_token=$aad" | ConvertFrom-Json
+    if (-not $resp.refresh_token) { throw 'The registry did not return a refresh token.' }
+    # Hand the token over through a file so PowerShell 5.1 cannot re-encode it on the pipe.
+    $tokenFile = Join-Path ([IO.Path]::GetTempPath()) ("acr-" + [guid]::NewGuid().ToString('N'))
+    try {
+        [IO.File]::WriteAllText($tokenFile, $resp.refresh_token, (New-Object Text.UTF8Encoding($false)))
+        & cmd.exe /c "docker login $Server -u 00000000-0000-0000-0000-000000000000 --password-stdin < `"$tokenFile`"" | Out-Null
+    } finally { if (Test-Path $tokenFile) { Remove-Item -Force $tokenFile } }
+    if ($LASTEXITCODE -ne 0) { throw 'docker login failed' }
+}

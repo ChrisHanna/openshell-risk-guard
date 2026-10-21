@@ -29,7 +29,7 @@ $ns = Get-StateValue 'namespace' 'openshell'
 $tag = if ($ImageTag) { $ImageTag } else { Get-StateValue 'imageTag' }
 if (-not $tag) { throw 'No image tag recorded. Run 02-build-image.ps1 or pass -ImageTag.' }
 $image = "$($state.acr).azurecr.io/openshell-risk-guard:$tag"
-if (-not $BaselinePath) { $BaselinePath = Join-Path $script:RepoRoot 'deploy/rail-guard-demo/baseline.json' }
+if (-not $BaselinePath) { $BaselinePath = Join-Path $script:RepoRoot 'deploy/aks/baseline.json' }
 if (-not $ApiSemanticsPath) { $ApiSemanticsPath = Join-Path $script:RepoRoot 'config/api_semantics.yaml' }
 
 Write-Step 'Checking the gateway installed its extension-signing keys'

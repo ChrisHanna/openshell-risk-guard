@@ -19,7 +19,7 @@ flowchart LR
   SB[Sandbox in a Kata VM] -- middleware, TLS + JWT --> RG
   RG --- DB[(SQLite on a managed disk)]
   KV[Key Vault] -. sync .-> GW
-  ME[You] -- HTTPS, allowlist + password --> RG
+  ME[You] -- HTTPS, IP allowlist --> RG
 ```
 
 * **OpenShell** is installed from the chart in your OpenShell checkout, with images from `ghcr.io/nvidia/openshell` at the
@@ -54,7 +54,7 @@ secrets), and prints the next step. Windows PowerShell 5.1 and PowerShell 7 are 
 | – | `connect-gateway.sh` | Registers the gateway with the `openshell` CLI over mTLS (untested as a script; see below). |
 | 8 | `08-deploy-fixture.ps1` | Harmless test fixture and a small workload image with curl. |
 | 7 | `07-verify.ps1` | Prints workloads, who bound each sandbox, and recent decisions. |
-| 9 | `09-expose-console.ps1` | Publishes the console on the internet behind an IP allowlist, a Let's Encrypt certificate and a password. |
+| 9 | `09-expose-console.ps1` | Publishes the console on the internet behind an IP allowlist, a Let's Encrypt certificate and no login (add one with `-RequirePassword`). |
 | 10 | `10-create-key-vault.ps1` | Key Vault (RBAC, purge protection, firewalled to your address). |
 | 11 | `11-set-secret.ps1` | Stores a secret from a hidden prompt, through a protected temp file that is overwritten and deleted. |
 | 12 | `12-sync-credentials.ps1` | Copies a Key Vault secret into an OpenShell provider over stdin. |
@@ -99,8 +99,9 @@ To give an agent its own workload from its Entra identity, add
 * TLS keys and the HMAC key are generated in-cluster and stored only as Kubernetes Secrets. Treat the Secret store as the
   trust boundary (enable AKS encryption at rest and restrict `get secret` in `openshell`).
 * The public console has no login of its own, so it is only exposed through the proxy in step 9: a source-IP allowlist,
-  a browser-trusted Let's Encrypt certificate (issued and renewed by a lego sidecar), a generated password stored only as a
-  hash in the cluster, and GET/HEAD only. Keep the allowlist tight. Port 80 is open to the internet so Let's Encrypt can
+  a browser-trusted Let's Encrypt certificate (issued and renewed by a lego sidecar), and GET/HEAD only. There is no login by
+  default because the console is read-only evidence; add one with `-RequirePassword` (a generated password, stored only as a
+  hash in the cluster). To show it to others, add their addresses with `-AllowedIp`. Keep the allowlist tight. Port 80 is open to the internet so Let's Encrypt can
   validate the name; it serves only the challenge and redirects to HTTPS. Because one Service cannot restrict ports
   separately, nginx enforces the allowlist on 443 (the Service keeps the client address with `externalTrafficPolicy: Local`).
   The hostname appears in public certificate-transparency logs. Use `-AcmeStaging` to test without using the real limits.
@@ -187,9 +188,9 @@ score. Register each identity first (`13-register-agent-identity.ps1 -AgentName 
 
 | Agent | Behavior | Expected in Risk Guard |
 | --- | --- | --- |
-| `nat-agent` | read-only issue triage | stays low risk |
-| `release-bot` | routine work, occasionally asks for a risky delete | score climbs, some denials |
-| `ops-cleaner` | repeatedly asks to delete production or injects instructions | denied, then locked |
+| `nat-agent` | read-only work across several tools (repository, issues, one issue, releases, files) | stays low risk |
+| `release-bot` | routine multi-step release checks, sometimes ends with a delete of production | score climbs, some denials |
+| `ops-cleaner` | reads a few things, then keeps trying to delete production or injects instructions | denied, then locked |
 
 Every 3 to 5 minutes (`MIN_WAIT` and `MAX_WAIT` seconds) one agent runs one randomly chosen task. Every third run of
 an agent is screened by the NeMo Guardrails input rail first (`--guardrails-every N`), so some requests are stopped
