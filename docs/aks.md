@@ -19,7 +19,7 @@ flowchart LR
   SB[Sandbox in a Kata VM] -- middleware, TLS + JWT --> RG
   RG --- DB[(SQLite on a managed disk)]
   KV[Key Vault] -. sync .-> GW
-  ME[You] -- HTTPS, IP allowlist --> RG
+  ME[You] -- HTTPS, Entra sign-in --> RG
 ```
 
 * **OpenShell** is installed from the chart in your OpenShell checkout, with images from `ghcr.io/nvidia/openshell` at the
@@ -54,7 +54,8 @@ secrets), and prints the next step. Windows PowerShell 5.1 and PowerShell 7 are 
 | – | `connect-gateway.sh` | Registers the gateway with the `openshell` CLI over mTLS (untested as a script; see below). |
 | 8 | `08-deploy-fixture.ps1` | Harmless test fixture and a small workload image with curl. |
 | 7 | `07-verify.ps1` | Prints workloads, who bound each sandbox, and recent decisions. |
-| 9 | `09-expose-console.ps1` | Publishes the console on the internet behind an IP allowlist, a Let's Encrypt certificate and no login (add one with `-RequirePassword`). |
+| 9 | `09-expose-console.ps1` | Publishes the console on the internet behind a Let's Encrypt certificate and, until step 15 is done, an IP allowlist. |
+| 15 | `15-setup-console-signin.ps1` | Requires Microsoft Entra sign-in for the console and records who may use it (see Security notes). Re-run 04 and 09 afterwards. |
 | 10 | `10-create-key-vault.ps1` | Key Vault (RBAC, purge protection, firewalled to your address). |
 | 11 | `11-set-secret.ps1` | Stores a secret from a hidden prompt, through a protected temp file that is overwritten and deleted. |
 | 12 | `12-sync-credentials.ps1` | Copies a Key Vault secret into an OpenShell provider over stdin. |
@@ -98,12 +99,30 @@ To give an agent its own workload from its Entra identity, add
   Secret is never mounted into it.
 * TLS keys and the HMAC key are generated in-cluster and stored only as Kubernetes Secrets. Treat the Secret store as the
   trust boundary (enable AKS encryption at rest and restrict `get secret` in `openshell`).
-* The public console has no login of its own, so it is only exposed through the proxy in step 9: a source-IP allowlist,
-  a browser-trusted Let's Encrypt certificate (issued and renewed by a lego sidecar), and GET/HEAD only. There is no login by
-  default because the console is read-only evidence; add one with `-RequirePassword` (a generated password, stored only as a
-  hash in the cluster). To show it to others, add their addresses with `-AllowedIp`. Keep the allowlist tight. Port 80 is open to the internet so Let's Encrypt can
+* **Console sign-in.** With `15-setup-console-signin.ps1` the console requires a Microsoft Entra account that is on its list.
+  Anyone else gets the page shell with a sign-in screen and nothing more: every data route answers 401 (no valid sign-in) or
+  403 (a real tenant account that is not listed), so there is nothing to read in the page or in the network tab.
+  * The page signs in with the authorization-code flow and PKCE against a single-tenant app registration (no client secret
+    exists) and holds the token in the tab's session storage. The console verifies every token itself: RS256 signature against
+    the tenant's published keys, issuer, tenant, audience, expiry, v2 token and the delegated `access` scope. If it cannot get a
+    signing key it refuses; it never falls back to open access.
+  * Access follows the account's **object ID** (Entra assigns it and never reuses it), not the email address, which is only
+    shown. Administrators (`-AdminObjectId`, by default the account you are signed in to `az` with) may read and change
+    settings. Viewers (`-ViewerObjectId`) may read only. Settings changes are recorded against the verified account
+    (`name [entra:<object id>]`) instead of a typed name.
+  * Scripts read the console as you: `az account get-access-token --scope api://<app id>/access` (the Azure CLI is
+    pre-authorized for the scope). `07-verify.ps1` does this.
+  * The local operator token (`--operator-token-file`) is not set on AKS. If you enable it, treat it as break-glass: it can
+    change settings but never reads data while sign-in is required.
+  * The page is served with a Content-Security-Policy that lets it talk only to itself and `login.microsoftonline.com`.
+  * Sign-in does not limit which tenant accounts can request a token for the app, only which of them see anything. To also stop
+    unlisted accounts at Entra, set "Assignment required" on the enterprise application and assign the listed accounts.
+* Until sign-in is configured, the console is exposed only through the proxy in step 9 behind a source-IP allowlist (default:
+  this machine's address) and GET/HEAD only; `-RequirePassword` adds a generated password (stored only as a hash in the
+  cluster) but cannot be combined with sign-in. With sign-in on, the allowlist is dropped unless you pass `-AllowedIp`. Pages
+  are GET/HEAD only; settings changes (PUT/POST) reach `/api/` only. Port 80 is open to the internet so Let's Encrypt can
   validate the name; it serves only the challenge and redirects to HTTPS. Because one Service cannot restrict ports
-  separately, nginx enforces the allowlist on 443 (the Service keeps the client address with `externalTrafficPolicy: Local`).
+  separately, nginx enforces any allowlist on 443 (the Service keeps the client address with `externalTrafficPolicy: Local`).
   The hostname appears in public certificate-transparency logs. Use `-AcmeStaging` to test without using the real limits.
 * Every script that restarts the Risk Guard pod (04, 09 and 13) waits for the console to present a trusted Let's Encrypt
   certificate and fails with the certificate client's log if it does not (`scripts/aks/verify-console-cert.ps1` runs the same

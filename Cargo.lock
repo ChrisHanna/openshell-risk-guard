@@ -1707,6 +1707,7 @@ dependencies = [
 name = "openshell-risk-guard"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-rs",
  "axum",
  "base64 0.22.1",
  "clap",
@@ -1728,6 +1729,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rusqlite",
+ "rustls",
  "serde",
  "serde_json",
  "sha2 0.10.9",

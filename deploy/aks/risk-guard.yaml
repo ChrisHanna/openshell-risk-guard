@@ -172,14 +172,16 @@ spec:
             - name: ca
               mountPath: /etc/openshell-risk-guard/ca
               readOnly: true
-        # Read-only operator console for the same database. It listens on the pod's loopback only, so it
-        # is reached with: kubectl port-forward -n openshell deploy/risk-guard 8791
+        # Operator console for the same database. It listens on the pod's loopback only; the nginx proxy added by
+        # scripts/aks/09-expose-console.ps1 publishes it. With sign-in configured (scripts/aks/15-setup-console-signin.ps1)
+        # it shows nothing to anyone but the listed Entra accounts. Locally: kubectl port-forward -n openshell deploy/risk-guard 8791
         - name: console
           image: __IMAGE__
           args:
             - dashboard
             - --listen=127.0.0.1:8791
             - --db=/var/lib/openshell-risk-guard/risk-guard.db
+__CONSOLE_SIGNIN_ARGS__
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532

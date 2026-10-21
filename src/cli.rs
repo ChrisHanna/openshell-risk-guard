@@ -315,6 +315,17 @@ pub enum Commands {
         /// Enable operator writes using an owner-only runtime capability token.
         #[arg(long)]
         operator_token_file: Option<PathBuf>,
+        /// Require Microsoft Entra sign-in. Tenant and app (client) ID of the console's app registration.
+        #[arg(long, env = "RISK_GUARD_ENTRA_TENANT_ID", requires = "entra_client_id")]
+        entra_tenant_id: Option<String>,
+        #[arg(long, env = "RISK_GUARD_ENTRA_CLIENT_ID", requires = "entra_tenant_id")]
+        entra_client_id: Option<String>,
+        /// Object IDs of accounts that may read and change settings (repeat or comma-separate).
+        #[arg(long = "entra-admin-oid", env = "RISK_GUARD_ENTRA_ADMIN_OIDS", value_delimiter = ',')]
+        entra_admin_oids: Vec<String>,
+        /// Object IDs of accounts that may read only.
+        #[arg(long = "entra-viewer-oid", env = "RISK_GUARD_ENTRA_VIEWER_OIDS", value_delimiter = ',')]
+        entra_viewer_oids: Vec<String>,
     },
     /// Run the synthetic integration harness (not a native OpenShell deployment).
     DemoDashboard {
@@ -903,8 +914,25 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             Ok(serde_json::to_string_pretty(&cleared)?)
         }
 
-        Commands::Dashboard { listen, db, operator_token_file } => {
-            crate::operator_dashboard::serve_with_operator_token(listen, db, operator_token_file).await?;
+        Commands::Dashboard {
+            listen,
+            db,
+            operator_token_file,
+            entra_tenant_id,
+            entra_client_id,
+            entra_admin_oids,
+            entra_viewer_oids,
+        } => {
+            let entra = match (entra_tenant_id, entra_client_id) {
+                (Some(tenant), Some(client)) => Some(crate::entra_auth::EntraConfig::new(
+                    &tenant,
+                    &client,
+                    &entra_admin_oids,
+                    &entra_viewer_oids,
+                )?),
+                _ => None,
+            };
+            crate::operator_dashboard::serve_with_sign_in(listen, db, operator_token_file, entra).await?;
             Ok(serde_json::json!({"status": "stopped", "listen": listen.to_string()}).to_string())
         }
         Commands::DemoDashboard { listen, db } => {

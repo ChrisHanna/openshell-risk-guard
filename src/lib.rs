@@ -10,6 +10,7 @@ pub mod auth;
 pub mod cli;
 pub mod dashboard;
 pub mod detector;
+pub mod entra_auth;
 pub mod error;
 pub mod fixture;
 pub mod guardrails;

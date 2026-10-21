@@ -25,7 +25,7 @@ const SPIFFE_SANDBOX_PREFIX: &str = "spiffe://openshell/sandbox/";
 /// Default clock-skew tolerance in seconds for production `openshell-ext+jwt` verification.
 pub const DEFAULT_CLOCK_SKEW_SECS: u64 = 5;
 
-fn install_crypto_provider() {
+pub(crate) fn install_crypto_provider() {
     let _ = jsonwebtoken::crypto::aws_lc::DEFAULT_PROVIDER.install_default();
 }
 

@@ -1,26 +1,31 @@
 <#
 .SYNOPSIS
-  Publish Risk Guard's read-only console on the internet, protected by an IP allowlist, TLS and a password.
+  Publish Risk Guard's console on the internet behind TLS and Microsoft Entra sign-in (or, without sign-in, an IP allowlist).
 
 .DESCRIPTION
-  The console has no login of its own and only listens on the pod's loopback, so it is never exposed directly.
+  The console only listens on the pod's loopback, so it is never exposed directly.
   This script adds an nginx proxy and a Let's Encrypt client to the Risk Guard pod and a LoadBalancer Service in
   front of them:
 
-    * Source-IP allowlist: only -AllowedIp (default: this machine's public address) can use the console. nginx
-      enforces it on port 443 (the Service keeps the client address, externalTrafficPolicy: Local).
+    * Sign-in (recommended): after scripts/aks/15-setup-console-signin.ps1 the console requires a Microsoft Entra
+      account that is on its list. Everyone else sees only a sign-in screen, and every data route answers 401/403, so
+      the address needs no further allowlist unless -AllowedIp is passed.
+    * Source-IP allowlist: without sign-in, only -AllowedIp (default: this machine's public address) can use the
+      console. nginx enforces it on port 443 (the Service keeps the client address, externalTrafficPolicy: Local).
     * A browser-trusted Let's Encrypt certificate for the Service's DNS name, issued and renewed automatically by a
       lego sidecar. This needs port 80 open to the internet; port 80 serves only the validation challenge and
       redirects everything else to HTTPS. Until the first certificate arrives (usually under a minute) the console
       presents a certificate from a cluster CA (saved to .aks/console-ca.crt). The name appears in public
       certificate-transparency logs, as for any Let's Encrypt certificate.
-    * No login by default: the console is read-only, so the allowlist and GET/HEAD-only access are the protection.
-      Pass -RequirePassword to add HTTP basic auth with a generated password (.aks/console-credentials.txt).
-    * GET and HEAD only.
+    * Without sign-in the console is read-only and unauthenticated, so the allowlist is the protection. -RequirePassword
+      adds HTTP basic auth (.aks/console-credentials.txt); it cannot be combined with sign-in, which also uses the
+      Authorization header.
+    * Pages are GET/HEAD only. Settings changes (PUT/POST) reach /api/ only, and the console accepts them only from a
+      signed-in administrator.
 
   Re-run with a new -AllowedIp when your address changes. -AcmeStaging uses Let's Encrypt's staging service
   (untrusted certificates, generous limits) for testing. -Remove deletes the public Service.
-  This is read-only evidence (workloads, routes, principals); keep the allowlist tight.
+  The console shows evidence (workloads, routes, principals, decisions): never publish it without sign-in or an allowlist.
 #>
 [CmdletBinding()]
 param(
@@ -49,12 +54,17 @@ if ($Remove) {
     return
 }
 
-if (-not $AllowedIp) {
+$signIn = [bool]((Get-StateValue 'consoleEntraClientId') -and @(Get-StateValue 'consoleEntraAdminOids' @()).Count)
+if ($signIn -and $RequirePassword) { throw 'Sign-in and -RequirePassword both use the Authorization header and cannot be combined. Drop -RequirePassword.' }
+if ($signIn) {
+    Write-Note 'Entra sign-in is configured: the console shows nothing without a listed account.'
+    if (-not $AllowedIp) { $AllowedIp = @('0.0.0.0/0') }
+} elseif (-not $AllowedIp) {
     Write-Step 'Detecting this machine''s public address for the allowlist'
     $AllowedIp = @((Invoke-RestMethod 'https://api.ipify.org').Trim())
-    Write-Note "using $($AllowedIp -join ', ')  (pass -AllowedIp to override)"
+    Write-Note "using $($AllowedIp -join ', ')  (pass -AllowedIp to override; or run 15-setup-console-signin.ps1)"
 }
-foreach ($ip in $AllowedIp) { if ($ip -notmatch '^\d{1,3}(\.\d{1,3}){3}$') { throw "Not an IPv4 address: $ip" } }
+foreach ($ip in $AllowedIp) { if ($ip -notmatch '^\d{1,3}(\.\d{1,3}){3}(/\d{1,2})?$') { throw "Not an IPv4 address or range: $ip" } }
 $ranges = @($AllowedIp | ForEach-Object { if ($_ -match '/') { $_ } else { "$_/32" } })
 
 if (-not $DnsLabel) { $DnsLabel = Get-StateValue 'consoleDnsLabel' ("rg-console-" + (Get-Random -Minimum 100000 -Maximum 999999)) }
@@ -109,8 +119,8 @@ Write-Note "certificates from $acmeServer (contact $AcmeEmail)"
 $confDir = Join-Path ([IO.Path]::GetTempPath()) ("rg-console-conf-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory $confDir | Out-Null
 try {
-    $allow = ($ranges | ForEach-Object { "    allow $_;" }) -join "`n"
-    $auth = if ($RequirePassword) { "    auth_basic `"Risk Guard console`";`n    auth_basic_user_file /etc/console-auth/htpasswd;" } else { '    # No login: read-only, allowlisted.' }
+    $allow = if ($ranges -contains '0.0.0.0/0') { '    allow all;' } else { ($ranges | ForEach-Object { "    allow $_;" }) -join "`n" }
+    $auth = if ($RequirePassword) { "    auth_basic `"Risk Guard console`";`n    auth_basic_user_file /etc/console-auth/htpasswd;" } elseif ($signIn) { '    # Entra sign-in is enforced by the console itself.' } else { '    # No login: read-only, allowlisted.' }
     $nginx = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/console-nginx.conf') -Raw).Replace('__ALLOW__', $allow).Replace('__FQDN__', $fqdn).Replace('__AUTH__', $auth)
     [IO.File]::WriteAllText((Join-Path $confDir 'nginx.conf'), ($nginx -replace "`r`n", "`n"), (New-Object Text.UTF8Encoding($false)))
     $acme = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/console-acme.sh') -Raw) -replace "`r`n", "`n"
@@ -130,7 +140,7 @@ Set-Content -Path $patchFile -Encoding utf8 -Value $patch
 try { Invoke-Native kubectl @('patch', 'deploy/risk-guard', '-n', $ns, '--patch-file', $patchFile) | Out-Null } finally { Remove-Item -Force $patchFile -ErrorAction SilentlyContinue }
 Invoke-Native kubectl @('rollout', 'status', 'deploy/risk-guard', '-n', $ns, '--timeout=300s') | Out-Null
 
-Write-Step "Publishing https://$fqdn/ to $($ranges -join ', ')"
+Write-Step "Publishing https://$fqdn/ ($(if ($signIn) { 'Entra sign-in required' } else { 'to ' + ($ranges -join ', ') }))"
 $svc = @{ apiVersion = 'v1'; kind = 'Service'
     metadata = @{ name = 'risk-guard-console'; namespace = $ns; annotations = @{ 'service.beta.kubernetes.io/azure-dns-label-name' = $DnsLabel } }
     # Local keeps the client's address so nginx can enforce the allowlist. Port 80 must be reachable by Let's Encrypt,
@@ -151,7 +161,7 @@ if (-not $ip) { throw 'No public IP yet. Check: kubectl get svc risk-guard-conso
 if (-not $AcmeStaging) { Test-ConsoleCertificate }
 Write-Host ""
 Write-Host "Console:     https://$fqdn/   (public IP $ip)" -ForegroundColor Green
-Write-Host "Allowed:     $($ranges -join ', ')"
-if ($RequirePassword) { Write-Host "Credentials: $credFile   (username viewer; the password is in that file)" } else { Write-Host "Login:       none (read-only, allowlisted). Pass -RequirePassword to add one." }
+Write-Host "Allowed:     $(if ($signIn -and $ranges -contains '0.0.0.0/0') { 'any address (access is by Entra account)' } else { $ranges -join ', ' })"
+if ($signIn) { Write-Host "Login:       Microsoft Entra; only the accounts listed in the console's settings see anything." } elseif ($RequirePassword) { Write-Host "Credentials: $credFile   (username viewer; the password is in that file)" } else { Write-Host "Login:       none (read-only, allowlisted). Pass -RequirePassword to add one." }
 Write-Host "Certificate: Let's Encrypt, issued by the console-acme container (kubectl logs deploy/risk-guard -n $ns -c console-acme)"
 if ($AcmeStaging) { Write-Host "             STAGING certificates are not trusted by browsers; re-run without -AcmeStaging for a real one." -ForegroundColor Yellow }

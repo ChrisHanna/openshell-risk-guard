@@ -91,7 +91,22 @@ if ($live) {
 }
 
 Write-Step "Deploying $image"
-$manifest = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/risk-guard.yaml') -Raw).Replace('__IMAGE__', $image)
+# Console sign-in: set up once by 15-setup-console-signin.ps1. Without it the console is read-only and unauthenticated
+# (when 09-expose-console.ps1 publishes it without sign-in, it keeps its source-IP allowlist).
+$signIn = ''
+$entraTenant = Get-StateValue 'consoleEntraTenantId'
+$entraClient = Get-StateValue 'consoleEntraClientId'
+$entraAdmins = @(Get-StateValue 'consoleEntraAdminOids' @())
+if ($entraTenant -and $entraClient -and $entraAdmins.Count) {
+    $lines = @("            - --entra-tenant-id=$entraTenant", "            - --entra-client-id=$entraClient")
+    foreach ($oid in $entraAdmins) { $lines += "            - --entra-admin-oid=$oid" }
+    foreach ($oid in @(Get-StateValue 'consoleEntraViewerOids' @())) { $lines += "            - --entra-viewer-oid=$oid" }
+    $signIn = $lines -join "`n"
+    Write-Note "console sign-in: tenant $entraTenant, $($entraAdmins.Count) administrator(s)"
+} else {
+    Write-Note 'console sign-in is not configured (run 15-setup-console-signin.ps1)'
+}
+$manifest = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/risk-guard.yaml') -Raw).Replace('__IMAGE__', $image).Replace('__CONSOLE_SIGNIN_ARGS__', $signIn)
 Invoke-KubectlApply $manifest
 Invoke-Native kubectl @('rollout', 'restart', 'deploy/risk-guard', '-n', $ns) | Out-Null
 Invoke-Native kubectl @('rollout', 'status', 'deploy/risk-guard', '-n', $ns, '--timeout=300s') | Out-Null

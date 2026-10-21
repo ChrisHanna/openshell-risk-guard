@@ -49,6 +49,15 @@ async fn local_only(request: Request, next: Next) -> Response {
         header::HeaderName::from_static("x-frame-options"),
         "DENY".parse().unwrap(),
     );
+    // The page is one file with inline script and style, and it can hold a sign-in token. It may talk to itself and to
+    // Microsoft's sign-in service and nowhere else, so a script that got in still could not send the token elsewhere.
+    response.headers_mut().insert(
+        header::CONTENT_SECURITY_POLICY,
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; \
+         connect-src 'self' https://login.microsoftonline.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+            .parse()
+            .unwrap(),
+    );
     response
 }
 
@@ -162,6 +171,8 @@ pub(crate) fn router_with_controls(
         )
         .merge(crate::operator_controls::routes())
         .with_state(store)
+        // Layers wrap what was added before them, so the gate sits inside the Extension that carries its settings.
+        .layer(middleware::from_fn(crate::operator_controls::read_gate))
         .layer(Extension(controls))
         .layer(middleware::from_fn(local_only))
 }
@@ -174,6 +185,16 @@ pub async fn serve_with_operator_token(
     listen: SocketAddr,
     db: PathBuf,
     operator_token_file: Option<PathBuf>,
+) -> Result<()> {
+    serve_with_sign_in(listen, db, operator_token_file, None).await
+}
+
+/// Serve the console. With `entra` set, every data route needs a listed Entra account and edits are attributed to it.
+pub async fn serve_with_sign_in(
+    listen: SocketAddr,
+    db: PathBuf,
+    operator_token_file: Option<PathBuf>,
+    entra: Option<crate::entra_auth::EntraConfig>,
 ) -> Result<()> {
     if !listen.ip().is_loopback() {
         return Err(RiskGuardError::InvalidArgument(
@@ -194,6 +215,18 @@ pub async fn serve_with_operator_token(
             controls
         }
         None => OperatorControls::disabled(),
+    };
+    let controls = match entra {
+        Some(config) => {
+            tracing::info!(
+                tenant = %config.tenant_id,
+                admins = config.admins.len(),
+                viewers = config.viewers.len(),
+                "Entra sign-in required: the console shows nothing to anyone not on the list"
+            );
+            controls.with_entra(Arc::new(crate::entra_auth::EntraVerifier::new(config)?))
+        }
+        None => controls,
     };
     let listener = tokio::net::TcpListener::bind(listen)
         .await
@@ -238,6 +271,10 @@ mod tests {
             "enf-table",
             "enf-meter",
             "settings-fold",
+            // Sign-in: the screen anonymous visitors get instead of data.
+            "signin-gate",
+            "signin-btn",
+            "signout",
             // The editing controls must survive the redesign: they are what an unlocked operator uses.
             "cfg-form",
             "cfg-save",

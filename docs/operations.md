@@ -127,10 +127,12 @@ changes like policy changes, and re-import baselines whose resources change.
 Restrictions never expire or clear on their own. After reviewing the evidence,
 operators can clear a restriction via either the CLI or the web console:
 
-- **Web Console (`Guardrails` or `Detections` tab):** Unlock operator controls with
-  the local operator token, then use **Active restrictions & lock recovery -> Clear lock**
+- **Web Console (`Enforcement` or `Detections` tab):** Sign in as an administrator
+  (Microsoft Entra, see `docs/aks.md`), or for a local console unlock operator controls
+  with the local operator token, then use **Active restrictions & lock recovery -> Clear lock**
   (which calls authenticated `POST /api/agents/{id}/restrictions/clear` and records
-  the operator and reason in `restriction_clearances`).
+  the operator and reason in `restriction_clearances`; with Entra sign-in the operator
+  is the verified account, otherwise the fixed name `local-operator`).
 - **Operator CLI:**
 
 ```bash

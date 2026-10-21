@@ -32,7 +32,8 @@ prost-types = "0.14"
 rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "aws_lc_rs"] }
 regex = "1"
 reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls-native-roots-no-provider"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+rusqlite ={ version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yml = { package = "noyalib", version = "0.0.53", default-features = false, features = ["std", "compat-serde-yaml"] }
@@ -46,6 +47,10 @@ tonic-prost = "0.14"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1.10", features = ["v4"] }
+
+[dev-dependencies]
+# Test-only: generate throwaway RSA keys at run time so no private key is ever committed.
+aws-lc-rs = "1.18"
 
 [[bin]]
 name = "openshell-risk-guard"

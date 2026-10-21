@@ -6,8 +6,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::{DefaultBodyLimit, Extension, Path as AgentPath, State};
+use axum::extract::{DefaultBodyLimit, Extension, Path as AgentPath, Request, State};
 use axum::http::{HeaderMap, StatusCode, Uri, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -15,6 +16,7 @@ use hmac::{Hmac, Mac};
 use serde_json::json;
 use sha2::Sha256;
 
+use crate::entra_auth::{AuthError, EntraVerifier, Identity, Role};
 use crate::error::{Result, RiskGuardError};
 use crate::adaptive_controls::{AdaptiveOperation, AdaptiveUpdateResult};
 use crate::guardrails::{GuardrailsSaveResult, GuardrailsUpdate};
@@ -22,7 +24,10 @@ use crate::store::SqliteRiskStore;
 
 #[derive(Clone)]
 pub(crate) struct OperatorControls {
+    /// Break-glass local capability token. Absent unless the dashboard is started with `--operator-token-file`.
     verifier: Option<[u8; 32]>,
+    /// Entra sign-in. When present, reading evidence needs a listed account too.
+    entra: Option<Arc<EntraVerifier>>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -36,7 +41,49 @@ struct ClearRestrictionRequest {
 
 impl OperatorControls {
     pub(crate) fn disabled() -> Self {
-        Self { verifier: None }
+        Self { verifier: None, entra: None }
+    }
+
+    pub(crate) fn with_entra(mut self, entra: Arc<EntraVerifier>) -> Self {
+        self.entra = Some(entra);
+        self
+    }
+
+    fn enabled(&self) -> bool {
+        self.verifier.is_some() || self.entra.is_some()
+    }
+
+    /// Public identifiers the page needs to start a sign-in. None of these are secrets.
+    fn sign_in_info(&self) -> serde_json::Value {
+        match &self.entra {
+            Some(entra) => {
+                let config = entra.config();
+                json!({
+                    "provider": "entra",
+                    "tenant_id": config.tenant_id,
+                    "client_id": config.client_id,
+                    "scope": config.scope(),
+                })
+            }
+            None => serde_json::Value::Null,
+        }
+    }
+
+    /// Who is calling, for the reads and the writes alike. Only an Entra token counts here.
+    async fn identity(&self, headers: &HeaderMap) -> std::result::Result<Identity, Response> {
+        let Some(entra) = &self.entra else {
+            return Err(auth_failure(StatusCode::NOT_FOUND, "sign-in is not configured"));
+        };
+        let Some(token) = bearer_token(headers) else {
+            return Err(auth_failure(StatusCode::UNAUTHORIZED, "sign in to view this console"));
+        };
+        entra.verify(token).await.map_err(|error| match error {
+            AuthError::Invalid(_) => auth_failure(StatusCode::UNAUTHORIZED, "sign in again"),
+            AuthError::NotAuthorized => auth_failure(
+                StatusCode::FORBIDDEN,
+                "this account is not authorized to use this console",
+            ),
+        })
     }
 
     fn from_token(token: &str) -> Self {
@@ -45,6 +92,7 @@ impl OperatorControls {
         mac.update(b"risk-guard-operator-v1");
         Self {
             verifier: Some(mac.finalize().into_bytes().into()),
+            entra: None,
         }
     }
 
@@ -127,11 +175,27 @@ impl OperatorControls {
         Ok(Self::from_token(token))
     }
 
-    fn authorize(&self, headers: &HeaderMap) -> std::result::Result<(), Response> {
-        let Some(expected) = &self.verifier else {
+    /// Allow a change, and return who is making it for the audit record.
+    async fn authorize(&self, headers: &HeaderMap) -> std::result::Result<String, Response> {
+        // A signed-in account is the normal path: a bearer token (not a cookie), so no cross-site request can carry it.
+        if self.entra.is_some() && bearer_token(headers).is_some_and(|t| t.contains('.')) {
+            let who = self.identity(headers).await?;
+            return if who.role == Role::Admin {
+                Ok(who.actor())
+            } else {
+                Err(auth_failure(
+                    StatusCode::FORBIDDEN,
+                    "this account can read evidence but not change settings",
+                ))
+            };
+        }
+        if !self.enabled() {
             return Err((StatusCode::NOT_FOUND, Json(json!({
-                "error": "operator controls are disabled; start dashboard with --operator-token-file"
+                "error": "operator controls are disabled; sign-in is not configured"
             }))).into_response());
+        }
+        let Some(expected) = &self.verifier else {
+            return Err(auth_failure(StatusCode::UNAUTHORIZED, "sign in with an administrator account"));
         };
         let host = headers.get(header::HOST).and_then(|h| h.to_str().ok());
         let origin = headers
@@ -159,10 +223,7 @@ impl OperatorControls {
             )
                 .into_response());
         }
-        let provided = headers
-            .get(header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer "));
+        let provided = bearer_token(headers);
         let valid = provided.is_some_and(|token| {
             if token.len() != 64 {
                 return false;
@@ -181,8 +242,37 @@ impl OperatorControls {
             )
                 .into_response());
         }
-        Ok(())
+        Ok("local-operator".to_string())
     }
+}
+
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+}
+
+fn auth_failure(status: StatusCode, message: &str) -> Response {
+    (status, Json(json!({"error": message}))).into_response()
+}
+
+/// With sign-in configured, nothing but the page shell and the sign-in settings is served without a listed account.
+pub(crate) async fn read_gate(
+    Extension(controls): Extension<OperatorControls>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if controls.entra.is_some() {
+        let path = request.uri().path();
+        let open = matches!(path, "/" | "/api/operator/status");
+        if !open {
+            if let Err(response) = controls.identity(request.headers()).await {
+                return response;
+            }
+        }
+    }
+    next.run(request).await
 }
 
 #[cfg(unix)]
@@ -231,13 +321,21 @@ pub(crate) fn routes() -> Router<Arc<SqliteRiskStore>> {
     Router::new()
         .route("/api/operator/status", get(
             |Extension(controls): Extension<OperatorControls>| async move {
-                Json(json!({"enabled": controls.verifier.is_some()}))
+                Json(json!({"enabled": controls.enabled(), "sign_in": controls.sign_in_info()}))
+            },
+        ))
+        .route("/api/auth/whoami", get(
+            |Extension(controls): Extension<OperatorControls>, headers: HeaderMap| async move {
+                match controls.identity(&headers).await {
+                    Ok(who) => Json(json!({"name": who.display, "role": who.role.as_str()})).into_response(),
+                    Err(response) => response,
+                }
             },
         ))
         .route("/api/operator/verify", post(
             |Extension(controls): Extension<OperatorControls>, headers: HeaderMap| async move {
-                match controls.authorize(&headers) {
-                    Ok(()) => Json(json!({"authorized": true})).into_response(),
+                match controls.authorize(&headers).await {
+                    Ok(actor) => Json(json!({"authorized": true, "actor": actor})).into_response(),
                     Err(response) => response,
                 }
             },
@@ -257,13 +355,13 @@ pub(crate) fn routes() -> Router<Arc<SqliteRiskStore>> {
              AgentPath(agent): AgentPath<String>,
              headers: HeaderMap,
              payload: std::result::Result<Json<GuardrailsUpdate>, axum::extract::rejection::JsonRejection>| async move {
-                if let Err(response) = controls.authorize(&headers) { return response; }
+                let actor = match controls.authorize(&headers).await { Ok(actor) => actor, Err(response) => return response };
                 let update = match payload {
                     Ok(Json(update)) => update,
                     Err(error) => return (error.status(), Json(json!({"error": error.body_text()}))).into_response(),
                 };
                 match tokio::task::spawn_blocking(move || {
-                    store.save_agent_guardrails(&agent, &update, "local-operator", now_ms())
+                    store.save_agent_guardrails(&agent, &update, &actor, now_ms())
                 }).await {
                     Ok(Ok(GuardrailsSaveResult::Saved(view))) => Json(view).into_response(),
                     Ok(Ok(GuardrailsSaveResult::Conflict { current_revision })) => (
@@ -304,13 +402,13 @@ pub(crate) fn routes() -> Router<Arc<SqliteRiskStore>> {
              AgentPath(agent): AgentPath<String>,
              headers: HeaderMap,
              payload: std::result::Result<Json<AdaptiveOperation>, axum::extract::rejection::JsonRejection>| async move {
-                if let Err(response) = controls.authorize(&headers) { return response; }
+                let actor = match controls.authorize(&headers).await { Ok(actor) => actor, Err(response) => return response };
                 let operation = match payload {
                     Ok(Json(operation)) => operation,
                     Err(error) => return (error.status(), Json(json!({"error":error.body_text()}))).into_response(),
                 };
                 match tokio::task::spawn_blocking(move || {
-                    store.apply_adaptive_operation(&agent, &operation, "local-operator", now_ms())
+                    store.apply_adaptive_operation(&agent, &operation, &actor, now_ms())
                 }).await {
                     Ok(Ok(AdaptiveUpdateResult::Applied(view))) => Json(view).into_response(),
                     Ok(Ok(AdaptiveUpdateResult::Conflict(message))) =>
@@ -343,7 +441,7 @@ pub(crate) fn routes() -> Router<Arc<SqliteRiskStore>> {
              AgentPath(agent): AgentPath<String>,
              headers: HeaderMap,
              payload: std::result::Result<Json<ClearRestrictionRequest>, axum::extract::rejection::JsonRejection>| async move {
-                if let Err(response) = controls.authorize(&headers) { return response; }
+                let actor = match controls.authorize(&headers).await { Ok(actor) => actor, Err(response) => return response };
                 let req = match payload {
                     Ok(Json(req)) => req,
                     Err(error) => return (error.status(), Json(json!({"error": error.body_text()}))).into_response(),
@@ -355,7 +453,7 @@ pub(crate) fn routes() -> Router<Arc<SqliteRiskStore>> {
                             context_id: req.context_id.as_deref(),
                         },
                         &req.scope,
-                        "local-operator",
+                        &actor,
                         &req.reason,
                         now_ms(),
                     )
@@ -455,7 +553,7 @@ mod tests {
         };
         let body = serde_json::to_string(&update).unwrap();
         let (_, status) = request(&origin, "GET", "/api/operator/status", None, None, "").await;
-        assert_eq!(status, json!({"enabled":true}));
+        assert_eq!(status, json!({"enabled":true,"sign_in":null}));
         assert_eq!(
             request(&origin, "PUT", endpoint, Some(&origin), None, &body)
                 .await
@@ -701,6 +799,103 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[tokio::test]
+    async fn with_sign_in_nobody_sees_anything_until_a_listed_account_signs_in() {
+        use crate::entra_auth::tests::{ADMIN, STRANGER, VIEWER, test_token, test_verifier};
+        let store = store();
+        let controls = OperatorControls::disabled().with_entra(test_verifier());
+        let (origin, server) = start(controls, Arc::clone(&store)).await;
+
+        // The page shell and the sign-in settings are all that anonymous callers can reach.
+        let (code, status) = request(&origin, "GET", "/api/operator/status", None, None, "").await;
+        assert_eq!(code, StatusCode::OK);
+        assert_eq!(status["enabled"], true);
+        assert_eq!(status["sign_in"]["provider"], "entra");
+        assert!(status["sign_in"]["client_id"].is_string());
+        assert!(!status.to_string().contains("secret"));
+
+        // Every data route says no without a token, with a token that is junk, and with an unlisted real account.
+        let stranger = test_token(STRANGER);
+        for path in [
+            "/api/state",
+            "/api/agents/agent",
+            "/api/agents/agent/guardrails",
+            "/api/agents/agent/guardrails/policy",
+            "/api/agents/agent/adaptive",
+            "/api/agents/agent/restrictions",
+            "/api/sandboxes/x",
+            "/api/auth/whoami",
+        ] {
+            let (anonymous, body) = request(&origin, "GET", path, None, None, "").await;
+            assert_eq!(anonymous, StatusCode::UNAUTHORIZED, "{path} anonymous");
+            assert!(body["error"].is_string());
+            let (junk, _) = request(&origin, "GET", path, None, Some("not.a.token"), "").await;
+            assert_eq!(junk, StatusCode::UNAUTHORIZED, "{path} junk token");
+            let (unlisted, _) = request(&origin, "GET", path, None, Some(&stranger), "").await;
+            assert_eq!(unlisted, StatusCode::FORBIDDEN, "{path} unlisted account");
+        }
+
+        // A viewer can read but not change anything.
+        let viewer = test_token(VIEWER);
+        let (read, who) = request(&origin, "GET", "/api/auth/whoami", None, Some(&viewer), "").await;
+        assert_eq!(read, StatusCode::OK);
+        assert_eq!(who["role"], "viewer");
+        assert_eq!(request(&origin, "GET", "/api/agents/agent/guardrails", None, Some(&viewer), "").await.0, StatusCode::OK);
+        let body = r#"{"scope":"agent","reason":"x"}"#;
+        let (denied, _) = request(&origin, "POST", "/api/agents/agent/restrictions/clear", None, Some(&viewer), body).await;
+        assert_eq!(denied, StatusCode::FORBIDDEN, "a viewer must not clear locks");
+
+        // The admin reads, and a change is recorded against the verified identity rather than a fixed name.
+        let admin = test_token(ADMIN);
+        let (_, who) = request(&origin, "GET", "/api/auth/whoami", None, Some(&admin), "").await;
+        assert_eq!(who["role"], "admin");
+        let update = GuardrailsUpdate {
+            expected_revision: 0,
+            settings: AgentGuardrails::from_baseline(
+                &build_standard_corpus().default_baseline,
+                EnforcementMode::Observe,
+                None,
+            ),
+        };
+        let (saved, view) = request(
+            &origin,
+            "PUT",
+            "/api/agents/agent/guardrails",
+            None,
+            Some(&admin),
+            &serde_json::to_string(&update).unwrap(),
+        )
+        .await;
+        assert_eq!(saved, StatusCode::OK);
+        let by = view["history"][0]["updated_by"].as_str().unwrap().to_string();
+        assert!(by.contains(&format!("entra:{ADMIN}")), "audit names the verified object ID: {by}");
+        assert_ne!(by, "local-operator");
+
+        // A viewer's identical change is refused and leaves the revision alone.
+        let (refused, _) = request(
+            &origin,
+            "PUT",
+            "/api/agents/agent/guardrails",
+            None,
+            Some(&viewer),
+            &serde_json::to_string(&update).unwrap(),
+        )
+        .await;
+        assert_eq!(refused, StatusCode::FORBIDDEN);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn the_break_glass_token_cannot_read_when_sign_in_is_required() {
+        use crate::entra_auth::tests::test_verifier;
+        let token = "e".repeat(64);
+        let controls = OperatorControls::from_token(&token).with_entra(test_verifier());
+        let (origin, server) = start(controls, store()).await;
+        let (code, _) = request(&origin, "GET", "/api/state", None, Some(&token), "").await;
+        assert_eq!(code, StatusCode::UNAUTHORIZED, "the local token is for writes only, and never opens the data");
+        server.abort();
+    }
+
     #[test]
     fn private_operator_token_is_persistent_and_not_world_readable() {
         let dir = tempfile::tempdir().unwrap();
