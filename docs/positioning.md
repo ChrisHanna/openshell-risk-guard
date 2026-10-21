@@ -3,39 +3,53 @@ SPDX-FileCopyrightText: Copyright (c) 2026 Christopher Hanna.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Where Risk Guard fits: OpenShell, NVIDIA Sentry, and clouds without the hardware
+# Where Risk Guard fits: OpenShell, NVIDIA Sentry, and what this project is for
 
-This page says what Risk Guard is for, what it is not, and how it relates to NVIDIA's hardware-based approach. Statements about
-NVIDIA and Red Hat products come from their published material (linked at the end), are vendor claims, and have not been
-verified by this project.
+Statements about NVIDIA and Red Hat products on this page come from their published material (linked at the end). They are vendor
+claims and have not been verified by this project.
 
-## The recommended shape, and the gap on Azure
+## What this project is
 
-NVIDIA's recent releases (the Open Agent Safety Platform, announced 28 September 2026) describe a layered way to govern AI agents:
+Risk Guard was built to learn how to integrate with OpenShell: its extension points (`SupervisorMiddleware` and `GatewayInterceptor`),
+its identity and policy model, and what a request-level behavioral layer can add on top of them. It is a **reference integration and
+research prototype**. It is not a threat-protection product, its detection numbers come from synthetic fixtures, and it has had no
+independent security review.
 
-1. **OpenShell**, the open-source runtime: a sandbox per agent, policy for files, network and credentials, a supervisor that
-   checks outbound requests and holds credentials, and a prover that keeps policies inside a ceiling.
-2. **NVIDIA Sentry**, an out-of-band layer on BlueField-4 DPUs built on DOCA. As described, it sits in a separate hardware
-   trust domain and combines a layer-4 firewall, a layer-7 proxy (DOCA Tower) with Open Policy Agent rules on the requested
-   API and action, workload identity (SPIFFE/SPIRE), behavioral checks against a predefined profile, and quarantine that
-   does not depend on the agent or the host. **DOCA Argus** supplies host runtime evidence by reading host memory from a
-   BlueField DPU. Red Hat's design runs this on OpenShift with BlueField-3 DPUs.
+## The recommended approach for protecting agents
 
-That combination is the recommended approach where the hardware exists. NVIDIA's own deep dive lists Sentry as planned for early
-next year, with some DOCA components available now for experimentation, and it needs BlueField hardware.
+For threat-level protection of AI agents, the recommended approach is **OpenShell plus NVIDIA Sentry**. NVIDIA's recent releases (the
+Open Agent Safety Platform, announced 28 September 2026) describe it this way:
 
-**This project's reference deployment runs on Azure Kubernetes Service, where we have no access to that hardware.** So Risk
-Guard is a software layer for the same job: task-aware, behavior-aware enforcement and an evidence trail for OpenShell
-sandboxes. It is built on OpenShell's own extension points (`SupervisorMiddleware` and `GatewayInterceptor`), needs no
-special hardware, and runs on any Kubernetes cluster that runs OpenShell. It is not equivalent to the hardware layer, and it does
-not claim to be.
+1. **OpenShell**, the open-source runtime: a sandbox per agent, policy for files, network and credentials, a supervisor that checks
+   outbound requests and holds credentials, and a prover that keeps policies inside a ceiling.
+2. **NVIDIA Sentry**, an out-of-band layer on BlueField-4 DPUs built on DOCA. As described, it sits in a separate hardware trust domain
+   and combines a layer-4 firewall, a layer-7 proxy (DOCA Tower) with Open Policy Agent rules on the requested API and action, workload
+   identity (SPIFFE/SPIRE), behavioral checks against a predefined profile, and quarantine that does not depend on the agent or the
+   host. **DOCA Argus** supplies host runtime evidence by reading host memory from a BlueField DPU. Red Hat's design runs this on
+   OpenShift with BlueField-3 DPUs.
+
+The reason is isolation: the hardware layer keeps observing and enforcing when the host or the supervisor is compromised, which software
+running next to the workload cannot do. NVIDIA's own deep dive lists Sentry as planned for early next year, with some DOCA components
+available now for experimentation.
+
+## What Risk Guard is useful for alongside it
+
+- **Visibility.** Every decision is recorded with its reason: what was asked, which workload asked, what its task allows, what it
+  normally does, and what happened. The console shows the fleet, the evidence behind each block, and audited recovery.
+- **Improving policies.** Risk Guard observes allowed traffic, learns each workload's normal envelope in shadow mode, and synthesizes
+  least-privilege policy candidates with a prover-checked containment proof, so a team can start broad and tighten safely.
+- **A software stand-in where the hardware is not available.** This project's reference deployment runs on Azure Kubernetes Service,
+  where we have no access to BlueField. There, Risk Guard narrows OpenShell's answer in software. That is useful for development,
+  demos and learning, and it is not a substitute for threat-level protection.
+- **Possible input to the hardware layer.** Decision records and per-workload baselines are the kind of context a policy or telemetry
+  pipeline can use. This has not been built or discussed with NVIDIA.
 
 ## What each layer gives you
 
 | | OpenShell | Risk Guard (this project) | NVIDIA Sentry / DOCA Argus (as described) |
 |---|---|---|---|
 | Runs on | Laptops, VMs, any Kubernetes | Any Kubernetes that runs OpenShell; tested on AKS with Kata | BlueField DPUs (Sentry: BlueField-4; Argus: BlueField-3 or later) |
-| Available | Now (open source) | Now | Sentry planned; some DOCA parts available |
+| Available | Now (open source) | Now (prototype) | Sentry planned; some DOCA parts available |
 | Static policy, credentials, filesystem | Yes | No: it only narrows what OpenShell allows | Enforces OpenShell policy in hardware |
 | Is this request reasonable for this agent's job? | No | Yes: task profile, learned baseline, reason codes, restrictions that follow the workload across sandboxes | Claimed: Rego policy and drift against a predefined profile; details not specified |
 | Request content (PII, secrets, MCP and agent-to-agent traffic) | Supervisor checks requests | No: scores request metadata, never uses bodies or headers | Claimed for the layer-7 proxy |
@@ -46,30 +60,29 @@ not claim to be.
 
 ## What Risk Guard assumes
 
-Risk Guard's checks run in software next to the workload they judge. It therefore assumes an **uncompromised OpenShell
-supervisor and node**. An agent that escapes its sandbox, or compromises the supervisor, could skip a middleware call or feed it
-false data. Kata Containers makes that harder (the agent must escape its guest kernel and the hypervisor), but it does not remove
-the possibility. What the hardware layer adds is the case where the host itself is hostile, and Risk Guard does not cover it.
+Its checks run in software next to the workload they judge. It therefore assumes an **uncompromised OpenShell supervisor and node**. An
+agent that escapes its sandbox, or compromises the supervisor, could skip a middleware call or feed it false data. Kata Containers makes
+that harder (the agent must escape its guest kernel and the hypervisor) but does not remove the possibility. The hardware layer exists for
+the case where the host itself is hostile, and Risk Guard does not cover it.
 
-## Closing the gap in software on Azure
+## If you must run without the hardware (ideas, not built)
 
-Without DPUs, the same architectural idea (enforcement and evidence in a trust domain the agent cannot reach) can be approximated
-with Azure-native parts. These are weaker than hardware isolation and are described as a software analogue, not parity.
+Without DPUs, the same architectural idea (enforcement and evidence in a trust domain the agent cannot reach) can be approximated, more
+weakly, with Azure-native parts:
 
-1. **Separate trust domains.** Gateway, Risk Guard and its evidence database run on their own node pool, apart from the sandbox
-   nodes, with network policies and separate identities between them.
-2. **Network enforcement outside the node.** Sandbox egress is forced through a proxy outside the sandbox node that the node and
-   the agent cannot reconfigure. A compromised supervisor then still cannot reach destinations the proxy does not allow. This is a
-   second, destination-level enforcement point, in addition to the supervisor middleware, not a replacement for it.
-3. **Host signals.** A software sensor such as Defender for Containers, Falco or Tetragon is the weaker analogue of Argus. It runs on
-   the host, so a kernel-level compromise can blind it.
+1. **Separate trust domains:** gateway, Risk Guard and its evidence database on their own node pool, apart from the sandbox nodes, with
+   network policies and separate identities between them.
+2. **Egress outside the node:** sandbox traffic forced through a proxy the node and the agent cannot reconfigure, as a second,
+   destination-level check beside the supervisor middleware.
+3. **Host signals:** a software sensor such as Defender for Containers, Falco or Tetragon as the weaker analogue of Argus. It runs on the
+   host, so a kernel-level compromise can blind it.
 
-Status: these are planned. See [docs/aks.md](aks.md) for what is deployed today.
+These reduce risk. They do not provide the guarantee of a separate hardware domain.
 
 ## One-line positioning
 
-Risk Guard is the request-level, task-aware enforcement layer for OpenShell, available today on any cluster. It complements OpenShell's
-policy and NVIDIA's hardware layer. It does not replace either, and where BlueField hardware exists the layers stack.
+For threat-level protection of agents, use OpenShell with NVIDIA Sentry. Risk Guard is a reference integration that shows what
+request-level evidence can add: visibility into why requests are allowed or blocked, and data for tightening policies.
 
 ## Sources
 

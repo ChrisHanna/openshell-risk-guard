@@ -12,9 +12,10 @@ The scripts live in [`scripts/aks/`](../scripts/aks) and the manifests in [`depl
 
 ## What you get
 
-NVIDIA's recommended shape for governing agents is OpenShell plus its hardware-based Sentry layer. This environment runs on Azure
-without that hardware, so Risk Guard is the software layer for the same job; [Where Risk Guard fits](positioning.md) explains the
-difference, what it assumes, and the planned software analogue of the hardware separation.
+This is a reference deployment for learning how to integrate with OpenShell. For threat-level protection of agents, the recommended
+approach is OpenShell plus NVIDIA Sentry, which needs BlueField hardware that Azure does not give us. Here Risk Guard adds visibility
+and policy-improvement data and acts as a software stand-in; [Where Risk Guard fits](positioning.md) explains what it assumes and what
+the hardware layer adds.
 
 ```mermaid
 flowchart LR

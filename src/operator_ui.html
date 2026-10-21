@@ -1673,25 +1673,17 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
       </section>
 
       <section class="panel" id="how-positioning" style="margin-top:16px">
-        <div class="panel-header"><div class="panel-title-group"><h2>Where this fits with NVIDIA Sentry</h2><p>NVIDIA's own material, summarized. These are vendor claims this project has not verified.</p></div></div>
+        <div class="panel-header"><div class="panel-title-group"><h2>What this is, and where NVIDIA Sentry fits</h2><p>NVIDIA's own material, summarized. These are vendor claims this project has not verified.</p></div></div>
         <div class="panel-body how-cards">
           <div class="how-card">
-            <h3>The recommended shape</h3>
-            <p class="plain">NVIDIA's recent releases describe OpenShell as the sandbox runtime and policy layer, with <strong>NVIDIA Sentry</strong> beside it: an out-of-band layer on BlueField-4 hardware that inspects requests, checks behavior against a profile, and can quarantine an agent without the host's cooperation. DOCA Argus adds host-level evidence from a BlueField DPU. Where that hardware exists, this is the stack to use.</p>
+            <h3>For threat-level protection</h3>
+            <p class="plain">The recommended approach is <strong>OpenShell plus NVIDIA Sentry</strong>: an out-of-band layer on BlueField-4 hardware that inspects requests, checks behavior against a profile, and can quarantine an agent without the host's cooperation. DOCA Argus adds host-level evidence from a BlueField DPU.</p>
             <p class="hood">NVIDIA lists Sentry as planned, with some DOCA components available now for experimentation.</p>
           </div>
           <div class="how-card">
-            <h3>What this deployment does instead</h3>
-            <p class="plain">This environment runs on Azure, where there is no access to that hardware. Risk Guard is a <strong>software layer for the same job</strong>: task-aware, behavior-aware enforcement and evidence for OpenShell sandboxes. It runs on any cluster that runs OpenShell, today.</p>
-            <p class="hood">It is not equivalent. Its checks run next to the workload, so it assumes an uncompromised supervisor and node. The hardware layer keeps working if the host is compromised; Risk Guard does not. Where BlueField exists, the layers stack.</p>
-          </div>
-          <div class="how-card">
-            <h3>Closing the gap in software (planned)</h3>
-            <ul class="how-list">
-              <li><strong>Separate trust domains:</strong> gateway, Risk Guard and its evidence on their own nodes, apart from the sandboxes.</li>
-              <li><strong>Egress outside the node:</strong> a proxy the sandbox node cannot reconfigure, as a second, destination-level check.</li>
-              <li><strong>Host signals:</strong> a software sensor as the weaker analogue of Argus.</li>
-            </ul>
+            <h3>What this project is</h3>
+            <p class="plain">Risk Guard was built to learn how to integrate with OpenShell. It adds <strong>visibility</strong> (why each request was allowed or blocked, per workload) and <strong>data for improving policies</strong> (learned behavior and tighter policy candidates). On Azure there is no access to BlueField, so it also acts as a software stand-in.</p>
+            <p class="hood">It is a prototype, not a threat-protection product. Its checks run next to the workload, so it assumes an uncompromised supervisor and node. The hardware layer keeps working if the host is compromised; Risk Guard does not.</p>
           </div>
         </div>
       </section>

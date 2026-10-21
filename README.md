@@ -53,15 +53,15 @@ extension points (`SupervisorMiddleware` before credentials are injected,
 `GatewayInterceptor` on policy changes) and keeps its own SQLite state. It never
 proxies traffic, stores secrets, or writes OpenShell policy.
 
-## Where this fits: OpenShell, NVIDIA Sentry, and clouds without the hardware
+## Where this fits: OpenShell and NVIDIA Sentry
 
-NVIDIA's recent releases (the Open Agent Safety Platform) describe OpenShell as the sandbox runtime and policy layer, with
-**NVIDIA Sentry**, an out-of-band monitoring and enforcement layer on BlueField-4 hardware, beside it. That is the recommended shape
-where the hardware exists, and NVIDIA lists Sentry as planned. **On Azure we have no access to that hardware, so Risk Guard is a
-software layer for the same job**: task-aware, behavior-aware enforcement and evidence for OpenShell sandboxes, built on OpenShell's own
-extension points and runnable on any cluster. It is not equivalent: it assumes an uncompromised supervisor and node, which
-the hardware layer does not. See [Where Risk Guard fits](docs/positioning.md) for the comparison, what it assumes, and the planned
-software analogue of the hardware separation.
+Risk Guard is a **reference integration built to learn how to integrate with OpenShell**'s extension points and to show what
+request-level evidence can add. It is a prototype, not a threat-protection product. **For threat-level protection of agents, the
+recommended approach is OpenShell plus NVIDIA Sentry**, NVIDIA's out-of-band layer on BlueField-4 hardware (NVIDIA lists Sentry as
+planned). Risk Guard is useful alongside it for visibility (why a request was allowed or blocked, per workload) and for improving
+policies (learned behavior and prover-checked tighter policy candidates), and as a software stand-in where the hardware is not
+available, as on this project's Azure deployment. Its checks run next to the workload, so it assumes an uncompromised supervisor and
+node, which the hardware layer does not. See [Where Risk Guard fits](docs/positioning.md).
 
 ## Why Risk Guard for OpenShell Users: Closing the Authorized-Endpoint Gap
 
@@ -177,7 +177,7 @@ cargo run -- hardening-report \
 |---|---|
 | [Operating Risk Guard](docs/operations.md) | TLS and secrets, bootstrap order, protecting a new API, recovering from a false positive, metrics, rollout |
 | [Security model](docs/security-model.md) | How the sidecar sits next to OpenShell, workload ID continuity, trust boundaries, measured release gates |
-| [Where Risk Guard fits](docs/positioning.md) | How it relates to OpenShell and NVIDIA Sentry and DOCA Argus, what it assumes, and what the hardware layer adds |
+| [Where Risk Guard fits](docs/positioning.md) | What this project is for, why OpenShell plus NVIDIA Sentry is the recommended approach for threat-level protection, and what Risk Guard adds beside it |
 | [Running on AKS](docs/aks.md) | Deploy OpenShell and Risk Guard on Azure Kubernetes Service with scripts: Kata VM sandboxes, Key Vault credentials, Entra agent identities, a protected public console, and what a real cluster showed |
 | [Demo and local deployment](docs/demo.md) | Running the local demo stack and its traffic generator |
 | [Requirements](docs/requirements.md), [Design](docs/design.md), [Anomaly detection](docs/anomaly-detection.md) | Specifications and the scoring model |
