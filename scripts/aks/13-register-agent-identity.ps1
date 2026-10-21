@@ -72,6 +72,7 @@ if (-not $SkipRiskGuardUpdate) {
     Set-Content -Path $patchFile -Encoding utf8 -Value $patch
     try { Invoke-Native kubectl @('patch', 'deploy/risk-guard', '-n', $ns, '--patch-file', $patchFile) | Out-Null } finally { Remove-Item -Force $patchFile -ErrorAction SilentlyContinue }
     Invoke-Native kubectl @('rollout', 'status', 'deploy/risk-guard', '-n', $ns, '--timeout=300s') | Out-Null
+    Test-ConsoleCertificate
 }
 
 Write-Host ""

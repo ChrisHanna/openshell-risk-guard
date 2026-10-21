@@ -147,6 +147,8 @@ for ($i = 0; $i -lt 40 -and -not $ip; $i++) {
     if (-not $ip) { Start-Sleep -Seconds 6 }
 }
 if (-not $ip) { throw 'No public IP yet. Check: kubectl get svc risk-guard-console -n openshell' }
+# Staging certificates are never browser-trusted, so only a real issuance is held to the trust check.
+if (-not $AcmeStaging) { Test-ConsoleCertificate }
 Write-Host ""
 Write-Host "Console:     https://$fqdn/   (public IP $ip)" -ForegroundColor Green
 Write-Host "Allowed:     $($ranges -join ', ')"

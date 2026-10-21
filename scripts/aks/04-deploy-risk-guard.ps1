@@ -98,4 +98,5 @@ Invoke-Native kubectl @('rollout', 'status', 'deploy/risk-guard', '-n', $ns, '--
 kubectl get pods -n $ns -l app.kubernetes.io/name=risk-guard
 kubectl logs -n $ns deploy/risk-guard -c risk-guard --tail=6
 Save-State @{ riskGuardImage = $image }
+Test-ConsoleCertificate
 Write-Host "`nDone. Next: scripts/aks/05-register-extension.ps1" -ForegroundColor Green

@@ -164,3 +164,39 @@ function Connect-AcrDocker([string]$Server) {
     } finally { if (Test-Path $tokenFile) { Remove-Item -Force $tokenFile } }
     if ($LASTEXITCODE -ne 0) { throw 'docker login failed' }
 }
+
+# Wait until the public console presents a certificate a client trusts, and fail loudly if it never does. Every script
+# that restarts the Risk Guard pod (04, 09, 13) runs this, so an untrusted certificate is caught at deploy time instead of
+# in someone's browser. Does nothing until the console has been published (09).
+function Test-ConsoleCertificate {
+    param([int]$TimeoutSeconds = 360)
+    $fqdn = Get-StateValue 'consoleHost'
+    if (-not $fqdn) { return }
+    $ns = Get-StateValue 'namespace' 'openshell'
+    Write-Step "Checking that $fqdn presents a trusted certificate"
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $seen = ''
+    while ($true) {
+        # curl verifies against the system trust store; ssl_verify_result is 0 only for a trusted chain.
+        $out = (& curl.exe -sS -m 15 -o NUL -w '%{http_code} %{ssl_verify_result}' "https://$fqdn/" 2>&1 | Out-String).Trim()
+        $issuer = ''
+        try {
+            $tcp = New-Object Net.Sockets.TcpClient($fqdn, 443)
+            $ssl = New-Object Net.Security.SslStream($tcp.GetStream(), $false, ([Net.Security.RemoteCertificateValidationCallback]{ $true }))
+            $ssl.AuthenticateAsClient($fqdn)
+            $issuer = (New-Object Security.Cryptography.X509Certificates.X509Certificate2($ssl.RemoteCertificate)).Issuer
+            $tcp.Close()
+        } catch { }
+        if ($out -match '^\d{3} 0$' -and $issuer -match "Let's Encrypt") {
+            Write-Note "trusted: $issuer"
+            return
+        }
+        $now = if ($issuer) { "issuer $issuer, curl said '$out'" } else { "no certificate yet ($out)" }
+        if ($now -ne $seen) { Write-Note "waiting: $now"; $seen = $now }
+        if ((Get-Date) -gt $deadline) {
+            $log = (& kubectl logs deploy/risk-guard -n $ns -c console-acme --tail=6 2>&1 | Out-String)
+            throw "The console at https://$fqdn/ is not presenting a trusted certificate after $TimeoutSeconds seconds ($now).`nCertificate client log:`n$log`nPort 80 must be reachable for Let's Encrypt; see docs/aks.md."
+        }
+        Start-Sleep -Seconds 6
+    }
+}

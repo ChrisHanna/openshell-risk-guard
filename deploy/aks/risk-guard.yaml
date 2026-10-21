@@ -47,6 +47,9 @@ spec:
       labels:
         app.kubernetes.io/name: risk-guard
     spec:
+      # With one replica and Recreate, the console is down from the moment the old pod is told to stop until the new one is
+      # ready, so keep the old pod's shutdown short instead of waiting out the 30 second default.
+      terminationGracePeriodSeconds: 8
       securityContext:
         fsGroup: 65532
       initContainers:

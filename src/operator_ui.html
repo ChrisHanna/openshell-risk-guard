@@ -663,14 +663,16 @@ pre {
   cursor: pointer;
 }
 .minimap-controls button:hover { background: var(--bg-hover); border-radius: 4px; }
-.map-scroll { overflow: auto; max-height: 640px; }
+/* By default the whole graph is scaled to fit the screen, so nothing needs scrolling. Zooming by hand turns that off. */
+.map-scroll { overflow: auto; }
+.map-scroll.manual { max-height: 640px; }
 .map-caption { padding: 12px 16px; margin: 0; color: var(--text-muted); font-size: 12px; border-top: 1px solid var(--border); }
 #service-map-svg {
   width: 100%;
-  min-width: 880px;
   height: 480px;
   display: block;
 }
+.map-scroll.manual #service-map-svg { min-width: 880px; }
 .svg-node-group { cursor: pointer; }
 .svg-node-group:hover .svg-node-box {
   stroke: var(--focus);
@@ -1418,7 +1420,7 @@ tbody tr:focus-within { background: var(--bg-elevated); }
                   <div class="minimap-viewport-box"></div>
                 </div>
                 <div class="minimap-controls">
-                  <button type="button" id="zoom-reset" aria-label="Reset map view" title="Reset view">Reset</button>
+                  <button type="button" id="zoom-reset" aria-label="Fit the whole map in view" title="Fit the whole map in view">Fit</button>
                   <button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out">&minus;</button>
                   <span id="zoom-level-lbl">100%</span>
                   <button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
@@ -2027,7 +2029,9 @@ let showParticles = false;
 let replayTimer = null;
 let lastSeenDecisionIds = null;
 let mapZoom = 1.0;
+let mapAutoFit = true;   // scale the whole graph to the screen; the zoom buttons switch this off, Fit switches it back on
 let mapLayoutWidth = 0;
+let mapLayoutHeight = 0;
 let activeGraphNodeFilter = "";
 let activeTopView = "fleet";
 let activeAgentTab = "map";
@@ -3858,19 +3862,33 @@ function renderServiceMapGraph(data, periodDecisions, periodRuns, fsSummary) {
   const networkGroups = selectedDomain === "filesystem" ? [] : Array.from(groupNetworkTargets(periodDecisions).values());
   const showsFilesystem = selectedDomain !== "network" && fsSummary.available;
   const rowCount = networkGroups.length + (showsFilesystem ? 2 : 0);
-  const W = Math.max(880, svg.parentElement.clientWidth);
+  const holder = svg.parentElement;
+  holder.classList.toggle("manual", !mapAutoFit);
+  const W = Math.max(880, holder.clientWidth);
   mapLayoutWidth = W;
-  const H = Math.max(480, rowCount * 100 + 80);
+  // Rows get as much room as the screen allows (never less than 56px, so labels stay legible). In auto-fit mode the
+  // finished graph is then scaled to the available height, so every route and sandbox is visible without scrolling.
+  const availH = Math.max(480, Math.min(1000, window.innerHeight - 260));
+  mapLayoutHeight = availH;
+  const rowSpacing = rowCount <= 1 ? 100 : Math.max(56, Math.min(100, (availH - 170) / (rowCount - 1)));
+  const H = Math.max(480, Math.round(170 + Math.max(0, rowCount - 1) * rowSpacing));
   const columns = [W * 0.10, W * 0.34, W * 0.61, W * 0.87];
   const rowY = index => rowCount <= 1 ? H / 2 : 100 + index * (H - 170) / (rowCount - 1);
-  svg.style.height = `${H}px`;
   tooltip.hidden = true;
-  const zoomW = Math.round(W / mapZoom);
-  const zoomH = Math.round(H / mapZoom);
-  const offsetX = Math.round((W - zoomW) / 2);
-  const offsetY = Math.round((H - zoomH) / 2);
-  svg.setAttribute("viewBox", `${offsetX} ${offsetY} ${zoomW} ${zoomH}`);
-  $("zoom-level-lbl").textContent = `${Math.round(mapZoom * 100)}%`;
+  if (mapAutoFit) {
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    const widthScale = Math.min(1, (holder.clientWidth || W) / W);
+    svg.style.height = `${Math.round(Math.min(H * widthScale, availH))}px`;
+    $("zoom-level-lbl").textContent = "Fit";
+  } else {
+    svg.style.height = `${H}px`;
+    const zoomW = Math.round(W / mapZoom);
+    const zoomH = Math.round(H / mapZoom);
+    const offsetX = Math.round((W - zoomW) / 2);
+    const offsetY = Math.round((H - zoomH) / 2);
+    svg.setAttribute("viewBox", `${offsetX} ${offsetY} ${zoomW} ${zoomH}`);
+    $("zoom-level-lbl").textContent = `${Math.round(mapZoom * 100)}%`;
+  }
 
   const colHeaders = [
     { x: columns[0], text: "Workload" },
@@ -3947,7 +3965,12 @@ function renderServiceMapGraph(data, periodDecisions, periodRuns, fsSummary) {
     sbMap.set(sbx, entry);
   }
 
-  const sbList = Array.from(sbMap.values()).slice(0, 5);
+  // Busiest sandboxes first, so idle ones (no requests in this window) never push active ones off the map.
+  const sbList = Array.from(sbMap.values())
+    .map((sb, order) => ({ sb, order }))
+    .sort((a, b) => (b.sb.allow + b.sb.deny) - (a.sb.allow + a.sb.deny) || a.order - b.order)
+    .map(item => item.sb)
+    .slice(0, Math.max(1, Math.min(8, Math.floor((H - 170) / 56) + 1)));   // keep at least 56px between nodes
   const sbNodes = sbList.map((sb, i) => {
     const count = sbList.length;
     const yStart = 100;
@@ -4315,7 +4338,8 @@ function renderServiceMapGraph(data, periodDecisions, periodRuns, fsSummary) {
     dot.style.top = `${n.y / H * 80}%`;
     mini.append(dot);
   }
-  $("map-coverage-note").textContent = `Showing ${sbNodes.length} of ${sbMap.size} sandboxes and ${networkGroups.length} network routes in the loaded window. Gate counts cover all loaded decisions. Filesystem links show saved policy, not file requests.`;
+  const idleSandboxes = Array.from(sbMap.values()).filter(sb => sb.allow + sb.deny === 0).length;
+  $("map-coverage-note").textContent = `Showing the ${sbNodes.length} busiest of ${sbMap.size} sandboxes (${idleSandboxes} made no requests in this window) and all ${networkGroups.length} network routes in the loaded window. Gate counts cover all loaded decisions. Filesystem links show saved policy, not file requests.`;
 }
 
 function renderReachMap(data, periodDecisions, fsSummary) {
@@ -5595,17 +5619,28 @@ $("view-filtered-detections-btn").addEventListener("click", () => {
   switchAgentSubTab("detections");
   $("tab-detections").focus();
 });
+// Zooming by hand leaves auto-fit; Fit returns to showing the whole graph.
 $("zoom-in").addEventListener("click", () => {
+  mapAutoFit = false;
   mapZoom = Math.min(1.5, Number((mapZoom + 0.1).toFixed(2)));
   renderAllForCurrentAgent();
 });
 $("zoom-out").addEventListener("click", () => {
-  mapZoom = Math.max(0.7, Number((mapZoom - 0.1).toFixed(2)));
+  mapAutoFit = false;
+  mapZoom = Math.max(0.4, Number((mapZoom - 0.1).toFixed(2)));
   renderAllForCurrentAgent();
 });
 $("zoom-reset").addEventListener("click", () => {
+  mapAutoFit = true;
   mapZoom = 1.0;
   renderAllForCurrentAgent();
+});
+let mapResizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(mapResizeTimer);
+  mapResizeTimer = setTimeout(() => {
+    if (activeTopView === "agent" && activeAgentTab === "map" && currentAgentData && mapAutoFit) renderAllForCurrentAgent();
+  }, 150);
 });
 $("refresh").onclick = refresh;
 $("auto-refresh").addEventListener("change", e => {
