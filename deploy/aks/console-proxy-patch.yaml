@@ -4,6 +4,11 @@
 # __PLACEHOLDERS__ and creates the ConfigMaps, Secrets and volume claim mounted below.
 spec:
   template:
+    metadata:
+      annotations:
+        # Changes whenever the proxy configuration or the certificate script changes, so the pod restarts and nginx
+        # reads the new ConfigMap (a ConfigMap edit alone never reloads nginx). Filled in by 09-expose-console.ps1.
+        openshell-risk-guard/console-proxy-config-sha256: "__PROXY_CONFIG_SHA__"
     spec:
       containers:
         - name: console-proxy

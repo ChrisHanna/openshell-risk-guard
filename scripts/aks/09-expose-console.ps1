@@ -134,13 +134,16 @@ try {
 Invoke-KubectlApply (@{ apiVersion = 'v1'; kind = 'PersistentVolumeClaim'
         metadata = @{ name = 'risk-guard-acme'; namespace = $ns }
         spec = @{ accessModes = @('ReadWriteOnce'); resources = @{ requests = @{ storage = '1Gi' } } } } | ConvertTo-Json -Depth 8)
-$patch = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/console-proxy-patch.yaml') -Raw).Replace('__NGINX_IMAGE__', $NginxImage).Replace('__LEGO_IMAGE__', $LegoImage).Replace('__FQDN__', $fqdn).Replace('__ACME_EMAIL__', $AcmeEmail).Replace('__ACME_SERVER__', $acmeServer)
+# Fingerprint of the rendered proxy configuration, so a changed config rolls the pod instead of sitting unread in a ConfigMap.
+$sha = [Security.Cryptography.SHA256]::Create()
+$proxyHash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($nginx + "`n--`n" + $acme))) -replace '-', '').ToLowerInvariant(); $sha.Dispose()
+$patch = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/console-proxy-patch.yaml') -Raw).Replace('__PROXY_CONFIG_SHA__', $proxyHash).Replace('__NGINX_IMAGE__', $NginxImage).Replace('__LEGO_IMAGE__', $LegoImage).Replace('__FQDN__', $fqdn).Replace('__ACME_EMAIL__', $AcmeEmail).Replace('__ACME_SERVER__', $acmeServer)
 $patchFile = Join-Path ([IO.Path]::GetTempPath()) 'rg-console-patch.yaml'
 Set-Content -Path $patchFile -Encoding utf8 -Value $patch
 try { Invoke-Native kubectl @('patch', 'deploy/risk-guard', '-n', $ns, '--patch-file', $patchFile) | Out-Null } finally { Remove-Item -Force $patchFile -ErrorAction SilentlyContinue }
 Invoke-Native kubectl @('rollout', 'status', 'deploy/risk-guard', '-n', $ns, '--timeout=300s') | Out-Null
 
-Write-Step "Publishing https://$fqdn/ ($(if ($signIn) { 'Entra sign-in required' } else { 'to ' + ($ranges -join ', ') }))"
+Write-Step "Publishing https://$fqdn/ ($(if ($signIn) { 'anyone can view; administrators sign in at /admin' } else { 'to ' + ($ranges -join ', ') }))"
 $svc = @{ apiVersion = 'v1'; kind = 'Service'
     metadata = @{ name = 'risk-guard-console'; namespace = $ns; annotations = @{ 'service.beta.kubernetes.io/azure-dns-label-name' = $DnsLabel } }
     # Local keeps the client's address so nginx can enforce the allowlist. Port 80 must be reachable by Let's Encrypt,
