@@ -30,12 +30,22 @@ esac
 
 NAME="agent-$(date +%H%M%S)"
 echo "creating sandbox $NAME (workload $APPID)"
-timeout 240 "$CLI" sandbox create --name "$NAME" --from "$ACR/openshell-demo/nat-agent:1" \
-  --policy "$HERE/deploy/aks/agent-sandbox-policy.yaml" --provider "$PROVIDER" \
-  --annotation "openshell.nvidia.com/agent-id=$APPID" --annotation "openshell.nvidia.com/agent-name=${AGENT_NAME:-openshell-agent-nat-agent}" --no-tty --detach -- /usr/bin/sleep infinity >/dev/null 2>&1 || true
+# The gateway connection (a kubectl port-forward) can drop mid-request. A dropped create may still have created the
+# sandbox, so after each attempt check for it before trying again; keep the last error for the failure message.
+created=0; last_error=""
+for attempt in 1 2 3; do
+  last_error="$(timeout 120 "$CLI" sandbox create --name "$NAME" --from "$ACR/openshell-demo/nat-agent:1" \
+    --policy "$HERE/deploy/aks/agent-sandbox-policy.yaml" --provider "$PROVIDER" \
+    --annotation "openshell.nvidia.com/agent-id=$APPID" --annotation "openshell.nvidia.com/agent-name=${AGENT_NAME:-openshell-agent-nat-agent}" \
+    --no-tty --detach -- /usr/bin/sleep infinity 2>&1 | tail -n 6)" || true
+  if "$CLI" sandbox get "$NAME" >/dev/null 2>&1; then created=1; break; fi
+  sleep 10
+done
+[ "$created" = 1 ] || { echo "could not create the sandbox after 3 attempts:" >&2; echo "$last_error" >&2; exit 1; }
 
 for i in $(seq 1 80); do
-  phase=$("$CLI" sandbox get "$NAME" --output json 2>/dev/null | grep -o '"phase": *"[A-Za-z]*"' | head -1 | sed 's/.*: *"//; s/"//')
+  # No match while the sandbox is still being scheduled is normal, so it must not trip `set -e` / pipefail.
+  phase=$("$CLI" sandbox get "$NAME" --output json 2>/dev/null | grep -o '"phase": *"[A-Za-z]*"' | head -1 | sed 's/.*: *"//; s/"//' || true)
   [ "$phase" = Ready ] && break
   [ "$phase" = Error ] && { echo "sandbox failed to start" >&2; exit 1; }
   sleep 6

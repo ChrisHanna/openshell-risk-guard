@@ -54,7 +54,7 @@ secrets), and prints the next step. Windows PowerShell 5.1 and PowerShell 7 are 
 | – | `connect-gateway.sh` | Registers the gateway with the `openshell` CLI over mTLS (untested as a script; see below). |
 | 8 | `08-deploy-fixture.ps1` | Harmless test fixture and a small workload image with curl. |
 | 7 | `07-verify.ps1` | Prints workloads, who bound each sandbox, and recent decisions. |
-| 9 | `09-expose-console.ps1` | Publishes the console on the internet behind an IP allowlist, TLS and a password. |
+| 9 | `09-expose-console.ps1` | Publishes the console on the internet behind an IP allowlist, a Let's Encrypt certificate and a password. |
 | 10 | `10-create-key-vault.ps1` | Key Vault (RBAC, purge protection, firewalled to your address). |
 | 11 | `11-set-secret.ps1` | Stores a secret from a hidden prompt, through a protected temp file that is overwritten and deleted. |
 | 12 | `12-sync-credentials.ps1` | Copies a Key Vault secret into an OpenShell provider over stdin. |
@@ -98,8 +98,12 @@ To give an agent its own workload from its Entra identity, add
   Secret is never mounted into it.
 * TLS keys and the HMAC key are generated in-cluster and stored only as Kubernetes Secrets. Treat the Secret store as the
   trust boundary (enable AKS encryption at rest and restrict `get secret` in `openshell`).
-* The public console has no login of its own, so it is only exposed through the proxy in step 9: source-IP allowlist, TLS,
-  a generated password stored only as a hash in the cluster, and GET/HEAD only. Keep the allowlist tight.
+* The public console has no login of its own, so it is only exposed through the proxy in step 9: a source-IP allowlist,
+  a browser-trusted Let's Encrypt certificate (issued and renewed by a lego sidecar), a generated password stored only as a
+  hash in the cluster, and GET/HEAD only. Keep the allowlist tight. Port 80 is open to the internet so Let's Encrypt can
+  validate the name; it serves only the challenge and redirects to HTTPS. Because one Service cannot restrict ports
+  separately, nginx enforces the allowlist on 443 (the Service keeps the client address with `externalTrafficPolicy: Local`).
+  The hostname appears in public certificate-transparency logs. Use `-AcmeStaging` to test without using the real limits.
 * The chart's default client certificate is a single shared identity (`openshell-client`, provider `mtls`), so everyone
   using it shares one derived workload and can label sandboxes. For real per-person identity, configure OIDC (Microsoft Entra
   ID works) on the chart.
@@ -173,7 +177,7 @@ score. Register each identity first (`13-register-agent-identity.ps1 -AgentName 
 Every 3 to 5 minutes (`MIN_WAIT` and `MAX_WAIT` seconds) one agent runs one randomly chosen task. Every third run of
 an agent is screened by the NeMo Guardrails input rail first (`--guardrails-every N`), so some requests are stopped
 before they reach Risk Guard and others are stopped by it. Use `--once` for a single pass. Each sandbox is deleted
-after its run, so the Kata node stays small.
+after its run, and every 3 hours (`SWEEP_EVERY` seconds) the fleet also removes any `agent-*` sandbox older than that, such as one left behind by a dropped connection, so the Kata node stays small.
 
 ```bash
 export OPENSHELL_BIN=... ACR_SERVER=<registry>.azurecr.io

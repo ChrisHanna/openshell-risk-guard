@@ -11,7 +11,10 @@
 [CmdletBinding()]
 param(
     [string]$OpenShellPath,
-    [string]$Tag
+    [string]$Tag,
+    # Build with the local Docker engine and push, instead of `az acr build`. Use it when the ACR build service is
+    # unreachable from this machine (the az client's connection to it is reset by some networks).
+    [switch]$LocalDocker
 )
 . "$PSScriptRoot/common.ps1"
 Assert-Tool az 'Install the Azure CLI.'
@@ -42,6 +45,35 @@ try {
     $mb = [math]::Round((Get-ChildItem $stage -Recurse -File | Measure-Object Length -Sum).Sum / 1MB, 1)
     Write-Note "context: $mb MB"
 
+    if ($LocalDocker) {
+        Assert-Tool docker 'Install and start Docker Desktop.'
+        $server = "$($state.acr).azurecr.io"
+        Write-Step "Signing in to $server"
+        # Exchange the Azure token for a registry refresh token with curl, so az's own registry login is not needed.
+        $aad = (Invoke-Native az @('account', 'get-access-token', '--resource', 'https://management.azure.com', '--query', 'accessToken', '-o', 'tsv') | Select-Object -First 1)
+        $tenant = (Invoke-Native az @('account', 'show', '--query', 'tenantId', '-o', 'tsv') | Select-Object -First 1)
+        $resp = & curl.exe -sS -m 30 -X POST "https://$server/oauth2/exchange" -H 'Content-Type: application/x-www-form-urlencoded' --data "grant_type=access_token&service=$server&tenant=$tenant&access_token=$aad" | ConvertFrom-Json
+        if (-not $resp.refresh_token) { throw 'The registry did not return a refresh token.' }
+        # Hand the token over through a file so PowerShell 5.1 cannot re-encode it on the pipe.
+        $tokenFile = Join-Path ([IO.Path]::GetTempPath()) ("acr-" + [guid]::NewGuid().ToString('N'))
+        try {
+            [IO.File]::WriteAllText($tokenFile, $resp.refresh_token, (New-Object Text.UTF8Encoding($false)))
+            & cmd.exe /c "docker login $server -u 00000000-0000-0000-0000-000000000000 --password-stdin < `"$tokenFile`"" | Out-Null
+        } finally { if (Test-Path $tokenFile) { Remove-Item -Force $tokenFile } }
+        if ($LASTEXITCODE -ne 0) { throw 'docker login failed' }
+        Write-Step "Building openshell-risk-guard:$Tag locally (the first build takes about 10 minutes)"
+        # Docker writes progress to stderr, which PowerShell 5.1 would turn into a terminating error.
+        $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try {
+            & docker build --progress=plain -t "$server/openshell-risk-guard:$Tag" -t "$server/openshell-risk-guard:latest" -f (Join-Path $stage 'openshell-risk-guard/Dockerfile') $stage 2>&1 | ForEach-Object { "$_" } | Select-Object -Last 30
+            if ($LASTEXITCODE -ne 0) { throw 'docker build failed' }
+            & docker push "$server/openshell-risk-guard:$Tag" 2>&1 | Select-Object -Last 3; if ($LASTEXITCODE -ne 0) { throw 'docker push failed' }
+            & docker push "$server/openshell-risk-guard:latest" 2>&1 | Select-Object -Last 3; if ($LASTEXITCODE -ne 0) { throw 'docker push failed' }
+        } finally { $ErrorActionPreference = $previous }
+        Save-State @{ imageTag = $Tag }
+        Write-Host "`nPushed $server/openshell-risk-guard:$Tag" -ForegroundColor Green
+        return
+    }
     Write-Step "Building openshell-risk-guard:$Tag in $($state.acr) (several minutes, runs in Azure)"
     $queued = Invoke-Native az @('acr', 'build', '-r', $state.acr, '-t', "openshell-risk-guard:$Tag", '-t', 'openshell-risk-guard:latest',
         '-f', (Join-Path $stage 'openshell-risk-guard/Dockerfile'), $stage, '--no-logs', '--no-wait', '--only-show-errors') -Retries 1

@@ -1,7 +1,7 @@
-# Adds an authenticating TLS proxy to the Risk Guard pod so the read-only console can be reached from the
-# internet safely. The console itself only listens on the pod's loopback; this proxy shares that network
-# namespace and is the only thing exposed. Applied by scripts/aks/09-expose-console.ps1, which fills
-# __NGINX_IMAGE__ and creates the ConfigMap and Secrets mounted below.
+# Adds an authenticating TLS proxy and a Let's Encrypt client to the Risk Guard pod so the read-only console can be
+# reached from the internet safely. The console itself only listens on the pod's loopback; the proxy shares that
+# network namespace and is the only thing exposed. Applied by scripts/aks/09-expose-console.ps1, which fills the
+# __PLACEHOLDERS__ and creates the ConfigMaps, Secrets and volume claim mounted below.
 spec:
   template:
     spec:
@@ -10,6 +10,8 @@ spec:
           image: __NGINX_IMAGE__
           command: ["nginx", "-g", "daemon off;", "-c", "/etc/console-proxy/nginx.conf"]
           ports:
+            - name: http
+              containerPort: 8080
             - name: https
               containerPort: 8443
           readinessProbe:
@@ -35,18 +37,57 @@ spec:
             - name: console-proxy-conf
               mountPath: /etc/console-proxy
               readOnly: true
-            - name: console-proxy-tls
-              mountPath: /etc/console-tls
-              readOnly: true
             - name: console-proxy-auth
               mountPath: /etc/console-auth
               readOnly: true
+            - name: console-acme
+              mountPath: /acme
+              readOnly: true
+            - name: console-proxy-tmp
+              mountPath: /tmp
+        - name: console-acme
+          image: __LEGO_IMAGE__
+          command: ["/bin/sh", "/etc/console-acme/console-acme.sh"]
+          env:
+            - name: DOMAIN
+              value: "__FQDN__"
+            - name: EMAIL
+              value: "__ACME_EMAIL__"
+            - name: ACME_SERVER
+              value: "__ACME_SERVER__"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: console-acme-script
+              mountPath: /etc/console-acme
+              readOnly: true
+            - name: console-proxy-tls
+              mountPath: /etc/console-tls
+              readOnly: true
+            - name: console-acme
+              mountPath: /acme
             - name: console-proxy-tmp
               mountPath: /tmp
       volumes:
         - name: console-proxy-conf
           configMap:
             name: risk-guard-console-proxy
+        - name: console-acme-script
+          configMap:
+            name: risk-guard-console-acme
         - name: console-proxy-tls
           secret:
             secretName: risk-guard-console-tls
@@ -55,5 +96,8 @@ spec:
           secret:
             secretName: risk-guard-console-auth
             defaultMode: 0440
+        - name: console-acme
+          persistentVolumeClaim:
+            claimName: risk-guard-acme
         - name: console-proxy-tmp
           emptyDir: {}

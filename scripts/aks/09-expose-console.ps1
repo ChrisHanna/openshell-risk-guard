@@ -4,22 +4,32 @@
 
 .DESCRIPTION
   The console has no login of its own and only listens on the pod's loopback, so it is never exposed directly.
-  This script adds an nginx proxy to the Risk Guard pod and a LoadBalancer Service in front of it:
+  This script adds an nginx proxy and a Let's Encrypt client to the Risk Guard pod and a LoadBalancer Service in
+  front of them:
 
-    * Source-IP allowlist: only -AllowedIp (default: this machine's public address) can connect at all.
-    * TLS with a certificate for the Service's DNS name, signed by a CA created for this cluster. Your browser
-      warns until you trust the CA, which is saved to .aks/console-ca.crt (public).
+    * Source-IP allowlist: only -AllowedIp (default: this machine's public address) can use the console. nginx
+      enforces it on port 443 (the Service keeps the client address, externalTrafficPolicy: Local).
+    * A browser-trusted Let's Encrypt certificate for the Service's DNS name, issued and renewed automatically by a
+      lego sidecar. This needs port 80 open to the internet; port 80 serves only the validation challenge and
+      redirects everything else to HTTPS. Until the first certificate arrives (usually under a minute) the console
+      presents a certificate from a cluster CA (saved to .aks/console-ca.crt). The name appears in public
+      certificate-transparency logs, as for any Let's Encrypt certificate.
     * HTTP basic auth with a generated password, saved to .aks/console-credentials.txt (git-ignored).
     * GET and HEAD only.
 
-  Re-run with a new -AllowedIp when your address changes. -Remove deletes the public Service.
+  Re-run with a new -AllowedIp when your address changes. -AcmeStaging uses Let's Encrypt's staging service
+  (untrusted certificates, generous limits) for testing. -Remove deletes the public Service.
   This is read-only evidence (workloads, routes, principals); keep the allowlist tight.
 #>
 [CmdletBinding()]
 param(
     [string[]]$AllowedIp,
     [string]$DnsLabel,
+    # Contact address registered with Let's Encrypt (expiry notices). Defaults to the signed-in Azure user.
+    [string]$AcmeEmail,
+    [switch]$AcmeStaging,
     [string]$NginxImage = 'mcr.microsoft.com/azurelinux/base/nginx:1.30.6-1-azl3.0.20261015',
+    [string]$LegoImage,
     [switch]$RotatePassword,
     [switch]$Remove
 )
@@ -86,10 +96,31 @@ if (-not $haveAuth -or $RotatePassword) {
 }
 
 # --- Proxy configuration, container and public Service
-Write-Step 'Adding the proxy to the Risk Guard pod'
-$conf = Invoke-Native kubectl @('create', 'configmap', 'risk-guard-console-proxy', '-n', $ns, "--from-file=nginx.conf=$(Join-Path $script:RepoRoot 'deploy/aks/console-nginx.conf')", '--dry-run=client', '-o', 'yaml')
-Invoke-KubectlApply ($conf -join "`n")
-$patch = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/console-proxy-patch.yaml') -Raw).Replace('__NGINX_IMAGE__', $NginxImage)
+Write-Step 'Adding the proxy and the certificate client to the Risk Guard pod'
+if (-not $AcmeEmail) { $AcmeEmail = (Invoke-Native az @('account', 'show', '--query', 'user.name', '-o', 'tsv') | Select-Object -First 1).Trim() }
+if ($AcmeEmail -notmatch '^[^@\s]+@[^@\s]+\.[^@\s]+$') { throw "Pass -AcmeEmail with a real address (got '$AcmeEmail')." }
+$acmeServer = if ($AcmeStaging) { 'https://acme-staging-v02.api.letsencrypt.org/directory' } else { 'https://acme-v02.api.letsencrypt.org/directory' }
+if (-not $LegoImage) { $LegoImage = "$($state.acr).azurecr.io/openshell-demo/lego:4.25.2" }
+Write-Note "certificates from $acmeServer (contact $AcmeEmail)"
+
+$confDir = Join-Path ([IO.Path]::GetTempPath()) ("rg-console-conf-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory $confDir | Out-Null
+try {
+    $allow = ($ranges | ForEach-Object { "    allow $_;" }) -join "`n"
+    $nginx = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/console-nginx.conf') -Raw).Replace('__ALLOW__', $allow).Replace('__FQDN__', $fqdn)
+    [IO.File]::WriteAllText((Join-Path $confDir 'nginx.conf'), ($nginx -replace "`r`n", "`n"), (New-Object Text.UTF8Encoding($false)))
+    $acme = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/console-acme.sh') -Raw) -replace "`r`n", "`n"
+    [IO.File]::WriteAllText((Join-Path $confDir 'console-acme.sh'), $acme, (New-Object Text.UTF8Encoding($false)))
+    $conf = Invoke-Native kubectl @('create', 'configmap', 'risk-guard-console-proxy', '-n', $ns, "--from-file=nginx.conf=$(Join-Path $confDir 'nginx.conf')", '--dry-run=client', '-o', 'yaml')
+    Invoke-KubectlApply ($conf -join "`n")
+    $script_ = Invoke-Native kubectl @('create', 'configmap', 'risk-guard-console-acme', '-n', $ns, "--from-file=console-acme.sh=$(Join-Path $confDir 'console-acme.sh')", '--dry-run=client', '-o', 'yaml')
+    Invoke-KubectlApply ($script_ -join "`n")
+} finally { Remove-Item -Recurse -Force $confDir -ErrorAction SilentlyContinue }
+# Issued certificates and the ACME account live on their own small volume so pod restarts do not re-issue.
+Invoke-KubectlApply (@{ apiVersion = 'v1'; kind = 'PersistentVolumeClaim'
+        metadata = @{ name = 'risk-guard-acme'; namespace = $ns }
+        spec = @{ accessModes = @('ReadWriteOnce'); resources = @{ requests = @{ storage = '1Gi' } } } } | ConvertTo-Json -Depth 8)
+$patch = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/console-proxy-patch.yaml') -Raw).Replace('__NGINX_IMAGE__', $NginxImage).Replace('__LEGO_IMAGE__', $LegoImage).Replace('__FQDN__', $fqdn).Replace('__ACME_EMAIL__', $AcmeEmail).Replace('__ACME_SERVER__', $acmeServer)
 $patchFile = Join-Path ([IO.Path]::GetTempPath()) 'rg-console-patch.yaml'
 Set-Content -Path $patchFile -Encoding utf8 -Value $patch
 try { Invoke-Native kubectl @('patch', 'deploy/risk-guard', '-n', $ns, '--patch-file', $patchFile) | Out-Null } finally { Remove-Item -Force $patchFile -ErrorAction SilentlyContinue }
@@ -98,9 +129,11 @@ Invoke-Native kubectl @('rollout', 'status', 'deploy/risk-guard', '-n', $ns, '--
 Write-Step "Publishing https://$fqdn/ to $($ranges -join ', ')"
 $svc = @{ apiVersion = 'v1'; kind = 'Service'
     metadata = @{ name = 'risk-guard-console'; namespace = $ns; annotations = @{ 'service.beta.kubernetes.io/azure-dns-label-name' = $DnsLabel } }
-    spec = @{ type = 'LoadBalancer'; loadBalancerSourceRanges = $ranges
+    # Local keeps the client's address so nginx can enforce the allowlist. Port 80 must be reachable by Let's Encrypt,
+    # so the network layer is open and the allowlist is applied by nginx on 443.
+    spec = @{ type = 'LoadBalancer'; externalTrafficPolicy = 'Local'
         selector = @{ 'app.kubernetes.io/name' = 'risk-guard' }
-        ports = @(@{ name = 'https'; port = 443; targetPort = 'https' }) } }
+        ports = @(@{ name = 'http'; port = 80; targetPort = 'http' }, @{ name = 'https'; port = 443; targetPort = 'https' }) } }
 Invoke-KubectlApply ($svc | ConvertTo-Json -Depth 8)
 
 Write-Step 'Waiting for the public address'
@@ -114,4 +147,5 @@ Write-Host ""
 Write-Host "Console:     https://$fqdn/   (public IP $ip)" -ForegroundColor Green
 Write-Host "Allowed:     $($ranges -join ', ')"
 Write-Host "Credentials: $credFile   (username viewer; the password is in that file)"
-Write-Host "Trust CA:    $(Join-Path $script:StateDir 'console-ca.crt')   (optional; avoids the browser warning)"
+Write-Host "Certificate: Let's Encrypt, issued by the console-acme container (kubectl logs deploy/risk-guard -n $ns -c console-acme)"
+if ($AcmeStaging) { Write-Host "             STAGING certificates are not trusted by browsers; re-run without -AcmeStaging for a real one." -ForegroundColor Yellow }
