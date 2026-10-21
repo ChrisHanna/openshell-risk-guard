@@ -57,6 +57,10 @@ is what keeps the restriction ratchet linearizable.
        creation; if a refusal happens after the fact the sandbox stays unbound, so its
        traffic fails closed.
      - An unregistered workload ID is refused unless `--auto-register-agents` is set.
+     - `openshell.nvidia.com/agent-name` (optional) gives a labeled workload a readable name that the console shows next to its
+       ID, for example an Entra application's display name. It is display text only (at most 256 bytes, no control
+       characters; anything else is ignored). It replaces an auto-generated name once and never overwrites a name an
+       operator chose.
      - A `run-id` that already exists must belong to the named agent and revision.
      - A workload is scoped to the workspace that created it. Auto-registered labels and
        `agent-register --workspace <name>` workloads refuse sandboxes created in any other

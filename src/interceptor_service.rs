@@ -39,6 +39,8 @@ const POLICY_HASH_ANNOTATION: &str = "openshell.nvidia.com/policy-hash";
 const AGENT_ID_ANNOTATION: &str = "openshell.nvidia.com/agent-id";
 const AGENT_REVISION_ANNOTATION: &str = "openshell.nvidia.com/agent-revision";
 const RUN_ID_ANNOTATION: &str = "openshell.nvidia.com/run-id";
+/// A readable name shown next to a labeled workload ID, for example an Entra application's display name.
+const AGENT_NAME_ANNOTATION: &str = "openshell.nvidia.com/agent-name";
 
 /// Who may attach a sandbox to a workload ID when it is created, and whether
 /// a workload ID that nobody registered may be created on the fly.
@@ -673,7 +675,7 @@ impl RiskGuardInterceptorService {
                     self.refuse_binding(result, &mut audit, "refused_principal", "creating principal is not allowlisted".into());
                     return Ok(());
                 }
-                (agent_id, None, self.agent_binding.auto_register_agents)
+                (agent_id, extract_agent_name(committed_response), self.agent_binding.auto_register_agents)
             }
             None => match derive_workload(&workspace, provider, kind, subject, self.agent_binding.allow_local_dev_principal) {
                 Ok(derived) => (derived.agent_id, Some(derived.display_name), true),
@@ -1238,7 +1240,7 @@ fn extract_annotation(val: &Value, key: &str) -> Option<String> {
 }
 
 fn binding_annotations_present(val: &Value) -> bool {
-    [AGENT_ID_ANNOTATION, AGENT_REVISION_ANNOTATION, RUN_ID_ANNOTATION]
+    [AGENT_ID_ANNOTATION, AGENT_NAME_ANNOTATION, AGENT_REVISION_ANNOTATION, RUN_ID_ANNOTATION]
         .into_iter()
         .any(|key| extract_annotation(val, key).is_some())
 }
@@ -1262,6 +1264,13 @@ fn extract_workspace(committed_response: &Value) -> Option<String> {
 
 fn extract_agent_id(committed_response: &Value) -> Option<String> {
     extract_annotation(committed_response, AGENT_ID_ANNOTATION)
+}
+
+/// The optional readable name for a labeled workload. It is display text only, so it is bounded and must not
+/// contain control characters; anything else is ignored rather than refusing the sandbox.
+fn extract_agent_name(committed_response: &Value) -> Option<String> {
+    extract_annotation(committed_response, AGENT_NAME_ANNOTATION)
+        .filter(|name| name.len() <= 256 && !name.chars().any(char::is_control))
 }
 
 fn extract_agent_revision(committed_response: &Value) -> String {
@@ -3019,6 +3028,53 @@ network_policies:
             create_in_workspace(&service, principal_of("user", "alice"), "sb-replay-1", "team-a", json!({}));
         }
         assert_eq!(store.list_binding_audit("sb-replay-1").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_readable_name_is_shown_next_to_a_labeled_workload_and_upgrades_an_auto_name_once() {
+        let (service, store, _token) = setup_service_with_jwt();
+        provision_baseline(&store);
+        let service = label_service(&service, true);
+        let alice = || principal_of("operator", "alice");
+        let id = "ae709341-6fdc-47f8-a5d8-175f7401f216";
+        let display = |store: &SqliteRiskStore| {
+            store.operator_agent_detail(id, 1).unwrap().unwrap()["agent"]["display_name"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+
+        // First sight without a name: the ID is the name.
+        create_in_workspace(&service, alice(), "sb-name-1", "default", json!({ AGENT_ID_ANNOTATION: id }));
+        assert_eq!(display(&store), id);
+
+        // A later sandbox supplies the readable name, which replaces the auto-generated one.
+        create_in_workspace(
+            &service, alice(), "sb-name-2", "default",
+            json!({ AGENT_ID_ANNOTATION: id, AGENT_NAME_ANNOTATION: "openshell-agent-nat-agent" }),
+        );
+        assert_eq!(display(&store), "openshell-agent-nat-agent");
+
+        // Once named, a different name from a later sandbox does not overwrite it.
+        create_in_workspace(
+            &service, alice(), "sb-name-3", "default",
+            json!({ AGENT_ID_ANNOTATION: id, AGENT_NAME_ANNOTATION: "something-else" }),
+        );
+        assert_eq!(display(&store), "openshell-agent-nat-agent");
+    }
+
+    #[test]
+    fn an_unreasonable_name_is_ignored_not_fatal() {
+        let (service, store, _token) = setup_service_with_jwt();
+        provision_baseline(&store);
+        let service = label_service(&service, true);
+        let created = create_in_workspace(
+            &service, principal_of("operator", "alice"), "sb-badname-1", "default",
+            json!({ AGENT_ID_ANNOTATION: "named-agent", AGENT_NAME_ANNOTATION: "x".repeat(300) }),
+        );
+        assert_eq!(bound_workload(&created), Some("named-agent"));
+        let detail = store.operator_agent_detail("named-agent", 1).unwrap().unwrap();
+        assert_eq!(detail["agent"]["display_name"], "named-agent");
     }
 
     #[test]

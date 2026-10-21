@@ -79,4 +79,5 @@ Write-Host "Agent identity" -ForegroundColor Green
 Write-Host "  application (client) ID : $appId"
 Write-Host "  tenant                  : $tenant"
 Write-Host "  client secret           : Key Vault $vault / $secretName"
-Write-Host "Use it as the workload:  openshell sandbox create ... --annotation openshell.nvidia.com/agent-id=$appId"
+Write-Host "Use it as the workload:  openshell sandbox create ... --annotation openshell.nvidia.com/agent-id=$appId --annotation openshell.nvidia.com/agent-name=$display"
+Write-Host "The console then shows the name ($display) next to the application ID."

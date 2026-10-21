@@ -39,14 +39,20 @@ echo "Importing profile '$TYPE' ..."
 LOG="$(mktemp)"
 trap 'rm -f "$LOG"' EXIT
 if ! "$OPENSHELL" provider profile import -f "$PROFILE" >"$LOG" 2>&1; then
-  # Already imported: update it in place. Anything else is a real error, so show it.
-  "$OPENSHELL" provider profile update "$TYPE" -f "$PROFILE" >"$LOG" 2>&1 || { cat "$LOG" >&2; exit 1; }
+  # Importing again fails when the profile already exists. Rotating a credential does not change the profile, so
+  # keep the one on the gateway. (To change a profile, export it, edit it and `provider profile update` it.)
+  if "$OPENSHELL" provider profile list 2>/dev/null | grep -qw "$TYPE"; then
+    echo "Profile '$TYPE' already exists on the gateway; keeping it."
+  else
+    cat "$LOG" >&2; exit 1
+  fi
 fi
 
 if [ "$STDIN" = 1 ]; then
   IFS= read -r SECRET || true
-  SECRET="$(printf '%s' "$SECRET" | tr -d '
-')"
+  # Windows PowerShell puts a UTF-8 byte-order mark and a CR/LF around piped text; none of it belongs in a
+  # credential, and OpenShell rejects a value with unprintable characters.
+  SECRET="$(printf '%s' "$SECRET" | LC_ALL=C sed 's/^\xef\xbb\xbf//' | tr -d '\r\n')"
 else
   read -rsp "Value for $VAR (input is hidden): " SECRET
   echo

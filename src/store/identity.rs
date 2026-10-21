@@ -377,6 +377,13 @@ impl SqliteRiskStore {
                     "INSERT INTO agents (agent_id, display_name, created_at_ms) VALUES (?1, ?2, ?3)",
                     params![agent_id, display_name.unwrap_or(agent_id), current_time_ms()],
                 )?;
+            } else if let Some(name) = display_name {
+                // A workload that was auto-registered shows its ID as its name. Give it the readable name once, but
+                // never replace a name an operator chose.
+                tx.execute(
+                    "UPDATE agents SET display_name = ?2 WHERE agent_id = ?1 AND display_name = agent_id",
+                    params![agent_id, name],
+                )?;
             }
             if scoped_workspace.is_none() && (!registered || claim_workspace) {
                 tx.execute(

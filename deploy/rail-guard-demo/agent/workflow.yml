@@ -18,4 +18,8 @@ workflow:
   tool_names: [list_repo_issues, delete_repo]
   llm_name: nemotron
   verbose: true
+  # Nemotron supports native tool calling, which avoids parsing the ReAct text format, and the tool's
+  # input schema is not repeated in its description.
+  use_native_tool_calling: true
+  include_tool_input_schema_in_tool_description: false
   max_tool_calls: 8

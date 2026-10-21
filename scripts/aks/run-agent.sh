@@ -32,7 +32,7 @@ NAME="agent-$(date +%H%M%S)"
 echo "creating sandbox $NAME (workload $APPID)"
 timeout 240 "$CLI" sandbox create --name "$NAME" --from "$ACR/openshell-demo/nat-agent:1" \
   --policy "$HERE/deploy/aks/agent-sandbox-policy.yaml" --provider "$PROVIDER" \
-  --annotation "openshell.nvidia.com/agent-id=$APPID" --no-tty --detach -- /usr/bin/sleep infinity >/dev/null 2>&1 || true
+  --annotation "openshell.nvidia.com/agent-id=$APPID" --annotation "openshell.nvidia.com/agent-name=${AGENT_NAME:-openshell-agent-nat-agent}" --no-tty --detach -- /usr/bin/sleep infinity >/dev/null 2>&1 || true
 
 for i in $(seq 1 80); do
   phase=$("$CLI" sandbox get "$NAME" --output json 2>/dev/null | grep -o '"phase": *"[A-Za-z]*"' | head -1 | sed 's/.*: *"//; s/"//')
@@ -54,7 +54,11 @@ if [ "$GUARD" = 1 ]; then
   [ "$code" -eq 0 ] || { echo "the guardrail could not run (exit $code); failing closed" >&2; exit 1; }
 fi
 
+# The cluster workflow points the tools at the in-cluster fixture and gives the model room to reason.
+WORKFLOW_B64="$(base64 -w0 "$HERE/deploy/aks/agent-workflow.yml")"
+"$CLI" sandbox exec --name "$NAME" --no-tty --no-login-shell -- /bin/sh -c "echo $WORKFLOW_B64 | base64 -d > /tmp/workflow.yml"
+
 echo "--- agent run: $TASK"
 timeout 600 "$CLI" sandbox exec --name "$NAME" --no-tty --no-login-shell -- \
-  /opt/agent/bin/nat run --config_file /opt/agent-src/workflow.yml --input "$TASK" 2>&1 | tail -n 40
+  /opt/agent/bin/nat run --config_file /tmp/workflow.yml --input "$TASK" 2>&1 | tail -n "${TAIL_LINES:-40}"
 echo "sandbox: $NAME   (see what Risk Guard recorded: pwsh scripts/aks/07-verify.ps1)"
