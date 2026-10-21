@@ -105,6 +105,11 @@ To give an agent its own workload from its Entra identity, add
   validate the name; it serves only the challenge and redirects to HTTPS. Because one Service cannot restrict ports
   separately, nginx enforces the allowlist on 443 (the Service keeps the client address with `externalTrafficPolicy: Local`).
   The hostname appears in public certificate-transparency logs. Use `-AcmeStaging` to test without using the real limits.
+* Every script that restarts the Risk Guard pod (04, 09 and 13) waits for the console to present a trusted Let's Encrypt
+  certificate and fails with the certificate client's log if it does not (`scripts/aks/verify-console-cert.ps1` runs the same
+  check). The console is unreachable for roughly half a minute to a minute during a redeploy (one replica, `Recreate`); that
+  shows as a connection error, not a certificate warning. Measured across a full 04, 09 and 13 redeploy: the certificate was
+  trusted every time the server answered.
 * The chart's default client certificate is a single shared identity (`openshell-client`, provider `mtls`), so everyone
   using it shares one derived workload and can label sandboxes. For real per-person identity, configure OIDC (Microsoft Entra
   ID works) on the chart.
