@@ -5,6 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # OpenShell Behavioral Risk Guard (`openshell-risk-guard`)
 
+[![CI](https://github.com/ChrisHanna/openshell-risk-guard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ChrisHanna/openshell-risk-guard/actions/workflows/ci.yml)
+
 ## Status
 
 Risk Guard runs end to end with a real OpenShell gateway, supervisor and sandbox.

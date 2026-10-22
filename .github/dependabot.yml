@@ -13,3 +13,13 @@ updates:
     groups:
       rust-minor-and-patch:
         update-types: [minor, patch]
+    # These major versions need code changes and move with the pinned OpenShell commit; they are done by hand.
+    ignore:
+      - dependency-name: rcgen
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: rusqlite
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: sha2
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: hmac
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
