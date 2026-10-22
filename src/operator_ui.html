@@ -1542,7 +1542,7 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
         <div class="panel-body">
           <svg id="how-diagram" viewBox="0 0 960 450" role="img" aria-labelledby="how-diagram-title how-diagram-desc">
             <title id="how-diagram-title">How a request flows through OpenShell and Risk Guard</title>
-            <desc id="how-diagram-desc">An agent's request passes OpenShell's network policy, then Risk Guard's middleware, which scores it and returns allow or deny, before OpenShell adds credentials and forwards it. A separate control-plane path checks sandbox changes. Decisions are written to a store that a read-only console displays.</desc>
+            <desc id="how-diagram-desc">An agent's request passes OpenShell's network policy, then Risk Guard's middleware, which scores it and returns allow or deny. OpenShell then adds credentials and sends encrypted traffic through a network-path proxy that asks Risk Guard whether the sandbox may have a tunnel. A separate control-plane path checks sandbox changes. Decisions are written to a store that a read-only console displays.</desc>
             <defs>
               <marker id="how-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="context-stroke"/></marker>
             </defs>
@@ -1555,36 +1555,43 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
 
             <!-- data plane -->
             <g class="how-node" data-steps="1" tabindex="0" role="button" aria-label="Step 1: the agent sends a request">
-              <rect class="how-box" x="24" y="54" width="150" height="62" rx="8"/>
-              <text class="how-t1" x="99" y="82" text-anchor="middle">Agent</text>
-              <text class="how-t2" x="99" y="100" text-anchor="middle">in its sandbox</text>
+              <rect class="how-box" x="24" y="54" width="110" height="62" rx="8"/>
+              <text class="how-t1" x="79" y="82" text-anchor="middle">Agent</text>
+              <text class="how-t2" x="79" y="100" text-anchor="middle">in its sandbox</text>
             </g>
             <g class="how-node" data-steps="2" tabindex="0" role="button" aria-label="Step 2: OpenShell checks network policy">
-              <rect class="how-box os" x="236" y="54" width="170" height="62" rx="8"/>
-              <text class="how-t1" x="321" y="82" text-anchor="middle">OpenShell</text>
-              <text class="how-t2" x="321" y="100" text-anchor="middle">network policy</text>
+              <rect class="how-box os" x="174" y="54" width="130" height="62" rx="8"/>
+              <text class="how-t1" x="239" y="82" text-anchor="middle">OpenShell</text>
+              <text class="how-t2" x="239" y="100" text-anchor="middle">network policy</text>
             </g>
             <g class="how-node" data-steps="3 4" tabindex="0" role="button" aria-label="Steps 3 and 4: Risk Guard scores the request">
-              <rect class="how-box rg" x="468" y="54" width="170" height="62" rx="8"/>
-              <text class="how-t1" x="553" y="82" text-anchor="middle">Risk Guard</text>
-              <text class="how-t2" x="553" y="100" text-anchor="middle">middleware · scores 0–100</text>
+              <rect class="how-box rg" x="344" y="54" width="140" height="62" rx="8"/>
+              <text class="how-t1" x="414" y="82" text-anchor="middle">Risk Guard</text>
+              <text class="how-t2" x="414" y="100" text-anchor="middle">scores 0–100</text>
             </g>
-            <g class="how-node" data-steps="6" tabindex="0" role="button" aria-label="Step 6: OpenShell adds credentials and forwards">
-              <rect class="how-box os" x="700" y="54" width="118" height="62" rx="8"/>
-              <text class="how-t1" x="759" y="82" text-anchor="middle">OpenShell</text>
-              <text class="how-t2" x="759" y="100" text-anchor="middle">adds credentials</text>
+            <g class="how-node" data-steps="6" tabindex="0" role="button" aria-label="Step 6: OpenShell adds credentials">
+              <rect class="how-box os" x="524" y="54" width="120" height="62" rx="8"/>
+              <text class="how-t1" x="584" y="82" text-anchor="middle">OpenShell</text>
+              <text class="how-t2" x="584" y="100" text-anchor="middle">adds credentials</text>
             </g>
-            <g class="how-node" data-steps="6" tabindex="-1">
-              <rect class="how-box ext" x="852" y="54" width="92" height="62" rx="8"/>
-              <text class="how-t1" x="898" y="82" text-anchor="middle">Outside</text>
-              <text class="how-t2" x="898" y="100" text-anchor="middle">service</text>
+            <g class="how-node" data-steps="7" tabindex="0" role="button" aria-label="Step 7: the tunnel gate asks Risk Guard">
+              <rect class="how-box rg" x="684" y="54" width="120" height="62" rx="8"/>
+              <text class="how-t1" x="744" y="82" text-anchor="middle">Tunnel gate</text>
+              <text class="how-t2" x="744" y="100" text-anchor="middle">network proxy</text>
             </g>
-            <g class="how-arrow-g" data-steps="1"><path class="how-line" d="M174 85 H236" marker-end="url(#how-arrow)"/><circle class="how-num" cx="205" cy="70" r="11"/><text class="how-numt" x="205" y="74" text-anchor="middle">1</text></g>
-            <g class="how-arrow-g" data-steps="2"><text class="how-t3" x="321" y="136" text-anchor="middle">2 · policy allows it</text></g>
-            <g class="how-arrow-g" data-steps="3"><path class="how-line" d="M406 85 H468" marker-end="url(#how-arrow)"/><circle class="how-num" cx="437" cy="70" r="11"/><text class="how-numt" x="437" y="74" text-anchor="middle">3</text></g>
-            <g class="how-arrow-g" data-steps="4"><circle class="how-num" cx="553" cy="134" r="11"/><text class="how-numt" x="553" y="138" text-anchor="middle">4</text></g>
-            <g class="how-arrow-g allow" data-steps="6"><path class="how-line ok" d="M638 85 H700" marker-end="url(#how-arrow)"/><text class="how-t3 ok" x="669" y="72" text-anchor="middle">allow</text><path class="how-line" d="M818 85 H852" marker-end="url(#how-arrow)"/><circle class="how-num" cx="835" cy="70" r="11"/><text class="how-numt" x="835" y="74" text-anchor="middle">6</text></g>
-            <g class="how-arrow-g deny" data-steps="5"><path class="how-line bad dash" d="M553 54 V42 H99 V54" marker-end="url(#how-arrow)"/><rect class="how-chip" x="248" y="32" width="210" height="20" rx="10"/><text class="how-t3 bad" x="353" y="46" text-anchor="middle">5 · deny: HTTP 403, never leaves</text></g>
+            <g class="how-node" data-steps="8" tabindex="-1">
+              <rect class="how-box ext" x="844" y="54" width="90" height="62" rx="8"/>
+              <text class="how-t1" x="889" y="82" text-anchor="middle">Outside</text>
+              <text class="how-t2" x="889" y="100" text-anchor="middle">service</text>
+            </g>
+            <g class="how-arrow-g" data-steps="1"><path class="how-line" d="M134 85 H174" marker-end="url(#how-arrow)"/><circle class="how-num" cx="154" cy="70" r="11"/><text class="how-numt" x="154" y="74" text-anchor="middle">1</text></g>
+            <g class="how-arrow-g" data-steps="2"><text class="how-t3" x="239" y="136" text-anchor="middle">2 · policy allows it</text></g>
+            <g class="how-arrow-g" data-steps="3"><path class="how-line" d="M304 85 H344" marker-end="url(#how-arrow)"/><circle class="how-num" cx="324" cy="70" r="11"/><text class="how-numt" x="324" y="74" text-anchor="middle">3</text></g>
+            <g class="how-arrow-g" data-steps="4"><circle class="how-num" cx="414" cy="134" r="11"/><text class="how-numt" x="414" y="138" text-anchor="middle">4</text></g>
+            <g class="how-arrow-g allow" data-steps="6"><path class="how-line ok" d="M484 85 H524" marker-end="url(#how-arrow)"/><text class="how-t3 ok" x="504" y="72" text-anchor="middle">allow</text></g>
+            <g class="how-arrow-g" data-steps="7"><path class="how-line" d="M644 85 H684" marker-end="url(#how-arrow)"/><circle class="how-num" cx="664" cy="70" r="11"/><text class="how-numt" x="664" y="74" text-anchor="middle">7</text><text class="how-t3" x="744" y="136" text-anchor="middle">no tunnel if refused</text></g>
+            <g class="how-arrow-g" data-steps="8"><path class="how-line" d="M804 85 H844" marker-end="url(#how-arrow)"/><circle class="how-num" cx="824" cy="70" r="11"/><text class="how-numt" x="824" y="74" text-anchor="middle">8</text></g>
+            <g class="how-arrow-g deny" data-steps="5"><path class="how-line bad dash" d="M414 54 V42 H79 V54" marker-end="url(#how-arrow)"/><rect class="how-chip" x="141" y="32" width="210" height="20" rx="10"/><text class="how-t3 bad" x="246" y="46" text-anchor="middle">5 · deny: HTTP 403, never leaves</text></g>
 
             <!-- control plane -->
             <g class="how-node" data-steps="A" tabindex="-1">
@@ -1609,8 +1616,8 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
             <text class="how-t3" x="640" y="222">removes Risk Guard or widens access.</text>
             <text class="how-t3" x="640" y="246">POST_COMMIT (fail-open): records the sandbox,</text>
             <text class="how-t3" x="640" y="262">its policy and its identity.</text>
-            <path class="how-line dot" d="M520 116 V214"/>
-            <text class="how-t3" x="528" y="170" >one Risk Guard process</text>
+            <path class="how-line dot" d="M440 116 V214"/>
+            <text class="how-t3" x="448" y="170" >one Risk Guard process</text>
 
             <!-- evidence -->
             <g class="how-node" data-steps="4" tabindex="-1">
@@ -1627,8 +1634,8 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
               <rect class="how-box ext" x="888" y="344" width="56" height="62" rx="8"/>
               <text class="how-t1" x="916" y="380" text-anchor="middle">You</text>
             </g>
-            <path class="how-line" d="M625 116 V324 H590 V344" marker-end="url(#how-arrow)"/>
-            <text class="how-t3" x="633" y="316">every decision is written here</text>
+            <path class="how-line" d="M470 116 V300 H560 V344" marker-end="url(#how-arrow)"/>
+            <text class="how-t3" x="480" y="316">every decision is written here</text>
             <path class="how-line" d="M543 266 V344" marker-end="url(#how-arrow)"/>
             <path class="how-line" d="M618 375 H700" marker-end="url(#how-arrow)"/>
             <path class="how-line" d="M850 375 H888" marker-end="url(#how-arrow)"/>
@@ -1641,7 +1648,7 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
 
       <div class="grid-2" style="margin-top:16px">
         <section class="panel">
-          <div class="panel-header"><div class="panel-title-group"><h2>Two places Risk Guard plugs in</h2><p>Both are OpenShell extension points. Nothing in OpenShell is forked or patched.</p></div></div>
+          <div class="panel-header"><div class="panel-title-group"><h2>Three places Risk Guard plugs in</h2><p>The first two are OpenShell extension points; the third is a proxy on the network path. Nothing in OpenShell is forked or patched.</p></div></div>
           <div class="panel-body how-cards">
             <div class="how-card">
               <h3>On every request <span class="badge badge-neutral">supervisor middleware</span></h3>
@@ -1653,6 +1660,11 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
               <p class="plain">Checks that nobody removes Risk Guard or widens a sandbox's access, and records each sandbox so its activity has an identity.</p>
               <p class="hood"><code>VALIDATE</code> (fail-closed) covers <code>CreateSandbox</code>, <code>UpdateConfig</code>, <code>ApproveDraftChunk</code>, <code>ApproveAllDraftChunks</code> and <code>SubmitPolicyAnalysis</code>. <code>POST_COMMIT</code> records the epoch and policy snapshot, and <code>DeleteSandbox</code> closes the epoch. OpenShell forces <code>POST_COMMIT</code> to fail-open because it observes an already-committed change, so a missed event cannot deny anything.</p>
             </div>
+            <div class="how-card">
+              <h3>On every encrypted connection <span class="badge badge-neutral">tunnel gate</span></h3>
+              <p class="plain">A proxy outside the sandbox asks Risk Guard before it opens a tunnel, so a sandbox an operator has quarantined loses its network even if its own supervisor is compromised.</p>
+              <p class="hood">Envoy external authorization (<code>envoy.service.auth.v3</code>) on Risk Guard's SPIFFE listener. Only proxies listed by SPIFFE ID may ask. It sees an address and port, not a path.</p>
+            </div>
           </div>
         </section>
         <section class="panel">
@@ -1662,6 +1674,7 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
               <p class="plain">A workload is a workspace plus the identity OpenShell authenticated for whoever created the sandbox. Nobody types it, so it cannot be forged. An agent can also carry a named identity, such as its Microsoft Entra application ID, but only when an allowlisted operator sets it.</p>
               <p class="hood">Derived as a hash of (workspace, provider, kind, subject) from the gateway's authenticated principal, or taken from the <code>openshell.nvidia.com/agent-id</code> label when the creating principal is on the binding allowlist. A bad label is refused at <code>VALIDATE</code>.</p>
               <p class="quiet-note" id="how-identity-example">Loading a live example…</p>
+              <p class="hood">Three identity sources are kept apart. <strong>The gateway</strong> tells Risk Guard who created a sandbox, and the sandbox's own calls carry a token bound to its pod. <strong>SPIFFE</strong> names workloads that are not OpenShell sandboxes, and the proxies that vouch for them, by a certificate SPIRE issued. <strong>The pod address</strong> names the sandbox behind a tunnel. Each OpenShell sandbox also has a SPIFFE ID issued by SPIRE, which OpenShell uses for credential-less token grants and the console shows as assigned; Risk Guard does not receive that certificate, so it does not verify it.</p>
             </div>
             <div class="how-card">
               <h3>What it stores, and what it never uses</h3>
@@ -1716,6 +1729,8 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
                 <li><strong>Fail-closed.</strong> If Risk Guard is down or slow, calls to attached hosts are denied. The gateway will not start if a registered service is unavailable.</li>
                 <li><strong>One replica, one writer.</strong> No high availability yet. A redeploy leaves a gap of about a minute.</li>
                 <li><strong>Only attached hosts, only HTTP.</strong> No scoring of other hosts, files, processes, responses or WebSocket traffic.</li>
+                <li><strong>The tunnel gate sees a destination, not a path.</strong> It refuses quarantined or unknown sandboxes. It identifies a sandbox by its pod address, because OpenShell's proxy hop presents no certificate.</li>
+                <li><strong>Not hardware isolation.</strong> The checks run in software on the same cluster, so a compromised cluster defeats them. NVIDIA Sentry's separate hardware layer does not have that weakness.</li>
                 <li><strong>Early scores are rule-based.</strong> Until a workload has history, a score comes from its approved task rules and a fixed API-risk map, not learned behavior.</li>
                 <li><strong>Recorded, not proven.</strong> A decision shows what was asked and answered, not that the call reached its destination.</li>
               </ul>
@@ -7037,9 +7052,17 @@ const HOW_STEPS = [
   { n: 5, title: "Deny, or allow",
     plain: "At 70 or above the request is denied and never leaves the sandbox; the agent gets an HTTP 403. A repeat of a locked action is denied straight away.",
     hood: "A deny is HTTP 403 with a JSON body that names the reason code: task_constraint_denied (outside the approved task rules), behavioral_risk_denied (a score over the line), behavioral_risk_restricted (a lock applies), or risk_state_unavailable (Risk Guard could not answer in time and failed closed). Risk Guard's own text is never forwarded to the sandbox." },
-  { n: 6, title: "OpenShell adds credentials and forwards",
-    plain: "If it is allowed, OpenShell attaches the credentials and sends the request on. The agent itself never holds the real secret.",
-    hood: "Provider credentials are injected after request middleware runs, so neither the agent nor Risk Guard holds the real value." },
+  { n: 6, title: "OpenShell adds credentials",
+    plain: "If it is allowed, OpenShell attaches the credentials. The agent itself never holds the real secret.",
+    hood: "Provider credentials are injected after request middleware runs, so neither the agent nor Risk Guard holds the real value. For a provider with a token grant, the supervisor instead uses the sandbox's SPIFFE identity (a JWT-SVID from SPIRE) to obtain a short-lived token, so there is no stored secret at all." },
+  { n: 7, title: "The tunnel gate asks Risk Guard",
+    plain: "Encrypted traffic leaves through a proxy on the network path, outside the sandbox. The proxy asks Risk Guard whether this sandbox may have the network at all, and opens no tunnel if the answer is no.",
+    hood: "OpenShell's upstream-proxy setting sends policy-approved TLS egress through an Envoy proxy with HTTP CONNECT. The proxy asks Risk Guard over mutual TLS with its own SPIFFE identity. Risk Guard matches the connection's source address to the sandbox's supervisor pod, and refuses a sandbox it does not know or whose workload an operator has quarantined; a latched restriction is only recorded unless the operator chooses to enforce it. A CONNECT carries a destination and no path, so this gate cannot see the request. It fails closed.",
+    sees: "The sandbox the connection came from (by pod address) and the destination address and port.",
+    never: "The request inside the tunnel: method, path, headers, body. An intercepting proxy could see them, but this deployment's does not." },
+  { n: 8, title: "The request reaches the outside service",
+    plain: "If every gate said yes, the request goes on to the service it was meant for.",
+    hood: "Risk Guard records what was asked and what it answered. It does not observe whether the call succeeded upstream." },
 ];
 let howStep = 1;
 
@@ -7159,6 +7182,7 @@ function renderHowLive() {
     add("Fail-closed binding", "Shown once a blocked request exists to read it from", "none");
     add("Upstream result", "Not collected", "none");
   }
+  add("Tunnel gate decisions", "Not collected: Risk Guard logs them but does not store them, so none are shown here", "none");
   add("Link to the gateway", "Inferred from the calls received; not probed", "none");
   $("how-badges").replaceChildren(...badges.map(b => {
     const box = document.createElement("div");
@@ -7180,13 +7204,13 @@ function renderHowLive() {
   // Walkthrough of one real blocked request
   const host = $("how-example");
   if (!howExample) {
-    $("how-example-sub").textContent = "No blocked request exists yet, so there is nothing to walk through. Steps 1 to 6 above describe the path every request takes.";
+    $("how-example-sub").textContent = "No blocked request exists yet, so there is nothing to walk through. Steps 1 to 8 above describe the path every request takes.";
     host.replaceChildren();
     return;
   }
   const { decision: d, agent, enforce } = howExample;
   const ev = d.evaluation || {}, req = d.request || {};
-  $("how-example-sub").textContent = `The latest blocked request, by ${agentName(agent) || agent.agent_id}, followed through the six steps. All values below are read from the recorded decision.`;
+  $("how-example-sub").textContent = `The latest blocked request, by ${agentName(agent) || agent.agent_id}, followed through the steps. All values below are read from the recorded decision.`;
   const { active } = activeSignals(d);
   const rows = [
     ["Workload", `${agentName(agent) || agent.agent_id} (${identityKind(agent.agent_id)} ${agent.agent_id})`],
