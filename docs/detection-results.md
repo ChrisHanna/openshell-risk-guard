@@ -3,12 +3,11 @@
 What Risk Guard catches and misses, measured two ways. Read the limits in each section; neither is an accuracy claim against an
 unseen attacker.
 
-Regenerate the live section with `scripts/measure-fleet-detection.py --markdown out.md`. The red-team list is
+Regenerate the live section with `scripts/measure-fleet-detection.py --console <console URL> --markdown out.md`. The red-team list is
 `tests/redteam_scenarios.rs`, and runs in CI.
 
 ## 1. Measured on the live fleet
 
-Console: https://rg-console-463547.eastus2.cloudapp.azure.com  
 Decisions scored: 235 (the latest 100 per workload, fleet hosts only)
 
 | | Requests | Denied | Rate | 95% interval |

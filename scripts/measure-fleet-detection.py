@@ -22,6 +22,7 @@ decisions. Treat the numbers as a regression check and a first real measurement,
 import argparse
 import json
 import math
+import os
 import sys
 import urllib.parse
 import urllib.request
@@ -172,7 +173,8 @@ def render(console, state, rows):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--console", default="https://rg-console-463547.eastus2.cloudapp.azure.com")
+    parser.add_argument("--console", default=os.environ.get("RG_CONSOLE"), required=not os.environ.get("RG_CONSOLE"),
+                        help="base URL of the read-only operator console (or set RG_CONSOLE)")
     parser.add_argument("--markdown")
     parser.add_argument("--json")
     args = parser.parse_args()
