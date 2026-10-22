@@ -1,0 +1,12 @@
+# Helm overlay that lets OpenShell give each sandbox's supervisor a SPIFFE identity. Applied by scripts/aks/19-enable-sandbox-spiffe.ps1:
+#   helm upgrade openshell <chart> -n openshell --reuse-values -f deploy/aks/gateway-spiffe-values.yaml
+#
+# The chart mounts the SPIFFE Workload API socket (from the SPIFFE CSI driver that 17-deploy-spire.ps1 installs) into the gateway pod and
+# into each sandbox's supervisor pod, so the supervisor can fetch a JWT-SVID from SPIRE for dynamic provider token grants. The supervisor
+# still authenticates to the gateway with its projected service account token and the gateway-minted sandbox token; this adds nothing
+# to that path. The socket is not mounted into the Kata sandbox pod that runs the agent.
+server:
+  providerTokenGrants:
+    spiffe:
+      enabled: true
+      workloadApiSocketPath: /spiffe-workload-api/spire-agent.sock

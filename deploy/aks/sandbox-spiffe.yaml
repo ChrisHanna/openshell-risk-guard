@@ -1,0 +1,18 @@
+# Registers every OpenShell sandbox's supervisor pod with SPIRE, so each sandbox has its own SPIFFE identity:
+#   spiffe://<trust-domain>/openshell/sandbox/<sandbox-id>
+# This is the naming OpenShell's own SPIRE overlay (deploy/helm/openshell/ci/values-spire-stack.yaml) uses, so OpenShell's provider token
+# grants and its demo token issuer accept it. Rendered by scripts/aks/19-enable-sandbox-spiffe.ps1.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: openshell-sandboxes
+spec:
+  # The SPIRE controller only acts on ClusterSPIFFEIDs of its own class ("<release namespace>-spire").
+  className: openshell-spire
+  spiffeIDTemplate: 'spiffe://{{ .TrustDomain }}/openshell/sandbox/{{ index .PodMeta.Annotations "openshell.ai/sandbox-id" }}'
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshell
+  podSelector:
+    matchLabels:
+      openshell.ai/component: supervisor
