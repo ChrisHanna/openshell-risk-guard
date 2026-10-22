@@ -113,8 +113,20 @@ fn the_fleet_profiles_enforce_the_approved_action_rule_and_keep_the_resource_rul
     for (name, ..) in fleet() {
         let profile = profile(name);
         assert_eq!(
-            profile.version, "v2",
+            profile.version, "v3",
             "{name}: a changed profile is a new version"
+        );
+        // v3 added the approved egress hosts (checked at the tunnel gate), in shadow: recorded, not refused.
+        assert!(
+            profile
+                .approved_egress_hosts
+                .contains("integrate.api.nvidia.com"),
+            "{name}: the model host is approved"
+        );
+        assert_eq!(
+            profile.rule_mode(RULE_EGRESS_DESTINATION),
+            RuleMode::Shadow,
+            "{name}"
         );
         assert_eq!(
             profile.rule_mode(RULE_UNAPPROVED_ACTION),
