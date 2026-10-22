@@ -439,11 +439,10 @@ async fn handle_proxied_sandbox_request(
 }
 
 fn docker_bin() -> String {
-    if let Ok(configured) = std::env::var("DOCKER_BIN") {
-        if !configured.is_empty() {
+    if let Ok(configured) = std::env::var("DOCKER_BIN")
+        && !configured.is_empty() {
             return configured;
         }
-    }
     if let Ok(home) = std::env::var("HOME") {
         let candidate = std::path::Path::new(&home).join("bin/docker");
         if candidate.exists() {

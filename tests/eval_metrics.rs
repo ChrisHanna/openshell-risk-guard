@@ -798,6 +798,8 @@ fn percentile_ms(sorted_samples_ms: &[f64], pct: f64) -> f64 {
     sorted_samples_ms[idx]
 }
 
+// The serial lock is held for the whole benchmark on purpose: it keeps the timing tests from running at the same time.
+#[allow(clippy::await_holding_lock)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn gate_g06_end_to_end_durable_sqlite_grpc_latency_benchmark() {
     let _serial = TEST_SERIAL_LOCK

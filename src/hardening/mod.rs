@@ -590,11 +590,10 @@ fn path_glob_matches(pattern: &str, path: &str) -> bool {
     if matches!(pattern, "" | "**" | "/**") || pattern == path {
         return true;
     }
-    if let Some(prefix) = pattern.strip_suffix("/**") {
-        if path == prefix || path.starts_with(&format!("{prefix}/")) {
+    if let Some(prefix) = pattern.strip_suffix("/**")
+        && (path == prefix || path.starts_with(&format!("{prefix}/"))) {
             return true;
         }
-    }
     let pat_segs: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
     let path_segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     wildcard_segments_match(&pat_segs, &path_segs)

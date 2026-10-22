@@ -271,11 +271,10 @@ pub(crate) async fn read_gate(
     if controls.entra.is_some() && !controls.public_read {
         let path = request.uri().path();
         let open = matches!(path, "/" | "/admin" | "/api/operator/status");
-        if !open {
-            if let Err(response) = controls.identity(request.headers()).await {
+        if !open
+            && let Err(response) = controls.identity(request.headers()).await {
                 return response;
             }
-        }
     }
     next.run(request).await
 }

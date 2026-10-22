@@ -515,6 +515,8 @@ pub trait HardeningEngine: Send + Sync {
         timeout: Duration,
     ) -> Result<TwoStepProofResult>;
 
+    // A frozen contract between the sidecar's parts; the argument list is the contract.
+    #[allow(clippy::too_many_arguments)]
     fn generate_recommendation(
         &self,
         sandbox_id: &str,

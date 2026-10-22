@@ -103,8 +103,8 @@ pub(super) fn query_view(conn: &Connection, agent_id: &str, _now_ms: i64) -> Res
     let mut seed_profile_hash = None;
     let mut seed_settings = None;
     let mut policy_errors = Vec::new();
-    if let Some((hash, mode, configuration)) = seed {
-        if configuration == InteractionRiskDetector::new_default().configuration_id() {
+    if let Some((hash, mode, configuration)) = seed
+        && configuration == InteractionRiskDetector::new_default().configuration_id() {
             let profile = query_baseline_by_name_or_hash(conn, &hash, &hash)?
                 .ok_or_else(|| RiskGuardError::Storage("pinned baseline is unavailable".into()))?;
             let filesystem = match latest_agent_policy(conn, agent_id)? {
@@ -126,7 +126,6 @@ pub(super) fn query_view(conn: &Connection, agent_id: &str, _now_ms: i64) -> Res
             seed_settings = Some(AgentGuardrails::from_baseline(&profile, mode, filesystem));
             seed_profile_hash = Some(hash);
         }
-    }
     let settings = saved
         .as_ref()
         .map(|record| &record.settings)

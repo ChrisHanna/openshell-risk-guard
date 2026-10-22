@@ -779,8 +779,8 @@ impl RiskGuardInterceptorService {
         policy_obj: Option<&Value>,
     ) -> bool {
         if let Some(yaml) = policy_yaml {
-            if let Ok(doc) = openshell_policy_schema::parse_policy(yaml) {
-                if doc.network_middlewares.iter().any(|(key, mw)| {
+            if let Ok(doc) = openshell_policy_schema::parse_policy(yaml)
+                && doc.network_middlewares.iter().any(|(key, mw)| {
                     (matches_middleware_identifier(key, &self.required_middleware_name)
                         || matches_middleware_identifier(&mw.middleware, &self.required_middleware_name)
                         || matches_middleware_identifier(&mw.name, &self.required_middleware_name))
@@ -788,7 +788,6 @@ impl RiskGuardInterceptorService {
                 }) {
                     return true;
                 }
-            }
             if let Ok(val) = serde_yml::from_str::<Value>(yaml)
                 && json_policy_has_required_middleware(&val, &self.required_middleware_name)
             {
@@ -976,14 +975,13 @@ fn requests_auto_proposal_approval(operation: &Value) -> bool {
         .or_else(|| operation.get("settingKey"))
         .and_then(Value::as_str);
 
-    if setting_key == Some("proposal_approval_mode") {
-        if let Some(setting_value) = operation
+    if setting_key == Some("proposal_approval_mode")
+        && let Some(setting_value) = operation
             .get("setting_value")
             .or_else(|| operation.get("settingValue"))
         {
             return value_contains_auto(setting_value);
         }
-    }
 
     if let Some(mode_val) = operation.get("proposal_approval_mode").or_else(|| {
         operation
@@ -2304,7 +2302,7 @@ network_policies:
             .await;
             assert!(result.allowed, "POST_COMMIT never blocks a created sandbox");
             assert_eq!(binding_outcome(&result), Some("refused_principal"), "{caller:?}");
-            assert!(result.log_annotations.get("agent_id").is_none());
+            assert!(!result.log_annotations.contains_key("agent_id"));
         }
         assert!(
             store.operator_agent_detail("prod-agent", 1).unwrap().is_none(),
@@ -2480,7 +2478,7 @@ network_policies:
         )
         .await;
         assert!(binding_outcome(&result).is_none(), "no binding was attempted");
-        assert!(result.log_annotations.get("agent_id").is_none());
+        assert!(!result.log_annotations.contains_key("agent_id"));
         assert!(store.operator_agent_detail("prod-agent", 1).unwrap().is_none());
 
         assert!(extract_agent_id(&json!({

@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  # A fresh clone with nothing around it: no sibling OpenShell checkout, no local state. This is the property a reviewer tests
+  # first, and the one this job exists to protect.
+  build-and-test:
+    name: Build and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Nothing else is checked out next to the repository
+        run: |
+          test ! -e ../OpenShell
+          echo "no sibling OpenShell checkout"
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install "$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)" --profile minimal
+          rustc --version
+      - uses: Swatinem/rust-cache@v2
+      - name: Build everything, with the lockfile unchanged
+        run: cargo build --locked --all-targets
+      - name: Test
+        run: cargo test --locked --no-fail-fast
+
+  lint:
+    name: Format and clippy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config
+      - name: Install the pinned toolchain with its linters
+        run: rustup toolchain install "$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)" --profile minimal --component rustfmt --component clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: cargo fmt --check
+      - name: clippy, with warnings as errors
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+  # The advisory, licence and source checks for every dependency (see deny.toml).
+  dependencies:
+    name: Dependency checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
+
+  console-and-scripts:
+    name: Console page and scripts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: The console page parses and keeps its contract
+        run: |
+          node -e "const fs=require('fs');const h=fs.readFileSync('src/operator_ui.html','utf8');const m=/<script>([\s\S]*)<\/script>/.exec(h);fs.writeFileSync('/tmp/ui.js',m[1])"
+          node --check /tmp/ui.js
+          node tests/adaptive_ui_contract.cjs
+      - name: Shell scripts parse and are executable
+        run: |
+          status=0
+          for f in $(git ls-files '*.sh'); do
+            bash -n "$f" || status=1
+            [ -x "$f" ] || { echo "not executable: $f"; status=1; }
+          done
+          exit $status
+      - name: Python scripts compile
+        run: python3 -m py_compile $(git ls-files 'scripts/*.py')
+      - name: PowerShell scripts parse
+        shell: pwsh
+        run: |
+          $bad = 0
+          foreach ($f in (git ls-files '*.ps1')) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$null, [ref]$errors)
+            if ($errors) { $errors | ForEach-Object { "$f : $_" }; $bad = 1 }
+          }
+          exit $bad
+
+  # Building the image from the repository alone proves the Dockerfile and the pinned OpenShell commit still work together.
+  docker:
+    name: Container image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image from this repository alone
+        run: docker build -t openshell-risk-guard:ci .

@@ -550,6 +550,8 @@ impl<'de> Deserialize<'de> for EvaluationCorpus {
     {
         #[derive(Deserialize)]
         #[serde(untagged)]
+        // Parsed once from a fixture file, so the size difference between the two shapes does not matter.
+        #[allow(clippy::large_enum_variant)]
         enum WireFormat {
             Full {
                 default_baseline: Option<BaselineProfile>,

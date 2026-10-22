@@ -406,6 +406,7 @@ fn build_interceptor_post_commit_request(
 
 /// Evaluates a request through `SupervisorMiddleware.EvaluateHttpRequest` and, iff
 /// `Decision::Allow` is returned, forwards the request to `UpstreamFixtureServer`.
+#[allow(clippy::too_many_arguments)]
 async fn evaluate_and_forward_if_allowed(
     mw_client: &mut SupervisorMiddlewareClient<Channel>,
     upstream: &UpstreamFixtureServer,

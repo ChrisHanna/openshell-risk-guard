@@ -143,7 +143,7 @@ impl JwtAuthVerifier {
         format!("{GATEWAY_ISSUER_PREFIX}{}", self.expected_gateway_id)
     }
 
-    fn extract_bearer_token<'a>(metadata: &'a MetadataMap) -> Result<Option<&'a str>> {
+    fn extract_bearer_token(metadata: &MetadataMap) -> Result<Option<&str>> {
         let Some(raw_value) = metadata.get("authorization") else {
             return Ok(None);
         };

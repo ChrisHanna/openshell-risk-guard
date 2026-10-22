@@ -1,0 +1,5 @@
+# The toolchain this repository is built and tested with. The Dockerfile builds on rust:1.95-trixie, and Cargo.toml requires 1.94.
+# Components (rustfmt, clippy) are installed by the CI workflow and by contributors who run those tools.
+[toolchain]
+channel = "1.95.0"
+profile = "minimal"

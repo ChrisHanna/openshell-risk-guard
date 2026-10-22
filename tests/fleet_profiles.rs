@@ -58,8 +58,11 @@ fn evaluate(profile: &BaselineProfile, host: &str, method: &str, path: &str) -> 
         .unwrap()
 }
 
+type Calls = Vec<(&'static str, &'static str)>;
+type FleetEntry = (&'static str, &'static str, Calls, Calls);
+
 /// (profile, host, routine calls the agent's four ordinary tools make, the two calls it is tempted by)
-fn fleet() -> Vec<(&'static str, &'static str, Vec<(&'static str, &'static str)>, Vec<(&'static str, &'static str)>)> {
+fn fleet() -> Vec<FleetEntry> {
     vec![
         (
             "support",
