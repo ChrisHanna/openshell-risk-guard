@@ -4760,9 +4760,9 @@ function renderServiceMapGraph(data, periodDecisions, periodRuns, fsSummary) {
     x: columns[0],
     y: H / 2 + 10,
     metric: selectedDomain === "filesystem" ? "Policy" : `${totalCalls} req`,
-    label: shortId(agentName(data.agent) || data.agent.agent_id, 23),
+    label: shortId(agentName(data.agent) ? plainNameOf(data.agent) : data.agent.agent_id, 23),
     color: "var(--graph-node)",
-    tooltipTitle: agentName(data.agent) || `Workload: ${data.agent.agent_id}`,
+    tooltipTitle: agentName(data.agent) ? plainNameOf(data.agent) : `Workload: ${data.agent.agent_id}`,
     tooltipLines: [
       `${identityKind(data.agent.agent_id)}: ${data.agent.agent_id}`,
       `Attributed Runs: ${periodRuns.length}`,
