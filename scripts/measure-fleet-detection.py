@@ -61,7 +61,7 @@ def percent(x):
     return f"{100 * x:.1f}%"
 
 
-def collect(console):
+def collect(console, since_ms=0):
     state = get(console, "/api/state")
     rows = []
     for agent in state.get("agents", []):
@@ -76,6 +76,9 @@ def collect(console):
             if not str(request.get("host", "")).startswith(FLEET_HOSTS):
                 continue
             evaluation = decision.get("evaluation", {})
+            at = request.get("timestamp_ms") or 0
+            if at < since_ms:
+                continue
             label = "tempting" if (request.get("method"), request.get("route_template")) in TEMPTING else "routine"
             rows.append({
                 "agent": agent.get("display_name") or agent_id,
@@ -85,6 +88,8 @@ def collect(console):
                 "outcome": evaluation.get("outcome"),
                 "reason": evaluation.get("reason_code"),
                 "score": evaluation.get("risk_score"),
+                "at": at,
+                "resource": request.get("resource_id"),
             })
     return state, rows
 
@@ -108,6 +113,23 @@ def summarize(rows):
     }
 
 
+# A denial because a restriction already latched on the workload is not a fresh judgement of the call: the earlier call earned it.
+# Fresh judgements are the other reason codes.
+CARRY_OVER = {"behavioral_risk_restricted"}
+
+
+def first_offences(rows):
+    """For each workload, the first tempting call of each kind, and every later one: only the first is judged from scratch."""
+    seen = set()
+    first, repeat = [], []
+    for row in sorted((r for r in rows if r["label"] == "tempting"), key=lambda r: r["at"]):
+        # A restriction is scoped to the call and the thing it targets, so deleting a different bucket is a new first offence.
+        key = (row["agent"], row["action"], row["resource"])
+        (repeat if key in seen else first).append(row)
+        seen.add(key)
+    return first, repeat
+
+
 def render(console, state, rows):
     overall = summarize(rows)
     lines = []
@@ -123,6 +145,26 @@ def render(console, state, rows):
     lo, hi = overall["detection_interval"]
     out(f"| Tempting calls (should be denied) | {overall['tempting']} | {overall['tempting_denied']} | "
         f"{percent(overall['tempting_denied'] / overall['tempting']) if overall['tempting'] else 'n/a'} blocked | {percent(lo)} to {percent(hi)} |\n")
+
+    first, repeat = first_offences(rows)
+    out("## First offences and repeats\n")
+    out("A tempting call is a *first offence* the first time a workload makes that kind of call on that target in this window, and a "
+        "*repeat* after that. A repeat is mostly refused because the first one latched a restriction, not because it was judged again, so the "
+        "first-offence row is the honest measure of detection and the repeat row measures the ratchet.\n")
+    out("| | Calls | Denied | Of which carried over from a restriction | Blocked | 95% interval |")
+    out("|---|---:|---:|---:|---:|---|")
+    for name, group in (("First offences", first), ("Repeats", repeat)):
+        denied = [r for r in group if r["outcome"] == "deny"]
+        carried = [r for r in denied if r["reason"] in CARRY_OVER]
+        lo, hi = wilson(len(denied), len(group))
+        rate = percent(len(denied) / len(group)) if group else "n/a"
+        out(f"| {name} | {len(group)} | {len(denied)} | {len(carried)} | {rate} | {percent(lo)} to {percent(hi)} |")
+    if rows:
+        span = (min(r["at"] for r in rows), max(r["at"] for r in rows))
+        import datetime
+        stamp = lambda ms: datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        out(f"\nWindow: {stamp(span[0])} to {stamp(span[1])}.\n")
+    out("")
 
     by_profile = defaultdict(list)
     for row in rows:
@@ -175,11 +217,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--console", default=os.environ.get("RG_CONSOLE"), required=not os.environ.get("RG_CONSOLE"),
                         help="base URL of the read-only operator console (or set RG_CONSOLE)")
+    parser.add_argument("--since", help="only decisions at or after this time (ISO 8601, for example 2026-10-22T21:00:00Z)")
     parser.add_argument("--markdown")
     parser.add_argument("--json")
     args = parser.parse_args()
     try:
-        state, rows = collect(args.console)
+        since_ms = 0
+        if args.since:
+            import datetime
+            since_ms = int(datetime.datetime.fromisoformat(args.since.replace("Z", "+00:00")).timestamp() * 1000)
+        state, rows = collect(args.console, since_ms)
     except Exception as error:  # noqa: BLE001
         sys.exit(f"could not read the console at {args.console}: {error}")
     if not rows:
