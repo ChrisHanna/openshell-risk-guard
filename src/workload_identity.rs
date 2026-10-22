@@ -24,12 +24,12 @@ pub struct DerivedWorkload {
 }
 
 /// Identity providers OpenShell reports for callers it actually authenticated.
-const AUTHENTICATED_PROVIDERS: [&str; 3] = ["oidc", "cloudflare_access", "mtls"];
+const AUTHENTICATED_PROVIDERS: [&str; 4] = ["oidc", "cloudflare_access", "mtls", "spiffe"];
 /// OpenShell's explicit unauthenticated local-development user. It proves nothing about who
 /// is calling, so it only owns a workload when the operator opts in.
 const LOCAL_DEV_PROVIDER: &str = "local_dev";
 
-/// Only callers the gateway authenticates as a person or operator can own a workload.
+/// Callers the gateway authenticates as a person or operator can own a workload, and so can a workload that proved a SPIFFE ID.
 /// Anonymous, unknown, peer and sandbox callers are refused because they name no durable actor.
 ///
 /// `provider` is the identity provider the gateway reports for the caller. A subject is only
@@ -48,7 +48,7 @@ pub fn derive_workload(
             "the sandbox did not report its workspace, so no workload can be derived".into(),
         ));
     }
-    if !matches!(kind, "operator" | "user") {
+    if !matches!(kind, "operator" | "user" | "workload") {
         return Err(RiskGuardError::InvalidArgument(format!(
             "cannot derive a workload from a '{kind}' principal; only operator and user callers can own one"
         )));
@@ -57,6 +57,8 @@ pub fn derive_workload(
         // A client-certificate caller is a `user` unless its certificate carries the operator
         // role, in which case the gateway reports `operator`; both come from the `mtls` provider.
         ("user", "oidc" | "cloudflare_access" | "mtls") | ("operator", "mtls") => true,
+        // A SPIFFE workload is identified by the SPIFFE ID in its verified X.509-SVID, and by nothing else.
+        ("workload", "spiffe") => subject.starts_with("spiffe://"),
         ("user", LOCAL_DEV_PROVIDER) => allow_local_dev,
         _ => false,
     };
@@ -255,6 +257,54 @@ mod tests {
             .is_ok()
         );
         assert!(derive_workload("default", "local_dev", "operator", "x", true).is_err());
+    }
+
+    #[test]
+    fn a_spiffe_workload_owns_a_workload_only_through_a_spiffe_id() {
+        let a = derive_workload(
+            "spiffe",
+            "spiffe",
+            "workload",
+            "spiffe://example.org/ns/p/sa/a",
+            false,
+        )
+        .unwrap();
+        let b = derive_workload(
+            "spiffe",
+            "spiffe",
+            "workload",
+            "spiffe://example.org/ns/p/sa/b",
+            false,
+        )
+        .unwrap();
+        assert_ne!(a.agent_id, b.agent_id);
+        assert_eq!(
+            a.agent_id,
+            derive_workload(
+                "spiffe",
+                "spiffe",
+                "workload",
+                "spiffe://example.org/ns/p/sa/a",
+                false
+            )
+            .unwrap()
+            .agent_id
+        );
+        // The same string from another provider, or a non-SPIFFE subject, never becomes a SPIFFE workload.
+        assert!(
+            derive_workload(
+                "spiffe",
+                "oidc",
+                "workload",
+                "spiffe://example.org/x",
+                false
+            )
+            .is_err()
+        );
+        assert!(derive_workload("spiffe", "spiffe", "workload", "alice", false).is_err());
+        assert!(
+            derive_workload("spiffe", "spiffe", "user", "spiffe://example.org/x", false).is_err()
+        );
     }
 
     #[test]

@@ -22,6 +22,7 @@ pub mod normalizer;
 mod operator_controls;
 pub mod operator_dashboard;
 pub mod sidecar;
+pub mod spiffe;
 pub mod store;
 pub mod types;
 pub mod workload_identity;

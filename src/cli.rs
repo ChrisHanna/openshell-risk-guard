@@ -113,6 +113,20 @@ pub enum Commands {
             default_value_t = 30
         )]
         decision_retention_days: u32,
+        /// Also serve the middleware on this address with mutual TLS, identifying each caller by the SPIFFE ID in its X.509-SVID.
+        /// Needs --svid-bundle and --svid-trust-domain, and reuses --tls-cert/--tls-key as the server identity.
+        #[arg(long = "svid-listen", env = "RISK_GUARD_SVID_LISTEN")]
+        svid_listen: Option<SocketAddr>,
+        /// PEM file with the SPIFFE trust bundle (the certificate authorities that sign SVIDs); re-read when it changes.
+        #[arg(long = "svid-bundle", env = "RISK_GUARD_SVID_BUNDLE")]
+        svid_bundle: Option<PathBuf>,
+        /// A trust domain whose SPIFFE IDs may call the SVID listener (repeatable).
+        #[arg(
+            long = "svid-trust-domain",
+            env = "RISK_GUARD_SVID_TRUST_DOMAINS",
+            value_delimiter = ','
+        )]
+        svid_trust_domains: Vec<String>,
     },
     /// Check that a running sidecar is serving, over TLS (for Kubernetes exec probes; exit 0 only if SERVING).
     HealthCheck {
@@ -486,6 +500,9 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             workload_from_principal,
             allow_local_dev_principal,
             decision_retention_days,
+            svid_listen,
+            svid_bundle,
+            svid_trust_domains,
         } => {
             if public_key_pem.is_none() && !allow_insecure_local_test {
                 return Err(RiskGuardError::InvalidArgument(
@@ -503,6 +520,7 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                 allow_insecure_local_test,
             )?;
             let store = Arc::new(SqliteRiskStore::open(&db)?);
+            let svid_store = Arc::clone(&store) as Arc<dyn RiskStore>;
             store.bind_resource_key(&hmac_key, now_unix_ms())?;
             if decision_retention_days > 0 {
                 let retention_store = Arc::clone(&store);
@@ -603,6 +621,41 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             )
             .with_required_agent_identity(!allow_unattributed)
             .with_latency_recorder(latency);
+
+            if let Some(svid_addr) = svid_listen {
+                let (Some(bundle), Some(server_tls)) = (svid_bundle.clone(), tls.clone()) else {
+                    return Err(RiskGuardError::InvalidArgument(
+                        "--svid-listen needs --svid-bundle and a server identity (--tls-cert and --tls-key)".into(),
+                    ));
+                };
+                let policy = crate::spiffe::SvidPolicy::new(&svid_trust_domains)?;
+                let mut svid_service = middleware_service.clone();
+                svid_service.auth = Arc::new(crate::spiffe::SvidAuthVerifier::new(
+                    policy.clone(),
+                    Arc::clone(&svid_store),
+                    gateway_id.clone(),
+                    default_task_profile.clone(),
+                ));
+                tokio::spawn(async move {
+                    if let Err(error) = crate::spiffe::serve_svid_listener(
+                        svid_addr,
+                        server_tls,
+                        bundle,
+                        policy,
+                        svid_service,
+                        shutdown_signal,
+                    )
+                    .await
+                    {
+                        tracing::error!(%error, "the SVID listener stopped");
+                    }
+                });
+            } else if svid_bundle.is_some() || !svid_trust_domains.is_empty() {
+                return Err(RiskGuardError::InvalidArgument(
+                    "--svid-bundle and --svid-trust-domain have no effect without --svid-listen"
+                        .into(),
+                ));
+            }
 
             let agent_binding = crate::interceptor_service::AgentBindingPolicy::new(
                 &agent_binding_principals,
