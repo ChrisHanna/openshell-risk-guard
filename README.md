@@ -121,20 +121,22 @@ Where this document says "the sandboxed process", it means the program running i
 
 ## Quickstart
 
-Run the synthetic test, benchmark and 10-step end-to-end suite (no OpenShell gateway needed):
+See the operator console with sample data in about ten minutes. It needs Rust, a C++ toolchain and internet access, and no
+OpenShell checkout, cluster or Docker ([full prerequisites and troubleshooting](docs/getting-started.md)):
 
 ```bash
-./scripts/demo.sh
+git clone https://github.com/ChrisHanna/openshell-risk-guard.git && cd openshell-risk-guard
+cargo build --locked --release                     # about 5 minutes the first time
+scripts/seed-sample-data.sh                        # a sample database, in about a second
+target/release/openshell-risk-guard dashboard --db /tmp/risk-guard-sample.db
+# then open http://127.0.0.1:8787/
 ```
 
-For a narrated walkthrough with pauses between stages:
+Other ways in: run the tests, run it against a real OpenShell gateway locally ([Demo and local deployment](docs/demo.md)), or
+deploy it on Azure with live agents ([Running on AKS](docs/aks.md)). [Getting started](docs/getting-started.md) compares them.
 
-```bash
-./scripts/demo.sh --interactive
-```
-
-To run against a real OpenShell gateway and sandbox, use the local demo stack in
-[Demo and local deployment](docs/demo.md).
+`./scripts/demo.sh` runs the synthetic evaluation, latency benchmark and 10-step end-to-end suite (`--interactive` pauses between
+stages).
 
 ### Operator CLI commands
 
@@ -178,6 +180,7 @@ cargo run -- hardening-report \
 
 | Read | For |
 |---|---|
+| [Getting started](docs/getting-started.md) | Four ways to run it, from ten minutes with sample data to a live Azure deployment; prerequisites and troubleshooting |
 | [Operating Risk Guard](docs/operations.md) | TLS and secrets, bootstrap order, protecting a new API, recovering from a false positive, metrics, rollout |
 | [Security model](docs/security-model.md) | How the sidecar sits next to OpenShell, workload ID continuity, trust boundaries, measured release gates |
 | [Where Risk Guard fits](docs/positioning.md) | What this project is for, why OpenShell plus NVIDIA Sentry is the recommended approach for threat-level protection, and what Risk Guard adds beside it |

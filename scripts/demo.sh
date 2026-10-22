@@ -36,7 +36,7 @@ echo "==========================================================================
 echo "Crate manifest: ${MANIFEST_PATH}"
 echo ""
 
-pause_if_interactive "Stage 1 verifies all 54 unit tests across Ed25519 openshell-ext+jwt auth, path/route normalization, interaction-aware scoring, SQLite WAL+FULL persistence, and the Two-Step Z3 Containment Proof."
+pause_if_interactive "Stage 1 verifies the unit tests across Ed25519 openshell-ext+jwt auth, path/route normalization, interaction-aware scoring, SQLite WAL+FULL persistence, and the Two-Step Z3 Containment Proof."
 echo "[1/3] Running module unit tests (auth, normalizer, detector, store, hardening, fixture, middleware, interceptor, cli)..."
 cargo test --manifest-path "${MANIFEST_PATH}" --lib
 
