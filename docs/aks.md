@@ -254,20 +254,23 @@ model `nvidia/nemotron-3.5-lightning-30b-a3b`). NVIDIA does not publish the limi
 NVIDIA forums commonly report **40 requests per minute per account**, varying by model and load, and your own figure is
 shown on your build.nvidia.com dashboard. Check it there before raising the pace.
 
-A run makes at most about a dozen model calls (the agent is capped at 12 tool calls, plus the guardrail check on every third
-run) in roughly 80 seconds, so assume up to 10 model requests a minute while one run is active. That is an estimate from the
-workflow's caps, not a measurement.
+A run makes up to about a dozen model calls (the agent is capped at 12 tool calls, plus the guardrail check on every third run)
+in roughly 80 seconds.
 
-| Setting | Runs per hour (3 agents) | Worst case if all three overlap | Verdict at 40/min |
-|---|---:|---:|---|
-| 8-20 min apart | 9-23 | 30/min | safe, sparse |
-| **3-8 min apart (default)** | **22-60** | **30/min** | **safe; overlap of all three is rare** |
-| 1-3 min apart | 60-180 | 30/min, almost always overlapping | at the limit; expect 429s |
+**Measured, not estimated.** With the three agents on independent random schedules, so that runs sometimes overlapped, 14 of the 54 runs
+in a two-hour window failed with `429 Too Many Requests`. A single run at a time did not. So the working limit for this account and model
+is lower than the commonly reported 40 requests a minute when runs overlap, or the calls arrive in bursts that the limit counts
+differently; I have not established which.
 
-Because there are three agents, the worst case is bounded by three concurrent runs whatever the pace; the pace changes how
-often that happens. Going beyond three agents, or a lower `MIN_WAIT`, raises it. If runs start failing with rate-limit
-errors (HTTP 429), raise `MIN_WAIT` and `MAX_WAIT` in `deploy/aks/fleet.yaml` rather than retrying harder.
+What the fleet does about it:
 
+* **At most one run at a time** (`MAX_CONCURRENT`, default 1). Agents still start at random times and wait random gaps, so the order and
+  the spacing stay random; an agent whose turn comes while another is running waits for it.
+* **One retry after 90 seconds** when a run is rate limited, instead of recording a failed run.
+* Gaps of 3 to 8 minutes (`MIN_WAIT`, `MAX_WAIT`) between an agent's runs. Lowering them mostly makes agents queue.
+
+If runs still fail with 429s, raise `MIN_WAIT` and `MAX_WAIT` in `deploy/aks/fleet.yaml`. Check your own limit on your build.nvidia.com
+dashboard before raising the pace.
 
 ### In the cluster (the normal way)
 

@@ -88,6 +88,25 @@ heartbeat() { date +%s > "$HEARTBEAT_PREFIX-${1:-main}" 2>/dev/null || true; }
 
 for a in "${AGENTS[@]}"; do [ -n "$(appid "$a")" ] || { echo "no Entra app for '$a': run 13-register-agent-identity.ps1 -AgentName $a" >&2; exit 1; }; done
 
+# The hosted model endpoint answers 429 (Too Many Requests) when runs overlap: with agents on independent random schedules,
+# 14 of 54 runs in two hours failed that way. At most MAX_CONCURRENT runs go at once; an agent whose turn comes while the slots
+# are busy waits for one. Agents still start at random times, so the order and the gaps stay random.
+MAX_CONCURRENT="${MAX_CONCURRENT:-1}"
+# Take one of the run slots (a held file lock), waiting for it. The slot is released by closing the descriptor.
+acquire_slot() {
+  local agent="$1" i fd
+  while :; do
+    for i in $(seq 0 $((MAX_CONCURRENT - 1))); do
+      exec {fd}>"/tmp/fleet-slot-$i"
+      if flock -n "$fd"; then SLOT_FD="$fd"; return; fi
+      exec {fd}>&-
+    done
+    heartbeat "$agent"
+    sleep 5
+  done
+}
+release_slot() { exec {SLOT_FD}>&-; }
+
 # One agent's loop. $1 is the agent; the first agent also sweeps leftovers.
 agent_loop() {
   local agent="$1" runs=0 task out rc started sandbox wait_s guard options
@@ -101,10 +120,19 @@ agent_loop() {
     guard=(); [ $((runs % GUARD_EVERY)) -eq 0 ] && guard=(--guardrails)
 
     heartbeat "$agent"
+    acquire_slot "$agent"
     echo "=== $(date '+%H:%M:%S')  $agent  ${guard[*]:-no-guardrail}"
     started="$(date +%s)"
     out="$(CLEANUP_SANDBOX=1 AGENT_PROFILE="${PROFILE[$agent]}" AGENT_NAME="openshell-agent-$agent" TAIL_LINES=12 timeout --kill-after=30 "$RUN_TIMEOUT" bash "$HERE/scripts/aks/run-agent.sh" "$(appid "$agent")" "$task" "${guard[@]}" 2>&1)"
     rc=$?
+    # A 429 is the model service saying slow down. Wait, then try the same task once more instead of recording a failed run.
+    if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "429.*Too Many Requests"; then
+      echo "--- $agent was rate limited (429); waiting 90s and trying once more"
+      sleep 90
+      out="$(CLEANUP_SANDBOX=1 AGENT_PROFILE="${PROFILE[$agent]}" AGENT_NAME="openshell-agent-$agent" TAIL_LINES=12 timeout --kill-after=30 "$RUN_TIMEOUT" bash "$HERE/scripts/aks/run-agent.sh" "$(appid "$agent")" "$task" "${guard[@]}" 2>&1)"
+      rc=$?
+    fi
+    release_slot
     echo "$out"
     [ "$rc" -eq 124 ] && echo "--- $agent run timed out after ${RUN_TIMEOUT}s and was stopped"
     echo "--- $agent run took $(( $(date +%s) - started ))s (exit $rc)"
