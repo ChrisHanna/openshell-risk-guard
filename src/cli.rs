@@ -515,13 +515,37 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             let hardening = Arc::new(ProverHardeningEngine::new());
             let health = crate::sidecar::HealthServer::new(Arc::clone(&store));
 
+            // Decision time is accumulated in memory and flushed to SQLite every 30 seconds, off the request path.
+            let latency = Arc::new(crate::latency::LatencyRecorder::default());
+            {
+                let latency = Arc::clone(&latency);
+                let latency_store = Arc::clone(&store);
+                tokio::spawn(async move {
+                    let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+                    loop {
+                        tick.tick().await;
+                        let interval = latency.take();
+                        if interval.count == 0 {
+                            continue;
+                        }
+                        let store = Arc::clone(&latency_store);
+                        match tokio::task::spawn_blocking(move || store.record_latency_interval(now_unix_ms(), &interval)).await {
+                            Ok(Ok(())) => {}
+                            Ok(Err(err)) => tracing::warn!(error = %err, "recording decision latency failed"),
+                            Err(err) => tracing::warn!(error = %err, "decision latency task failed"),
+                        }
+                    }
+                });
+            }
             let middleware_service = RiskGuardMiddlewareService::new(
                 Arc::clone(&auth),
                 normalizer,
                 detector,
                 Arc::clone(&store) as Arc<dyn RiskStore>,
                 audience.clone(),
-            ).with_required_agent_identity(!allow_unattributed);
+            )
+            .with_required_agent_identity(!allow_unattributed)
+            .with_latency_recorder(latency);
 
             let agent_binding = crate::interceptor_service::AgentBindingPolicy::new(
                 &agent_binding_principals,

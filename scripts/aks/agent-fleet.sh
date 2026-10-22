@@ -73,6 +73,14 @@ sweep_old_sandboxes() {
 }
 last_sweep=0
 
+# Liveness. The loop refreshes this file at the start and end of every run and before every wait; the in-cluster pod's liveness probe
+# (deploy/aks/fleet.yaml) restarts the pod if it goes stale. RUN_TIMEOUT stops one hung run from stalling the whole fleet: it is
+# killed (its sandbox is deleted by run-agent.sh's exit trap) and the loop carries on.
+HEARTBEAT_FILE="${HEARTBEAT_FILE:-/tmp/fleet-heartbeat}"
+RUN_TIMEOUT="${RUN_TIMEOUT:-1200}"
+heartbeat() { date +%s > "$HEARTBEAT_FILE" 2>/dev/null || true; }
+heartbeat
+
 declare -A RUNS
 for a in "${AGENTS[@]}"; do [ -n "$(appid "$a")" ] || { echo "no Entra app for '$a': run 13-register-agent-identity.ps1 -AgentName $a" >&2; exit 1; }; done
 
@@ -86,14 +94,21 @@ while :; do
   RUNS[$agent]=$(( ${RUNS[$agent]:-0} + 1 ))
   guard=(); [ $((RUNS[$agent] % GUARD_EVERY)) -eq 0 ] && guard=(--guardrails)
 
+  heartbeat
   echo "=== $(date '+%H:%M:%S')  $agent  ${guard[*]:-no-guardrail}"
-  out="$(CLEANUP_SANDBOX=1 AGENT_PROFILE="${PROFILE[$agent]}" AGENT_NAME="openshell-agent-$agent" TAIL_LINES=12 bash "$HERE/scripts/aks/run-agent.sh" "$(appid "$agent")" "$task" "${guard[@]}" 2>&1)"
+  started="$(date +%s)"
+  out="$(CLEANUP_SANDBOX=1 AGENT_PROFILE="${PROFILE[$agent]}" AGENT_NAME="openshell-agent-$agent" TAIL_LINES=12 timeout --kill-after=30 "$RUN_TIMEOUT" bash "$HERE/scripts/aks/run-agent.sh" "$(appid "$agent")" "$task" "${guard[@]}" 2>&1)"
+  rc=$?
   echo "$out"
+  [ "$rc" -eq 124 ] && echo "--- run timed out after ${RUN_TIMEOUT}s and was stopped"
+  echo "--- run took $(( $(date +%s) - started ))s (exit $rc)"
+  heartbeat
   sandbox="$(printf '%s\n' "$out" | sed -n 's/^sandbox: \([^ ]*\).*/\1/p' | tail -1)"
   [ -n "$sandbox" ] && "$CLI" sandbox delete "$sandbox" >/dev/null 2>&1
 
   [ "$ONCE" = 1 ] && break
   wait_s=$(( MIN_WAIT + RANDOM % (MAX_WAIT - MIN_WAIT + 1) ))
   echo "--- next run in ${wait_s}s"
+  heartbeat
   sleep "$wait_s"
 done

@@ -109,6 +109,7 @@ impl SqliteRiskStore {
         conn.execute_batch(AGENT_WORKSPACES_MIGRATION_SQL)?;
         ensure_binding_audit_provider_column(&conn)?;
         ensure_epoch_closed_at_column(&conn)?;
+        ensure_latency_table(&conn)?;
         conn.execute_batch(SIDECAR_MIGRATION_SQL)?;
 
         let read_conn = Connection::open(path_ref)?;
@@ -140,6 +141,7 @@ impl SqliteRiskStore {
         conn.execute_batch(AGENT_WORKSPACES_MIGRATION_SQL)?;
         ensure_binding_audit_provider_column(&conn)?;
         ensure_epoch_closed_at_column(&conn)?;
+        ensure_latency_table(&conn)?;
         conn.execute_batch(SIDECAR_MIGRATION_SQL)?;
 
         Ok(Self {
@@ -188,12 +190,14 @@ impl SqliteRiskStore {
         let agents = identity::agent_inventory(&tx, now_ms)?;
         let total_agents: i64 = tx.query_row("SELECT COUNT(*) FROM agents", [], |row| row.get(0))?;
         let (lifecycle, connectivity) = lifecycle_overview(&tx, now_ms)?;
+        let latency = operations::latency_summary(&tx, now_ms, operations::LATENCY_WINDOW_MS)?;
         tx.commit()?;
         Ok(serde_json::json!({
             "source": "persisted_risk_guard_evidence",
             "generated_at_ms": now_ms,
             "gateway_connectivity": connectivity,
             "sandbox_lifecycle": lifecycle,
+            "decision_latency": latency,
             "coverage": "selected_inspected_http_requests_only",
             "transport_provenance": "per_decision_when_recorded_legacy_history_unknown",
             "total_sandboxes": total,
@@ -566,13 +570,11 @@ impl RiskStore for SqliteRiskStore {
         let mut conn = self.lock_conn()?;
         let tx = conn.transaction()?;
         let mut epoch = query_active_epoch(&tx, sandbox_id)?;
-        if let Some(epoch) = epoch.as_mut() {
-            if let Some(identity) = resolve_identity(&tx, epoch)? {
-                if let Some(saved) = guardrails::query_saved(&tx, &identity.agent_id)? {
+        if let Some(epoch) = epoch.as_mut()
+            && let Some(identity) = resolve_identity(&tx, epoch)?
+                && let Some(saved) = guardrails::query_saved(&tx, &identity.agent_id)? {
                     epoch.mode = saved.settings.mode;
                 }
-            }
-        }
         tx.commit()?;
         Ok(epoch)
     }
@@ -794,6 +796,20 @@ fn ensure_binding_audit_provider_column(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// One row per flushed interval of the middleware's server-side decision time (see `crate::latency`).
+fn ensure_latency_table(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS latency_intervals (
+            at_ms INTEGER PRIMARY KEY,
+            count INTEGER NOT NULL,
+            sum_us INTEGER NOT NULL,
+            max_us INTEGER NOT NULL,
+            buckets_json TEXT NOT NULL
+         )",
+    )?;
+    Ok(())
+}
+
 fn ensure_epoch_closed_at_column(conn: &Connection) -> Result<()> {
     let present: i64 = conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info('epochs') WHERE name = 'closed_at_ms'",
@@ -877,6 +893,9 @@ fn lifecycle_overview(conn: &Connection, now_ms: i64) -> Result<(serde_json::Val
         "recently_active": recently_active,
         "idle": idle,
         "not_seen_recently": not_seen,
+        // The same counts under the names the console uses: open = seen within the window, presumed gone = not seen for it.
+        "open": recently_active + idle,
+        "presumed_gone": not_seen,
         "recent_activity_window_ms": SANDBOX_RECENT_ACTIVITY_MS,
         "not_seen_after_ms": SANDBOX_NOT_SEEN_AFTER_MS,
         "decisions_recorded": decisions_total,

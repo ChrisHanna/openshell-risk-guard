@@ -122,6 +122,8 @@ pub struct RiskGuardMiddlewareService {
     pub expected_audience: String,
     pub eval_timeout: Duration,
     pub require_agent_identity: bool,
+    /// Where each request's server-side decision time is recorded. `None` records nothing (tests).
+    pub latency: Option<Arc<crate::latency::LatencyRecorder>>,
 }
 
 impl fmt::Debug for RiskGuardMiddlewareService {
@@ -154,7 +156,15 @@ impl RiskGuardMiddlewareService {
             expected_audience: expected_audience.into(),
             eval_timeout: Duration::from_millis(DEFAULT_EVAL_TIMEOUT_MS),
             require_agent_identity: false,
+            latency: None,
         }
+    }
+
+    /// Record each request's server-side decision time (success, error and timeout alike) into `recorder`.
+    #[must_use]
+    pub fn with_latency_recorder(mut self, recorder: Arc<crate::latency::LatencyRecorder>) -> Self {
+        self.latency = Some(recorder);
+        self
     }
 
     #[must_use]
@@ -435,6 +445,8 @@ impl SupervisorMiddleware for RiskGuardMiddlewareService {
             timestamp_ms: now_unix_ms(),
         };
 
+        // From here to the end of the function, on every path, the time is recorded: a slow failure must be counted too.
+        let _timer = crate::latency::LatencyTimer::start(self.latency.as_deref());
         let normalized = self
             .normalizer
             .normalize(&raw_input)

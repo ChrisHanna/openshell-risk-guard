@@ -509,7 +509,8 @@ impl SqliteRiskStore {
             for row in rows {
                 let (id, revision, task, context, created, ended) = row?;
                 let mut sandboxes = tx.prepare(
-                    "SELECT e.sandbox_id, e.epoch_id, e.gateway_id, e.active, e.mode, e.task_profile, e.created_at_ms, e.active_policy_hash
+                    "SELECT e.sandbox_id, e.epoch_id, e.gateway_id, e.active, e.mode, e.task_profile, e.created_at_ms, e.active_policy_hash,
+                            MAX(e.created_at_ms, COALESCE((SELECT MAX(d.created_at_ms) FROM decisions d WHERE d.epoch_id = e.epoch_id), 0))
                      FROM epoch_bindings b JOIN epochs e ON e.epoch_id = b.epoch_id
                      WHERE b.run_id = ?1 ORDER BY b.created_at_ms DESC, b.rowid DESC LIMIT 100",
                 )?;
@@ -518,11 +519,22 @@ impl SqliteRiskStore {
                     "sandbox_id": row.get::<_, String>(0)?, "epoch_id": row.get::<_, String>(1)?,
                     "gateway_id": row.get::<_, String>(2)?, "active": row.get::<_, bool>(3)?,
                     "mode": row.get::<_, String>(4)?, "task_profile": row.get::<_, String>(5)?,
-                    "created_at_ms": row.get::<_, i64>(6)?, "active_policy_hash": row.get::<_, Option<String>>(7)?
+                    "created_at_ms": row.get::<_, i64>(6)?, "active_policy_hash": row.get::<_, Option<String>>(7)?,
+                    "last_activity_at_ms": row.get::<_, i64>(8)?,
+                    // closed: a delete event ended it. Otherwise how recently it was seen; "not_seen_recently" means presumed gone.
+                    "lifecycle": if row.get::<_, bool>(3)? { super::lifecycle_state(row.get::<_, i64>(8)?, now_ms) } else { "closed" }
                 })))?.collect::<std::result::Result<Vec<_>, _>>()?;
+                let run_lifecycle = if ended.is_some() {
+                    "ended"
+                } else if sandboxes.is_empty() || sandboxes.iter().any(|s| matches!(s["lifecycle"].as_str(), Some("recently_active" | "idle"))) {
+                    "open"
+                } else {
+                    "presumed_gone"
+                };
                 runs.push(json!({
                     "run_id": id, "agent_revision": revision, "task_profile": task,
-                    "context_id": context, "created_at_ms": created, "ended_at_ms": ended, "sandboxes": sandboxes
+                    "context_id": context, "created_at_ms": created, "ended_at_ms": ended, "sandboxes": sandboxes,
+                    "lifecycle": run_lifecycle
                 }));
             }
         }
@@ -718,7 +730,11 @@ pub(super) fn resolve_identity(
 }
 
 pub(super) fn agent_inventory(conn: &Connection, now_ms: i64) -> Result<Vec<Value>> {
-    let mut stmt = conn.prepare(
+    // A sandbox whose epoch is not closed but that has produced nothing for this long is presumed gone: its delete event
+    // was most likely missed (OpenShell's post-commit hook is fail-open). This is derived from activity on every read, never
+    // written, so a sandbox that speaks again counts as open again.
+    let not_seen_ms = super::SANDBOX_NOT_SEEN_AFTER_MS;
+    let mut stmt = conn.prepare(&format!(
         "SELECT a.agent_id, a.display_name, a.created_at_ms,
           (SELECT COUNT(*) FROM agent_runs r JOIN scoring_contexts c USING(context_id) WHERE c.agent_id = a.agent_id),
           (SELECT COUNT(*) FROM decision_identity i JOIN agent_runs r USING(run_id)
@@ -748,9 +764,14 @@ pub(super) fn agent_inventory(conn: &Connection, now_ms: i64) -> Result<Vec<Valu
            WHERE c.agent_id = a.agent_id),
           (SELECT COUNT(DISTINCT e.sandbox_id) FROM epoch_bindings b JOIN epochs e USING(epoch_id)
            JOIN agent_runs r USING(run_id) JOIN scoring_contexts c USING(context_id)
-           WHERE c.agent_id = a.agent_id AND e.active != 0)
+           WHERE c.agent_id = a.agent_id AND e.active != 0),
+          (SELECT COUNT(DISTINCT e.sandbox_id) FROM epoch_bindings b JOIN epochs e USING(epoch_id)
+           JOIN agent_runs r USING(run_id) JOIN scoring_contexts c USING(context_id)
+           WHERE c.agent_id = a.agent_id AND e.active != 0
+             AND MAX(e.created_at_ms, COALESCE((SELECT MAX(d.created_at_ms) FROM decisions d WHERE d.epoch_id = e.epoch_id), 0))
+                 > ?1 - {not_seen_ms})
          FROM agents a ORDER BY a.agent_id LIMIT 200",
-    )?;
+    ))?;
     Ok(stmt.query_map(params![now_ms], |row| Ok(json!({
         "agent_id": row.get::<_, String>(0)?, "display_name": row.get::<_, String>(1)?,
         "created_at_ms": row.get::<_, i64>(2)?, "run_count": row.get::<_, i64>(3)?,
@@ -763,8 +784,11 @@ pub(super) fn agent_inventory(conn: &Connection, now_ms: i64) -> Result<Vec<Valu
         "sandbox_count": row.get::<_, i64>(11)?,
         "context_count": row.get::<_, i64>(12)?,
         "recommendation_count": row.get::<_, i64>(13)?,
-        // `sandbox_count` is every sandbox ever bound to this workload; this is the subset whose epoch is still open.
-        "active_sandbox_count": row.get::<_, i64>(14)?
+        // `sandbox_count` is every sandbox ever bound to this workload. `active_sandbox_count` is those whose epoch has not been
+        // closed by a delete event. `open_sandbox_count` is the subset of those seen recently; the rest are presumed gone.
+        "active_sandbox_count": row.get::<_, i64>(14)?,
+        "open_sandbox_count": row.get::<_, i64>(15)?,
+        "presumed_gone_sandbox_count": (row.get::<_, i64>(14)? - row.get::<_, i64>(15)?).max(0)
     })))?.collect::<std::result::Result<Vec<_>, _>>()?)
 }
 

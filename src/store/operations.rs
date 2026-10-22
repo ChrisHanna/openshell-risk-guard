@@ -234,6 +234,27 @@ impl SqliteRiskStore {
         }))
     }
 
+    /// Persist one interval of server-side decision times. Rows older than a week are dropped.
+    pub fn record_latency_interval(&self, at_ms: i64, interval: &crate::latency::LatencyInterval) -> Result<()> {
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO latency_intervals (at_ms, count, sum_us, max_us, buckets_json)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                at_ms,
+                i64::try_from(interval.count).unwrap_or(i64::MAX),
+                i64::try_from(interval.sum_us).unwrap_or(i64::MAX),
+                i64::try_from(interval.max_us).unwrap_or(i64::MAX),
+                serde_json::to_string(&interval.buckets)?
+            ],
+        )?;
+        conn.execute(
+            "DELETE FROM latency_intervals WHERE at_ms < ?1",
+            params![at_ms.saturating_sub(7 * 86_400_000)],
+        )?;
+        Ok(())
+    }
+
     /// Export operational counters and gauges in Prometheus text exposition format.
     pub fn prometheus_metrics(&self, now_ms: i64) -> Result<String> {
         let mut conn = self.lock_conn()?;
@@ -312,9 +333,43 @@ impl SqliteRiskStore {
             }
         }
 
+        let latency = merged_latency(&tx, now_ms, LATENCY_WINDOW_MS)?;
+        let last_decision_ms: Option<i64> = tx.query_row("SELECT MAX(created_at_ms) FROM decisions", [], |row| row.get(0))?;
+        let (lifecycle, _) = super::lifecycle_overview(&tx, now_ms)?;
         tx.commit()?;
 
         let mut out = String::with_capacity(1024);
+        out.push_str("# HELP openshell_risk_guard_decision_latency_seconds Server-side decision time over the last hour: percentile upper bounds from histogram buckets (excludes network transit).\n");
+        out.push_str("# TYPE openshell_risk_guard_decision_latency_seconds gauge\n");
+        for (label, quantile) in [("0.5", 0.50), ("0.95", 0.95), ("0.99", 0.99)] {
+            if let Some(us) = latency.quantile_upper_bound_us(quantile) {
+                out.push_str(&format!(
+                    "openshell_risk_guard_decision_latency_seconds{{quantile=\"{label}\"}} {}\n",
+                    us as f64 / 1_000_000.0
+                ));
+            }
+        }
+        out.push_str("# HELP openshell_risk_guard_decision_latency_samples Decisions timed in the last hour.\n");
+        out.push_str("# TYPE openshell_risk_guard_decision_latency_samples gauge\n");
+        out.push_str(&format!("openshell_risk_guard_decision_latency_samples {}\n", latency.count));
+        out.push_str("# HELP openshell_risk_guard_decision_latency_over_timeout Decisions in the last hour slower than OpenShell's 500 ms middleware timeout.\n");
+        out.push_str("# TYPE openshell_risk_guard_decision_latency_over_timeout gauge\n");
+        out.push_str(&format!("openshell_risk_guard_decision_latency_over_timeout {}\n", latency.over_timeout()));
+        if latency.count > 0 {
+            out.push_str("# HELP openshell_risk_guard_decision_latency_max_seconds Slowest decision in the last hour.\n");
+            out.push_str("# TYPE openshell_risk_guard_decision_latency_max_seconds gauge\n");
+            out.push_str(&format!("openshell_risk_guard_decision_latency_max_seconds {}\n", latency.max_us as f64 / 1_000_000.0));
+        }
+        if let Some(last) = last_decision_ms {
+            out.push_str("# HELP openshell_risk_guard_seconds_since_last_decision Seconds since the newest recorded decision. Alert on this to notice agents or the sidecar going quiet.\n");
+            out.push_str("# TYPE openshell_risk_guard_seconds_since_last_decision gauge\n");
+            out.push_str(&format!("openshell_risk_guard_seconds_since_last_decision {}\n", now_ms.saturating_sub(last) as f64 / 1000.0));
+        }
+        out.push_str("# HELP openshell_risk_guard_sandboxes Sandboxes by lifecycle, derived from activity: open were seen within six hours, presumed_gone were not, closed had a delete event.\n");
+        out.push_str("# TYPE openshell_risk_guard_sandboxes gauge\n");
+        out.push_str(&format!("openshell_risk_guard_sandboxes{{state=\"open\"}} {}\n", lifecycle["open"].as_i64().unwrap_or(0)));
+        out.push_str(&format!("openshell_risk_guard_sandboxes{{state=\"presumed_gone\"}} {}\n", lifecycle["presumed_gone"].as_i64().unwrap_or(0)));
+        out.push_str(&format!("openshell_risk_guard_sandboxes{{state=\"closed\"}} {}\n", lifecycle["sandboxes_closed"].as_i64().unwrap_or(0)));
         out.push_str("# HELP openshell_risk_guard_store_healthy Whether the SQLite risk store is reachable.\n");
         out.push_str("# TYPE openshell_risk_guard_store_healthy gauge\n");
         out.push_str("openshell_risk_guard_store_healthy 1\n");
@@ -370,4 +425,47 @@ impl SqliteRiskStore {
         ));
         Ok(out)
     }
+}
+
+/// The window the console and `/metrics` summarize decision time over.
+pub(super) const LATENCY_WINDOW_MS: i64 = 3_600_000;
+
+/// Merge the flushed intervals in the window into one histogram.
+pub(super) fn merged_latency(conn: &Connection, now_ms: i64, window_ms: i64) -> Result<crate::latency::LatencyInterval> {
+    let mut merged = crate::latency::LatencyInterval::default();
+    let mut stmt = conn.prepare(
+        "SELECT count, sum_us, max_us, buckets_json FROM latency_intervals WHERE at_ms > ?1 AND at_ms <= ?2",
+    )?;
+    let rows = stmt.query_map(params![now_ms.saturating_sub(window_ms), now_ms], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, String>(3)?))
+    })?;
+    for row in rows {
+        let (count, sum_us, max_us, buckets_json) = row?;
+        let Ok(buckets) = serde_json::from_str::<Vec<u64>>(&buckets_json) else { continue };
+        merged.merge(&crate::latency::LatencyInterval {
+            count: u64::try_from(count).unwrap_or(0),
+            sum_us: u64::try_from(sum_us).unwrap_or(0),
+            max_us: u64::try_from(max_us).unwrap_or(0),
+            buckets,
+        });
+    }
+    Ok(merged)
+}
+
+/// Server-side decision time over a window, for the console. Percentiles are bucket upper bounds, so they never understate.
+pub(super) fn latency_summary(conn: &Connection, now_ms: i64, window_ms: i64) -> Result<Value> {
+    let merged = merged_latency(conn, now_ms, window_ms)?;
+    Ok(json!({
+        "window_ms": window_ms,
+        "samples": merged.count,
+        "mean_us": merged.sum_us.checked_div(merged.count),
+        "p50_us": merged.quantile_upper_bound_us(0.50),
+        "p95_us": merged.quantile_upper_bound_us(0.95),
+        "p99_us": merged.quantile_upper_bound_us(0.99),
+        "max_us": if merged.count > 0 { Some(merged.max_us) } else { None },
+        "over_timeout": merged.over_timeout(),
+        "timeout_us": 500_000,
+        "basis": "Risk Guard's own processing time for each middleware request, from after validation until the result is \
+ready, including the SQLite commit. It excludes network transit and the supervisor. Percentiles are histogram bucket upper bounds.",
+    }))
 }

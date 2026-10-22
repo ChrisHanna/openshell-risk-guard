@@ -186,8 +186,12 @@ fn dashboard_inventory_excludes_expired_and_previous_epoch_restrictions() {
     let store = open_and_seed_store(&db).unwrap();
     let conn = rusqlite::Connection::open(&db).unwrap();
     conn.execute_batch(
-        "INSERT INTO epochs VALUES ('current','gateway','sandbox','repo-triage-readonly','hash','enforce',1,1,0,'[]',NULL);
-         INSERT INTO epochs VALUES ('old','gateway','sandbox','repo-triage-readonly','hash','enforce',0,1,0,'[]',NULL);
+        "INSERT INTO epochs (epoch_id, gateway_id, sandbox_id, task_profile, baseline_hash, mode, active, next_sequence, created_at_ms,
+                             credentialed_endpoints_json, active_policy_hash)
+         VALUES ('current','gateway','sandbox','repo-triage-readonly','hash','enforce',1,1,0,'[]',NULL);
+         INSERT INTO epochs (epoch_id, gateway_id, sandbox_id, task_profile, baseline_hash, mode, active, next_sequence, created_at_ms,
+                             credentialed_endpoints_json, active_policy_hash)
+         VALUES ('old','gateway','sandbox','repo-triage-readonly','hash','enforce',0,1,0,'[]',NULL);
          INSERT INTO restrictions VALUES ('current','expired','cooldown',500,1,'expired',1);
          INSERT INTO restrictions VALUES ('old','old','strict_epoch',9223372036854775807,3,'old',1);"
     ).unwrap();
@@ -202,7 +206,10 @@ fn operator_inventory_is_empty_without_observations() {
     let store = SqliteRiskStore::open_in_memory().unwrap();
     let state = store.operator_inventory(1000).unwrap();
     assert_eq!(state["sandboxes"], serde_json::json!([]));
-    assert!(state["gateway_connectivity"].is_null());
+    // Nothing observed is reported as "never seen", not as a blank, and with no invented figures.
+    assert_eq!(state["gateway_connectivity"]["status"], "never_seen");
+    assert_eq!(state["sandbox_lifecycle"]["sandboxes_recorded"], 0);
+    assert_eq!(state["decision_latency"]["samples"], 0);
     assert!(store.operator_detail("missing", 1000).unwrap().is_none());
 }
 

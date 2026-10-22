@@ -16,6 +16,7 @@ pub mod fixture;
 pub mod guardrails;
 pub mod hardening;
 pub mod interceptor_service;
+pub mod latency;
 pub mod middleware_service;
 pub mod normalizer;
 pub mod sidecar;

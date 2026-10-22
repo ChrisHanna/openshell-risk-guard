@@ -2211,6 +2211,10 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
           </div>
           <span class="badge badge-neutral">Recorded bindings</span>
         </div>
+        <div style="padding:0 18px 10px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="runs-show-all"> Show ended and presumed-gone runs</label>
+          <span class="muted" id="runs-filter-note"></span>
+        </div>
         <div class="table-scroll" tabindex="0" role="region" aria-label="Recorded run lineage">
           <table>
             <thead>
@@ -6455,8 +6459,10 @@ function renderFleetDirectory() {
     if (denied > 0) c4.style.color = "var(--crit-text)";
 
     const c5 = document.createElement("td");
-    const open = Number(item.active_sandbox_count);
-    c5.textContent = `${item.sandbox_count} recorded${Number.isFinite(open) ? ` · ${open} open` : ""}`;
+    const open = Number(item.open_sandbox_count ?? item.active_sandbox_count);
+    const gone = Number(item.presumed_gone_sandbox_count || 0);
+    c5.textContent = `${item.sandbox_count} recorded${Number.isFinite(open) ? ` · ${open} open` : ""}${gone ? ` · ${gone} presumed gone` : ""}`;
+    c5.title = "Open: seen within the last 6 hours. Presumed gone: not seen for 6 hours and never reported deleted. OpenShell's delete event is fail-open, so a missed one leaves no trace; a sandbox that speaks again counts as open again.";
     c5.className = "muted";
 
     const c6 = document.createElement("td");
@@ -6482,7 +6488,7 @@ function renderFleetDirectory() {
   $("directory-empty").textContent = total ? "No workloads match these filters." : "No registered workloads recorded in this database.";
   $("inventory-scope").textContent =
     `Request counts cover the decisions still retained (30 days by default), not a live rate. ` +
-    (life ? `${life.sandboxes_recorded} sandboxes recorded: ${life.recently_active} active in the last 15 min, ${life.idle} idle, ${life.not_seen_recently} not seen for 6 h or more (most likely deleted), ${life.sandboxes_closed} closed. ` : "") +
+    (life ? `${life.sandboxes_recorded} sandboxes recorded: ${life.open ?? life.recently_active + life.idle} open (${life.recently_active} active in the last 15 min), ${life.presumed_gone ?? life.not_seen_recently} presumed gone (not seen for 6 h and never reported deleted; OpenShell's delete event is fail-open, so a missed one leaves no trace), ${life.sandboxes_closed} closed by a delete event. ` : "") +
     "Connectivity and sandbox lifecycle are inferred from the calls Risk Guard receives; it does not probe the gateway.";
 }
 
@@ -6588,7 +6594,22 @@ async function agentDetail(id, version) {
     $("agent-contexts").append(pre);
   }
 
-  // Who attached a sandbox to this workload, and how the workload was chosen.
+  renderRunsTable(data);
+
+  $("agent-detail").hidden = false;
+  $("agent-loading").hidden = true;
+  switchMainView(activeTopView);
+  markSelection();
+}
+
+// The runs of one workload. Runs that ended (a delete event) or are presumed gone (nothing heard for six hours, never reported
+// deleted) are hidden unless asked for: they are history, and OpenShell's fail-open delete event means some never get closed.
+function renderRunsTable(data) {
+  const LIFECYCLE = {
+    open: ["Open", "badge-green", "A sandbox of this run was seen within the last six hours."],
+    ended: ["Ended", "badge-neutral", "A delete event ended this run."],
+    presumed_gone: ["Presumed gone", "badge-neutral", "No sandbox of this run has been seen for six hours and no delete event arrived. It counts as open again if one speaks."]
+  };
   function bindingNote(binding) {
     const note = document.createElement("div");
     note.className = "quiet-note binding-note";
@@ -6600,14 +6621,23 @@ async function agentDetail(id, version) {
     note.textContent = `Workspace ${binding.workspace} · bound by ${binding.principal_kind}:${binding.principal_subject}${binding.principal_provider ? ` (${binding.principal_provider})` : ""} · ${via}`;
     return note;
   }
-
+  const showAll = $("runs-show-all").checked;
+  const visible = data.runs.filter(run => showAll || (run.lifecycle || "open") === "open");
+  const hidden = data.runs.length - visible.length;
+  $("runs-filter-note").textContent = hidden ? `${hidden} ended or presumed-gone run${hidden === 1 ? " is" : "s are"} hidden` : "";
   $("agent-runs").replaceChildren();
-  for (const run of data.runs) {
+  for (const run of visible) {
     const row = document.createElement("tr");
     const isCont = String(run.run_id).includes("continuation");
     const c1 = document.createElement("td");
     c1.className = "mono run-identity";
     c1.textContent = `${run.run_id} (${isCont ? "Continuation" : "Primary"})`;
+    const state = LIFECYCLE[run.lifecycle];
+    if (state) {
+      const chip = makeBadge(state[0], state[1]);
+      chip.title = state[2];
+      c1.append(document.createElement("br"), chip);
+    }
     const c2 = document.createElement("td");
     c2.textContent = `${run.agent_revision} / ${run.task_profile}`;
     const c3 = document.createElement("td");
@@ -6616,7 +6646,7 @@ async function agentDetail(id, version) {
       span.className = "mono";
       span.style.marginRight = "8px";
       span.textContent = b.sandbox_id;
-        c3.append(span, inspectButton("sandbox", b.sandbox_id, "Audit evidence"), bindingNote(b.binding));
+      c3.append(span, inspectButton("sandbox", b.sandbox_id, "Audit evidence"), bindingNote(b.binding));
     }
     const c4 = document.createElement("td");
     const runDecs = (data.decisions || []).filter(d => d?.identity?.run_id === run.run_id);
@@ -6630,12 +6660,9 @@ async function agentDetail(id, version) {
     row.append(c1, c2, c3, c4, c5);
     $("agent-runs").append(row);
   }
-
-  $("agent-detail").hidden = false;
-  $("agent-loading").hidden = true;
-  $("runs-empty").textContent = data.runs.length ? "" : "No attributed runs recorded for this workload.";
-  switchMainView(activeTopView);
-  markSelection();
+  $("runs-empty").textContent = !data.runs.length
+    ? "No attributed runs recorded for this workload."
+    : !visible.length ? "Every run of this workload has ended or is presumed gone. Tick the box above to see them." : "";
 }
 
 async function detail(id, version) {
@@ -7054,6 +7081,14 @@ async function loadHowExample(data) {
   renderHowLive();
 }
 
+// Microseconds as a person reads them.
+function formatMicros(us) {
+  if (!Number.isFinite(us)) return "not measured";
+  if (us < 1000) return `${Math.round(us)} µs`;
+  if (us < 1_000_000) return `${(us / 1000).toFixed(us < 10_000 ? 1 : 0)} ms`;
+  return `${(us / 1_000_000).toFixed(1)} s`;
+}
+
 function renderHowLive() {
   if (!$("how-badges")) return;
   const data = cachedStateData;
@@ -7072,7 +7107,18 @@ function renderHowLive() {
   } else add("Requests arriving from OpenShell", "Not collected", "none");
   if (life) {
     add("Decisions recorded", `${life.decisions_recorded} retained`, "ok");
-    add("Sandboxes", `${life.sandboxes_recorded} recorded · ${life.recently_active} active in the last 15 min · ${life.not_seen_recently} not seen for 6 h+`, "ok");
+    add("Sandboxes", `${life.sandboxes_recorded} recorded · ${life.open ?? life.recently_active + life.idle} open · ${life.presumed_gone ?? life.not_seen_recently} presumed gone · ${life.sandboxes_closed} closed`, "ok");
+  }
+  const lat = data.decision_latency && typeof data.decision_latency === "object" ? data.decision_latency : null;
+  if (lat && lat.samples > 0) {
+    const slow = lat.over_timeout > 0;
+    add("Decision time (last hour)",
+      `p50 ≤ ${formatMicros(lat.p50_us)} · p99 ≤ ${formatMicros(lat.p99_us)} · slowest ${formatMicros(lat.max_us)} across ${lat.samples} requests. ` +
+      `${slow ? `${lat.over_timeout} exceeded OpenShell's ${formatMicros(lat.timeout_us)} timeout. ` : `None reached OpenShell's ${formatMicros(lat.timeout_us)} timeout. `}` +
+      "Risk Guard's own time, from after validation to the result, including the database commit; not network transit.",
+      slow ? "warn" : "ok");
+  } else {
+    add("Decision time (last hour)", "Not measured yet: no request has been timed since this version started", "none");
   }
   if (howExample) {
     const snap = howExample.snapshot?.parsed_policy?.network_middlewares;
@@ -7661,6 +7707,7 @@ new ResizeObserver(() => {
   }
 }).observe(document.querySelector(".map-scroll"));
 
+$("runs-show-all").addEventListener("change", () => { if (currentAgentData) renderRunsTable(currentAgentData); });
 switchMainView("fleet");
 authBoot().then(ready => {
   if (!ready) return;
