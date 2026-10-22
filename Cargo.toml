@@ -17,7 +17,7 @@ axum = "0.8"
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive", "env"] }
 hex = "0.4"
-hmac = "0.12"
+hmac = "0.13"
 http = "1.2"
 jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
 # OpenShell crates come from NVIDIA's public repository, pinned to the commit the AKS gateway image is built from, so this
