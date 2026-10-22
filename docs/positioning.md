@@ -97,7 +97,8 @@ Putting Risk Guard on its own host (or node pool) protects the **decision and th
   external authorization) about each request, with a network policy that leaves the demo workload no other route. It works end to end on
   AKS for plain-HTTP traffic inside the cluster. For OpenShell's own sandboxes there is a weaker gate on the network path: their TLS
   tunnels pass through an Envoy proxy that refuses quarantined workloads and sandboxes Risk Guard does not know; it cannot see paths
-  inside the tunnel. Details and limits: [workload identity](workload-identity.md).
+  inside the tunnel. OpenShell supports a TLS-intercepting upstream proxy (a CA bundle the supervisor trusts), which is how a full-request
+  gate for its sandboxes could be built; that is not built here. Details and limits: [workload identity](workload-identity.md).
 * **Never reproduced in software on the same host:** host-memory introspection of the kind DOCA Argus does from the DPU.
 
 So a separate host gives tamper-resistant decisions and evidence, not a tamper-proof gate. That is a useful property, and it is

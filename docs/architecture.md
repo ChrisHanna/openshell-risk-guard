@@ -105,8 +105,9 @@ workload follows it to new sandboxes. Sandboxes that were deleted keep their rec
 
 * It sees method, host, route and a keyed resource name. Bodies, headers and query strings are discarded unread, so an attack that
   lives only there is invisible.
-* Gate 3 sees a destination address and port, not a path (the tunnel is encrypted), and it cannot see traffic that does not go
-  through the proxy. Sandbox pods are not individually fenced by network policy here.
+* Gate 3 sees a destination address and port, not a path (the tunnel is encrypted). OpenShell supports a TLS-intercepting upstream
+  proxy, which would show paths; this deployment's Envoy does not do that. Gate 3 also cannot see traffic that does not go through
+  the proxy, and sandbox pods are not individually fenced by network policy here.
 * A compromised supervisor that stops calling Risk Guard is not detected by gates 1 and 2. Gate 3 limits the damage only for workloads
   an operator quarantines, or for restrictions you choose to enforce.
 * It is not a separate hardware trust domain (compare NVIDIA Sentry on a BlueField DPU). See [positioning](positioning.md).

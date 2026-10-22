@@ -110,11 +110,18 @@ On the AKS demo cluster (SPIRE 1.15, Envoy 1.36):
 * **Does not protect:**
   * Traffic that does not go through the proxy. Forcing it through is the job of network policy or routing; the demo does it with a
     Cilium policy for one pod. It is not applied to OpenShell's sandbox pods.
-  * HTTPS destinations. The demo's backend is plain HTTP inside the cluster. To see a method and path for traffic to the internet, the
-    proxy must terminate TLS, which needs a certificate authority the workload trusts. Not built.
-  * OpenShell's sandboxes are not given SPIFFE identities. They keep their gateway-derived identity, and their tunnels are identified by
-    pod address (see above). OpenShell can mount a SPIFFE Workload API socket into sandboxes for provider token grants, but its upstream
-    proxy chaining does not present a certificate, so it cannot be used to authenticate the tunnel.
+  * Request-level enforcement for OpenShell's sandboxes. The tunnel gate sees only a destination. OpenShell's upstream proxy setting does
+    support a TLS-intercepting proxy: the chart's `upstreamProxy.caBundle` stages the CA that proxy re-signs with into each sandbox's
+    supervisor, so a proxy such as squid (ssl-bump) or mitmproxy could see every method and path and ask Risk Guard about it. That is
+    the route to the full-request gate for real sandboxes. It is not built here: Envoy, which this deployment uses, cannot mint
+    certificates for arbitrary hosts, so it would need a different proxy.
+  * The demo's backend is plain HTTP inside the cluster, so `egress-demo` needs no TLS interception.
+  * OpenShell's sandboxes *can* have SPIFFE identities (checked against OpenShell `main` of 22 October 2026 and the pinned commit): with a
+    SPIFFE Workload API socket mounted (`provider_spiffe_workload_api_socket_path`) the supervisor fetches a JWT-SVID from SPIRE, and OpenShell
+    ships a SPIRE overlay that names sandbox pods by their `openshell.ai/sandbox-id`. OpenShell uses it for dynamic provider token grants
+    (the JWT-SVID is the OAuth2 client assertion). Nothing in its upstream proxy settings presents that identity to the proxy, though
+    (the options are a URL, Basic authentication and a CA bundle), so the tunnel gate still identifies a sandbox by pod address. This
+    deployment does not turn the OpenShell SPIFFE support on.
   * Risk Guard and SPIRE share the cluster. A compromise of the cluster itself is out of scope.
 * **Not the same as NVIDIA Sentry.** Sentry puts the enforcement layer in a separate hardware trust domain (a BlueField DPU). This
   puts it on the network path in software. It improves on enforcement inside the workload's own host, and it is not equivalent to
