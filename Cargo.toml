@@ -19,7 +19,7 @@ clap = { version = "4.5", features = ["derive", "env"] }
 hex = "0.4"
 hmac = "0.12"
 http = "1.2"
-jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
+jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
 # OpenShell crates come from NVIDIA's public repository, pinned to the commit the AKS gateway image is built from, so this
 # repository builds on its own (no sibling checkout needed). To move to another OpenShell commit, change `rev` on all seven
 # lines together and run `cargo update -p openshell-core`; the CLI and gateway versions used by scripts/aks must match it.
