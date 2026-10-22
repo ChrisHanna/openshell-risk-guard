@@ -192,6 +192,7 @@ __SVID_MOUNT__
             - --listen=127.0.0.1:8791
             - --db=/var/lib/openshell-risk-guard/risk-guard.db
 __CONSOLE_SIGNIN_ARGS__
+__CONSOLE_ENV__
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532

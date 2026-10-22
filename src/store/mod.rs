@@ -46,6 +46,9 @@ pub const MAX_RETAINED_DECISIONS_PER_EPOCH: usize = 10_000;
 pub struct SqliteRiskStore {
     conn: Arc<Mutex<Connection>>,
     read_conn: Option<Arc<Mutex<Connection>>>,
+    /// When set, each sandbox's SPIFFE ID (`spiffe://<domain>/openshell/sandbox/<id>`, the name SPIRE registers it under, see
+    /// deploy/aks/sandbox-spiffe.yaml) is shown beside it. It is the name SPIRE assigned; Risk Guard does not receive the certificate.
+    sandbox_spiffe_trust_domain: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -132,6 +135,7 @@ impl SqliteRiskStore {
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             read_conn: Some(Arc::new(Mutex::new(read_conn))),
+            sandbox_spiffe_trust_domain: sandbox_spiffe_trust_domain_from_env(),
         })
     }
 
@@ -158,6 +162,7 @@ impl SqliteRiskStore {
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             read_conn: None,
+            sandbox_spiffe_trust_domain: None,
         })
     }
 
@@ -461,6 +466,22 @@ impl SqliteRiskStore {
                 return Ok(total);
             }
         }
+    }
+
+    /// Show each sandbox's SPIFFE ID under this trust domain (see `sandbox_spiffe_trust_domain`).
+    #[must_use]
+    pub fn with_sandbox_spiffe_trust_domain(mut self, domain: impl Into<String>) -> Self {
+        self.sandbox_spiffe_trust_domain = Some(domain.into());
+        self
+    }
+
+    /// The SPIFFE ID SPIRE assigns a sandbox, when a trust domain is configured. Sandboxes of the SVID listener already are SPIFFE IDs.
+    pub(crate) fn sandbox_spiffe_id(&self, sandbox_id: &str) -> Option<String> {
+        let domain = self.sandbox_spiffe_trust_domain.as_deref()?;
+        if sandbox_id.starts_with("svid-") {
+            return None;
+        }
+        Some(format!("spiffe://{domain}/openshell/sandbox/{sandbox_id}"))
     }
 
     /// What the network path needs to know about a sandbox. `None` when the sandbox has no active epoch.
@@ -955,6 +976,18 @@ fn ensure_binding_audit_provider_column(conn: &Connection) -> Result<()> {
         )?;
     }
     Ok(())
+}
+
+/// The trust domain SPIRE names sandboxes under, from `RISK_GUARD_SANDBOX_SPIFFE_TRUST_DOMAIN`. Anything that is not a valid trust domain
+/// (lowercase letters, digits, `-`, `.`, `_`) is ignored, so a bad value shows no identity instead of a wrong one.
+fn sandbox_spiffe_trust_domain_from_env() -> Option<String> {
+    let value = std::env::var("RISK_GUARD_SANDBOX_SPIFFE_TRUST_DOMAIN").ok()?;
+    let value = value.trim();
+    (!value.is_empty()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"-._".contains(&b)))
+    .then(|| value.to_string())
 }
 
 /// Workloads an operator has quarantined (their sandboxes get no network tunnels), and the audit of who did what and why.

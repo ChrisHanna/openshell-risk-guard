@@ -44,6 +44,7 @@ function Set-GatewaySpiffe([bool]$Enabled) {
 if ($Remove) {
     Write-Step 'Turning off sandbox SPIFFE identities'
     Set-GatewaySpiffe $false
+    Save-State @{ sandboxSpiffe = $false }
     Invoke-Native kubectl @('delete', 'clusterspiffeid', 'openshell-sandboxes', '--ignore-not-found') -AllowFailure | Out-Null
     return
 }
@@ -53,6 +54,7 @@ Invoke-KubectlApply (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/sandbox
 
 Write-Step 'Mounting the SPIFFE Workload API socket into the gateway and supervisors'
 Set-GatewaySpiffe $true
+Save-State @{ sandboxSpiffe = $true }
 Invoke-Native kubectl @('rollout', 'status', "statefulset/$release", '-n', $ns, '--timeout=300s') | Out-Null
 
 Write-Host ''

@@ -265,3 +265,59 @@ fn staleness_is_exported_once_a_decision_exists() {
         "about ten minutes: {seconds}"
     );
 }
+
+#[test]
+fn a_sandbox_shows_the_spiffe_id_spire_assigned_it_only_when_a_trust_domain_is_configured() {
+    use openshell_risk_guard::detector::compute_baseline_hash;
+    use openshell_risk_guard::fixture::build_standard_corpus;
+    use openshell_risk_guard::types::{EnforcementMode, EpochRecord, RiskStore};
+
+    let spiffe_id = |configured: bool| {
+        let mut store = SqliteRiskStore::open_in_memory().unwrap();
+        if configured {
+            store = store.with_sandbox_spiffe_trust_domain("example.org");
+        }
+        let mut baseline = build_standard_corpus().default_baseline;
+        baseline.normalizer_version = "v1".into();
+        store.store_baseline(&baseline).unwrap();
+        store.register_agent("agent", "Agent").unwrap();
+        store
+            .create_agent_run(
+                "agent",
+                "run-1",
+                "r1",
+                &baseline.task_profile,
+                EnforcementMode::Enforce,
+            )
+            .unwrap();
+        store
+            .upsert_epoch(&EpochRecord {
+                epoch_id: "ep-1".into(),
+                gateway_id: "gw".into(),
+                sandbox_id: "sbx-1".into(),
+                task_profile: baseline.task_profile.clone(),
+                baseline_hash: compute_baseline_hash(&baseline),
+                mode: EnforcementMode::Enforce,
+                active: true,
+                next_sequence: 1,
+                created_at_ms: 1_800_000_000_000,
+                credentialed_endpoints: Default::default(),
+                active_policy_hash: None,
+            })
+            .unwrap();
+        store.bind_agent_run("run-1", "sbx-1", "gw").unwrap();
+        let detail = store
+            .operator_agent_detail("agent", 1_800_000_001_000)
+            .unwrap()
+            .unwrap();
+        detail["runs"][0]["sandboxes"][0]["spiffe_id"].clone()
+    };
+    assert_eq!(
+        spiffe_id(true),
+        "spiffe://example.org/openshell/sandbox/sbx-1"
+    );
+    assert!(
+        spiffe_id(false).is_null(),
+        "no trust domain, no identity shown"
+    );
+}

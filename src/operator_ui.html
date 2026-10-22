@@ -6667,6 +6667,13 @@ function renderRunsTable(data) {
       span.style.marginRight = "8px";
       span.textContent = b.sandbox_id;
       c3.append(span, inspectButton("sandbox", b.sandbox_id, "Audit evidence"), bindingNote(b.binding));
+      if (b.spiffe_id) {
+        const id = document.createElement("div");
+        id.className = "quiet-note binding-note";
+        id.textContent = `SPIFFE ID ${b.spiffe_id} (assigned by SPIRE)`;
+        id.title = "The identity SPIRE registered for this sandbox's supervisor. Risk Guard records the name; it does not receive the certificate, so it does not verify it.";
+        c3.append(id);
+      }
     }
     const c4 = document.createElement("td");
     const runDecs = (data.decisions || []).filter(d => d?.identity?.run_id === run.run_id);

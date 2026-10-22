@@ -129,7 +129,12 @@ if ($svidDomain) {
     $svid.volume = "        - name: spire-bundle`n          configMap:`n            name: spire-bundle`n            optional: true"
     Write-Note "SPIFFE listener on :50062 for trust domain $svidDomain"
 }
-$manifest = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/risk-guard.yaml') -Raw).Replace('__IMAGE__', $image).Replace('__CONSOLE_SIGNIN_ARGS__', $signIn).Replace('__SVID_ARGS__', $svid.args).Replace('__SVID_SERVICE_PORT__', $svid.servicePort).Replace('__SVID_CONTAINER_PORT__', $svid.containerPort).Replace('__SVID_MOUNT__', $svid.mount).Replace('__SVID_VOLUME__', $svid.volume).Replace('__SVID_POD_SPEC__', $svid.podSpec)
+# 19-enable-sandbox-spiffe.ps1 records that OpenShell's sandboxes have SPIFFE identities; the console then shows them beside each sandbox.
+$consoleEnv = ''
+if ($svidDomain -and (Get-StateValue 'sandboxSpiffe')) {
+    $consoleEnv = "          env:`n            - name: RISK_GUARD_SANDBOX_SPIFFE_TRUST_DOMAIN`n              value: $svidDomain"
+}
+$manifest = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/risk-guard.yaml') -Raw).Replace('__IMAGE__', $image).Replace('__CONSOLE_SIGNIN_ARGS__', $signIn).Replace('__SVID_ARGS__', $svid.args).Replace('__SVID_SERVICE_PORT__', $svid.servicePort).Replace('__SVID_CONTAINER_PORT__', $svid.containerPort).Replace('__SVID_MOUNT__', $svid.mount).Replace('__SVID_VOLUME__', $svid.volume).Replace('__SVID_POD_SPEC__', $svid.podSpec).Replace('__CONSOLE_ENV__', $consoleEnv)
 Invoke-KubectlApply $manifest
 Invoke-Native kubectl @('rollout', 'restart', 'deploy/risk-guard', '-n', $ns) | Out-Null
 Invoke-Native kubectl @('rollout', 'status', 'deploy/risk-guard', '-n', $ns, '--timeout=300s') | Out-Null
