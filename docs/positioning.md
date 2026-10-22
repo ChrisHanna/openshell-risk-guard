@@ -79,6 +79,25 @@ weakly, with Azure-native parts:
 
 These reduce risk. They do not provide the guarantee of a separate hardware domain.
 
+### What running Risk Guard on a separate host does and does not buy
+
+Putting Risk Guard on its own host (or node pool) protects the **decision and the record**, not the **gate**:
+
+* **Protected:** the scoring logic, the baselines, the restrictions and the evidence database are out of reach of a compromised
+  workload host. It cannot rewrite its own history or clear its own locks. (Today they already run in a different pod from the
+  Kata sandboxes.)
+* **Not protected:** the enforcement point. The check is made by OpenShell's supervisor, which runs on the workload side. A
+  compromised supervisor can skip the call to Risk Guard or send it false context, and "fail closed" only applies when the call is
+  attempted.
+* **What would close that gap:** an enforcement point on the network path outside the host, such as an egress proxy or firewall that
+  sandbox traffic is forced through by Azure routing and network rules, which then asks Risk Guard. It is harder than it sounds: the
+  proxy needs the HTTP method and path (so it must terminate TLS for the sandboxes), and it must learn which workload a request came
+  from by network identity instead of from the supervisor, which is what Sentry's SPIFFE integration is for.
+* **Never reproduced in software on the same host:** host-memory introspection of the kind DOCA Argus does from the DPU.
+
+So a separate host gives tamper-resistant decisions and evidence, not a tamper-proof gate. That is a useful property, and it is
+not the same guarantee as Sentry's.
+
 ## One-line positioning
 
 For threat-level protection of agents, use OpenShell with NVIDIA Sentry. Risk Guard is a reference integration that shows what

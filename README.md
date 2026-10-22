@@ -92,11 +92,17 @@ Where this document says "the sandboxed process", it means the program running i
 
 ## Evidence and limits
 
-- **Detection numbers come from synthetic fixtures** (415 episodes) written for this
-  project. They show the scoring logic does what it was designed to do, not
-  real-world accuracy. Real validation means captures from a real OpenShell
-  deployment: chronological held-out runs per workload, measured false denials, plus a red-team
-  set (encoding variants, mimicry of normal tools, slow-and-low enumeration).
+- **Detection is measured, but only on the author's own data.** The scoring logic is checked on 415 synthetic episodes. On the
+  live fleet (three scripted agents, real gateway and sandboxes) 193 routine calls had no false denials (95% interval 0 to 2.0%)
+  and 38 of 42 tempting calls were blocked; the four misses were a `v1` profile that did not enforce its approved-action list,
+  fixed in `v2`. A red-team set covers path and encoding variants, and records what is *not* caught (slow enumeration and bursts
+  on a cold-start profile, anything in bodies, headers or query strings). The labels and agents are the author's, so this is a
+  regression check, not accuracy against an unseen attacker. See [Detection results](docs/detection-results.md).
+- **Decision time is measured on the live path.** Each decision's server-side time goes into a histogram shown on the console and in
+  `/metrics` (p50/p95/p99 upper bounds, slowest, calls over the 500 ms OpenShell timeout). It excludes network transit.
+- **Sandbox lifecycle is derived, not guaranteed.** The gateway's delete event is best-effort, so a missed one is never retried.
+  Sandboxes not seen for 6 hours are shown as "presumed gone" rather than deleted from the record, and return to open if traffic resumes.
+- **CI** builds from a clean clone with the pinned toolchain, runs the tests, clippy and dependency checks (`cargo-deny`).
 - **One gateway, one writer.** A single SQLite writer is what makes the ratchet
   durable and linearizable. Move to a shared store only when you need several
   gateway replicas or exceed measured single-writer throughput.
