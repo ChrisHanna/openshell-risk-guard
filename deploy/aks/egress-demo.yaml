@@ -6,6 +6,8 @@ kind: ClusterSPIFFEID
 metadata:
   name: risk-guard-egress-demo
 spec:
+  # The SPIRE controller only acts on ClusterSPIFFEIDs of its own class: "<release namespace>-spire" with the chart in `openshell`.
+  className: openshell-spire
   spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
   podSelector:
     matchLabels:
@@ -136,3 +138,36 @@ spec:
             name: egress-demo-script
         - name: certs
           emptyDir: {}
+---
+# The proxy only enforces anything if the workload cannot go around it. This pod may reach the egress proxy and DNS, and nothing
+# else (enforced by the cluster's Cilium network policy), so its only way to the backend is through Risk Guard's decision.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-demo-only-via-proxy
+  namespace: openshell
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: egress-demo
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: egress-proxy
+      ports:
+        - protocol: TCP
+          port: 8443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

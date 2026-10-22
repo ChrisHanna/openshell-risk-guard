@@ -53,7 +53,7 @@ available now for experimentation.
 | Static policy, credentials, filesystem | Yes | No: it only narrows what OpenShell allows | Enforces OpenShell policy in hardware |
 | Is this request reasonable for this agent's job? | No | Yes: task profile, learned baseline, reason codes, restrictions that follow the workload across sandboxes | Claimed: Rego policy and drift against a predefined profile; details not specified |
 | Request content (PII, secrets, MCP and agent-to-agent traffic) | Supervisor checks requests | No: scores request metadata, never uses bodies or headers | Claimed for the layer-7 proxy |
-| Workload identity | Gateway-attested principals | Binds sandboxes to workloads from gateway identity and Entra; not SPIFFE/SPIRE | SPIFFE/SPIRE |
+| Workload identity | Gateway-attested principals | Binds sandboxes to workloads from gateway identity and Entra; **also** accepts SPIFFE X.509-SVIDs (SPIRE) on a separate mutual-TLS listener, see [workload identity](workload-identity.md). OpenShell's own sandboxes do not use it yet | SPIFFE/SPIRE |
 | Survives a compromised host or supervisor | No | **No** | Yes: separate hardware domain |
 | Host runtime evidence (processes, memory, kernel modules) | Supervisor process identity | No | Argus |
 | Operator evidence and console | CLI, SDKs, TUI | Console, decisions with reasons, audited recovery | Telemetry to SIEM and XDR |
@@ -93,6 +93,10 @@ Putting Risk Guard on its own host (or node pool) protects the **decision and th
   sandbox traffic is forced through by Azure routing and network rules, which then asks Risk Guard. It is harder than it sounds: the
   proxy needs the HTTP method and path (so it must terminate TLS for the sandboxes), and it must learn which workload a request came
   from by network identity instead of from the supervisor, which is what Sentry's SPIFFE integration is for.
+  **Built as a demonstration:** an Envoy egress proxy that identifies workloads by their SPIFFE SVID and asks Risk Guard (Envoy
+  external authorization) about each request, with a network policy that leaves the demo workload no other route. It works end to end on
+  AKS for plain-HTTP traffic inside the cluster. It is not applied to OpenShell's sandboxes, and it does not yet terminate TLS for
+  internet destinations. Details and limits: [workload identity](workload-identity.md).
 * **Never reproduced in software on the same host:** host-memory introspection of the kind DOCA Argus does from the DPU.
 
 So a separate host gives tamper-resistant decisions and evidence, not a tamper-proof gate. That is a useful property, and it is

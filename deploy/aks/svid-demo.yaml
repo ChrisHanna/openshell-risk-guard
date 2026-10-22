@@ -8,6 +8,8 @@ kind: ClusterSPIFFEID
 metadata:
   name: risk-guard-svid-demo
 spec:
+  # The SPIRE controller only acts on ClusterSPIFFEIDs of its own class: "<release namespace>-spire" with the chart in `openshell`.
+  className: openshell-spire
   spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
   podSelector:
     matchLabels:

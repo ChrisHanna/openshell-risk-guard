@@ -111,6 +111,10 @@ Where this document says "the sandboxed process", it means the program running i
 - **Rules run in shadow or enforce.** The approved-action and approved-resource rules default to shadow: they record what
   they would have blocked without blocking it, and an operator promotes one to enforce once its record looks right. The deny
   list and the high-impact rule enforce. See [Operating Risk Guard](docs/operations.md#rule-modes-shadow-first-then-enforce).
+- **Workload identity beyond OpenShell's gateway (demonstration).** Callers can instead prove who they are with a SPIFFE X.509-SVID
+  (SPIRE) over mutual TLS, and an Envoy egress proxy can enforce Risk Guard's decision on the network path, outside the workload.
+  Verified on AKS; applied to demo workloads only, not to OpenShell's sandboxes, and for plain HTTP inside the cluster. See
+  [Workload identity](docs/workload-identity.md).
 - **Network only.** Risk Guard scores HTTP/S requests that OpenShell inspects.
   Filesystem and process behavior are enforced statically by OpenShell
   (Landlock and policy), not scored.

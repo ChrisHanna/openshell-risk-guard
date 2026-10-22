@@ -85,8 +85,9 @@ Write-Note "trust bundle published to configmap/spire-bundle in $ns"
 Save-State @{ svidTrustDomain = $TrustDomain; svidEgressProxy = [bool]$EgressProxy }
 if (-not $SkipRiskGuardRedeploy) {
     Write-Step 'Redeploying Risk Guard with the SPIFFE listener'
-    & "$PSScriptRoot/04-deploy-risk-guard.ps1" @(if ($ImageTag) { '-ImageTag'; $ImageTag })
-    if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw '04-deploy-risk-guard.ps1 failed.' }
+    $deployArgs = @{}
+    if ($ImageTag) { $deployArgs.ImageTag = $ImageTag }
+    & "$PSScriptRoot/04-deploy-risk-guard.ps1" @deployArgs
 }
 
 Write-Step 'Deploying the SPIFFE demo workload'

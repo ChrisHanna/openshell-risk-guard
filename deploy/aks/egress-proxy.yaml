@@ -13,6 +13,8 @@ kind: ClusterSPIFFEID
 metadata:
   name: risk-guard-egress-proxy
 spec:
+  # The SPIRE controller only acts on ClusterSPIFFEIDs of its own class: "<release namespace>-spire" with the chart in `openshell`.
+  className: openshell-spire
   spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
   podSelector:
     matchLabels:
@@ -34,6 +36,8 @@ metadata:
   namespace: openshell
 data:
   envoy.yaml: |
+    # Envoy asks SPIRE for its certificate over SDS, and SDS requires a node identity.
+    node: { id: egress-proxy, cluster: egress-proxy }
     admin:
       address: { socket_address: { address: 127.0.0.1, port_value: 9901 } }
     static_resources:
