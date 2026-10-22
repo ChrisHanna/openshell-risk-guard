@@ -4630,6 +4630,50 @@ function groupNetworkTargets(decisions) {
   return groups;
 }
 
+// The map shows at most this many rows (routes and file locations together). A workload that reaches many different targets, or one whose
+// requests differ only by an ID, would otherwise fill the map with look-alike nodes and hide the ones that matter.
+const MAP_MAX_ROWS = 10;
+
+// Merge routes whose target differs only by a number ("org/repo-143", "org/repo-264"), then keep the most important and fold the rest into
+// one "more" row. Blocked routes rank first, then the busiest, so what needs attention is never the part that gets hidden.
+function capNetworkGroups(groups, maxRows) {
+  const lookAlike = new Map();
+  for (const group of groups) {
+    const pattern = String(group.resource).replace(/\d{2,}/g, "#");
+    const key = JSON.stringify([group.hostPort, group.method, group.route, pattern]);
+    const seen = lookAlike.get(key);
+    if (!seen) {
+      lookAlike.set(key, { ...group, sandboxes: new Set(group.sandboxes), requests: [...group.requests], merged: 1, pattern });
+      continue;
+    }
+    seen.allowed += group.allowed;
+    seen.blocked += group.blocked;
+    seen.inheritedBlocks += group.inheritedBlocks;
+    group.sandboxes.forEach(s => seen.sandboxes.add(s));
+    seen.requests.push(...group.requests);
+    seen.merged += 1;
+  }
+  const merged = Array.from(lookAlike.values()).map(g => g.merged > 1
+    ? { ...g, resource: `${g.pattern} (${g.merged} targets)`, filterResource: g.pattern.split("#")[0] }
+    : g);
+  if (merged.length <= maxRows) return { groups: merged, hidden: 0, total: merged.length };
+
+  const ranked = merged
+    .map((g, order) => ({ g, order }))
+    .sort((a, b) => (b.g.blocked - a.g.blocked) || (b.g.requests.length - a.g.requests.length) || a.order - b.order)
+    .map(item => item.g);
+  const keep = ranked.slice(0, maxRows - 1);
+  const rest = ranked.slice(maxRows - 1);
+  const other = {
+    key: "other", isOther: true, method: "…", hostPort: "various", route: `+${rest.length} more routes`,
+    resource: `${rest.length} other targets`, category: "Various",
+    allowed: rest.reduce((n, g) => n + g.allowed, 0), blocked: rest.reduce((n, g) => n + g.blocked, 0), inheritedBlocks: 0,
+    sandboxes: new Set(rest.flatMap(g => Array.from(g.sandboxes))), requests: rest.flatMap(g => g.requests),
+    hiddenList: rest.slice(0, 8).map(g => `${g.method} ${g.route} · ${g.resource}`)
+  };
+  return { groups: [...keep, other], hidden: rest.length, total: merged.length };
+}
+
 function extractFilesystemSummary(data) {
   const snapshots = Array.isArray(data.policy_snapshots) ? data.policy_snapshots : [];
   const latest = snapshots[0]?.parsed_policy || null;
@@ -4655,8 +4699,11 @@ function renderServiceMapGraph(data, periodDecisions, periodRuns, fsSummary) {
   const tooltip = $("map-node-tooltip");
   svg.replaceChildren();
   const NS = "http://www.w3.org/2000/svg";
-  const networkGroups = selectedDomain === "filesystem" ? [] : Array.from(groupNetworkTargets(periodDecisions).values());
   const showsFilesystem = selectedDomain !== "network" && fsSummary.available;
+  const capped = selectedDomain === "filesystem"
+    ? { groups: [], hidden: 0, total: 0 }
+    : capNetworkGroups(Array.from(groupNetworkTargets(periodDecisions).values()), MAP_MAX_ROWS - (showsFilesystem ? 2 : 0));
+  const networkGroups = capped.groups;
   const rowCount = networkGroups.length + (showsFilesystem ? 2 : 0);
   const holder = svg.parentElement;
   holder.classList.toggle("manual", !mapAutoFit);
@@ -4796,7 +4843,7 @@ function renderServiceMapGraph(data, periodDecisions, periodRuns, fsSummary) {
   const targetNodes = [];
   networkGroups.forEach((group, index) => {
     const blockedOnly = group.blocked > 0 && group.allowed === 0;
-    const filterQuery = group.resource;
+    const filterQuery = group.isOther ? "" : (group.filterResource ?? group.resource);
     const actionId = `act:network:${index}`;
     actionNodes.push({
       id: actionId,
@@ -4808,11 +4855,16 @@ function renderServiceMapGraph(data, periodDecisions, periodRuns, fsSummary) {
       color: group.blocked ? "var(--graph-blocked)" : "var(--graph-node)",
       group,
       tooltipTitle: `${group.method} ${group.route}`,
-      tooltipLines: [
+      tooltipLines: group.isOther ? [
+        `${capped.hidden} routes are folded into this row to keep the map readable (the ${capped.groups.length - 1} blocked or busiest are shown).`,
+        `${group.allowed} allowed, ${group.blocked} blocked decisions between them`,
+        ...group.hiddenList, capped.hidden > group.hiddenList.length ? `…and ${capped.hidden - group.hiddenList.length} more` : ""
+      ].filter(Boolean) : [
         `${group.hostPort} · ${group.resource}`,
         `${group.allowed} allowed, ${group.blocked} blocked decisions`,
+        group.merged > 1 ? `${group.merged} targets that differ only by a number are shown as one.` : "",
         "Select to filter detections for this resource."
-      ]
+      ].filter(Boolean)
     });
     targetNodes.push({
       id: `tgt:network:${index}`,
@@ -5135,7 +5187,7 @@ function renderServiceMapGraph(data, periodDecisions, periodRuns, fsSummary) {
     mini.append(dot);
   }
   const idleSandboxes = Array.from(sbMap.values()).filter(sb => sb.allow + sb.deny === 0).length;
-  $("map-coverage-note").textContent = `Showing the ${sbNodes.length} busiest of ${sbMap.size} sandboxes (${idleSandboxes} made no requests in this window) and all ${networkGroups.length} network routes in the loaded window. Gate counts cover all loaded decisions. Filesystem links show saved policy, not file requests.`;
+  $("map-coverage-note").textContent = `Showing the ${sbNodes.length} busiest of ${sbMap.size} sandboxes (${idleSandboxes} made no requests in this window) and ${capped.hidden ? `the ${networkGroups.length - 1} blocked or busiest of ${capped.total} network routes (the other ${capped.hidden} are folded into one row)` : `all ${networkGroups.length} network routes`} in the loaded window. Gate counts cover all loaded decisions. Filesystem links show saved policy, not file requests.`;
 }
 
 function renderReachMap(data, periodDecisions, fsSummary) {
