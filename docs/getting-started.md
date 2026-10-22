@@ -12,7 +12,7 @@ most of it the first build.
 |---|---|---|---|
 | **See the console and a few decisions, with no setup** | Rust, a C++ toolchain, internet | ~10 min | [Path A](#path-a-see-it-in-ten-minutes) |
 | **Run the tests** | the same | 1 to 10 min | [Path B](#path-b-run-the-tests) |
-| **Run it against a real OpenShell gateway on my machine** | Docker or Podman, an OpenShell checkout | 30+ min | [Path C](#path-c-a-real-openshell-gateway-locally) |
+| **Run it against a real OpenShell gateway on my machine** | Docker or Podman, and a longer build | 30+ min | [Path C](#path-c-a-real-openshell-gateway-locally) |
 | **Deploy it on Azure with live agents** | an Azure subscription, about $15 a day | 1 to 2 hours | [Path D](#path-d-azure-kubernetes-service) |
 
 ## What you need
@@ -24,7 +24,8 @@ most of it the first build.
 * **glibc 2.38 or newer** (Ubuntu 24.04, Debian 13 or later). OpenShell's prebuilt Z3 prover needs it. On an older system, build in
   Docker instead (`docker build -t openshell-risk-guard:local .`).
 * **Internet access to github.com.** The OpenShell crates Risk Guard uses are fetched from NVIDIA's public repository at the
-  commit pinned in `Cargo.toml`, and the prover downloads a prebuilt Z3. **You do not need an OpenShell checkout to build.**
+  commit pinned in `Cargo.toml`, and the prover downloads a prebuilt Z3. **You do not need an OpenShell checkout, for any path.** Everything that comes from OpenShell (the crates, the Helm chart, the
+  gateway images, the CLI) is fetched from NVIDIA's public repositories at the one commit pinned in `Cargo.toml`.
 * **Python 3** for the optional demo scripts.
 
 ## Path A: see it in ten minutes
@@ -101,8 +102,15 @@ written for this project; they show the scoring logic does what it was designed 
 ## Path C: a real OpenShell gateway locally
 
 This runs Risk Guard beside a real OpenShell gateway and sandbox on your machine, with a traffic generator and, optionally, a real
-NVIDIA NeMo Agent Toolkit agent. It needs Docker or Podman and **a checkout of OpenShell at the commit pinned in `Cargo.toml`**
-(the gateway must match). Follow [Demo and local deployment](demo.md).
+NVIDIA NeMo Agent Toolkit agent. It needs Docker or Podman. No checkout is needed: build the four OpenShell binaries (the CLI,
+gateway, supervisor and sandbox) from the commit Risk Guard is pinned to, then follow [Demo and local deployment](demo.md):
+
+```bash
+scripts/install-openshell-cli.sh --all          # a larger build: the CLI plus the gateway, supervisor and sandbox
+```
+
+The installer puts the binaries in `$HOME/openshell-demo/bin`, where the demo's preparation step finds them. This path is the
+least automated one: it also needs an isolated rootful Docker daemon, as demo.md describes.
 
 ## Path D: Azure Kubernetes Service
 
@@ -110,9 +118,10 @@ This deploys OpenShell and Risk Guard on AKS with Kata VM sandboxes, a Let's Enc
 Microsoft Entra sign-in for administrators, and three agents running on a schedule. It costs about $15 a day while it runs;
 `scripts/aks/99-teardown.ps1 -Yes` deletes everything.
 
-You need an Azure subscription, the Azure CLI signed in, `kubectl`, Helm, PowerShell, Docker Desktop (for builds), a checkout of
-OpenShell (for its Helm chart) and the `openshell` CLI built from the same commit as the gateway. [Running on AKS](aks.md) has the
-numbered scripts in order, the prerequisites in full, and what a real cluster showed.
+You need an Azure subscription, the Azure CLI signed in, `kubectl`, Helm, PowerShell and Docker Desktop (for builds). OpenShell's
+chart and gateway images come from NVIDIA's registry at the pinned commit, and `scripts/install-openshell-cli.sh` builds the
+matching `openshell` CLI; no checkout is involved. [Running on AKS](aks.md) has the numbered scripts in order, the prerequisites in
+full, and what a real cluster showed.
 
 ## Troubleshooting
 

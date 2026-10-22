@@ -10,23 +10,34 @@ DOCKER_SOCKET="${DOCKER_SOCKET:-/run/openshell-risk-guard-demo/docker.sock}"
 export PATH="$HOME/bin:$PATH"
 fail() { printf 'PREPARATION FAILED: %s\n' "$*" >&2; exit 1; }
 [[ $# == 0 ]] || fail 'Usage: bash scripts/prepare-rail-guard-demo-assets.sh (consumes already built binaries)'
-OPENSHELL_REPO="$ROOT/OpenShell"
-[[ -d "$OPENSHELL_REPO" ]] || OPENSHELL_REPO="$ROOT/../OpenShell"
-[[ "$(git -C "$OPENSHELL_REPO" rev-parse HEAD)" == "$REVISION" ]] ||
-  fail "Expected OpenShell source revision $REVISION"
+# No OpenShell checkout is needed. The revision this script stages must be the one Cargo.toml pins, and the binaries come from
+# scripts/install-openshell-cli.sh --all (built from that commit), or from a local build in $TARGET/debug.
+PINNED="$(grep -oE 'rev = "[0-9a-f]{40}"' "$ROOT/Cargo.toml" | head -1 | grep -oE '[0-9a-f]{40}')"
+[[ "$PINNED" == "$REVISION" ]] || fail "This script stages OpenShell $REVISION but Cargo.toml pins ${PINNED:-nothing}"
+for checkout in "${OPENSHELL_REPO:-}" "$ROOT/OpenShell" "$ROOT/../OpenShell"; do
+  if [[ -n "$checkout" && -d "$checkout/.git" ]]; then
+    [[ "$(git -C "$checkout" rev-parse HEAD)" == "$REVISION" ]] ||
+      fail "The OpenShell checkout at $checkout is not at $REVISION"
+  fi
+done
 [[ -S "$DOCKER_SOCKET" ]] || fail "Start the isolated demo daemon first: $DOCKER_SOCKET"
 DOCKER=(docker --host "unix://$DOCKER_SOCKET")
 INFO="$("${DOCKER[@]}" info --format '{{json .SecurityOptions}}')"
 [[ "$INFO" != *rootless* ]] || fail 'The demo assets belong in the isolated rootful daemon.'
+# Where each binary comes from: a local debug build if there is one, else the ones scripts/install-openshell-cli.sh --all installed.
+declare -A SOURCE
 for binary in openshell openshell-gateway openshell-supervisor openshell-sandbox; do
-  [[ -x "$TARGET/debug/$binary" ]] || fail "Missing build output: $TARGET/debug/$binary"
+  if [[ -x "$TARGET/debug/$binary" ]]; then SOURCE[$binary]="$TARGET/debug/$binary"
+  elif [[ -x "$ASSETS/bin/$binary" ]]; then SOURCE[$binary]="$ASSETS/bin/$binary"
+  else fail "Missing $binary: run scripts/install-openshell-cli.sh --all (or build it into $TARGET/debug)"
+  fi
 done
 [[ -x "$GUARD_TARGET/debug/openshell-risk-guard" ]] ||
   fail "Missing build output: $GUARD_TARGET/debug/openshell-risk-guard"
 umask 077
 mkdir -p "$ASSETS/bin"
 for binary in openshell openshell-gateway openshell-supervisor openshell-sandbox; do
-  install -m 0755 "$TARGET/debug/$binary" "$ASSETS/bin/$binary"
+  [[ "${SOURCE[$binary]}" -ef "$ASSETS/bin/$binary" ]] || install -m 0755 "${SOURCE[$binary]}" "$ASSETS/bin/$binary"
 done
 install -m 0755 "$GUARD_TARGET/debug/openshell-risk-guard" "$ASSETS/bin/openshell-risk-guard"
 "$ASSETS/bin/openshell-gateway" config preflight --help >/dev/null

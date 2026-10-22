@@ -293,7 +293,7 @@ See [local deployment operations](../deploy/local/OPERATIONS.md) and run
 `bash scripts/deploy-local-risk-guard.sh --check` from the workspace root
 in Linux before attempting startup. The flow uses actual gateway configuration,
 supervisor middleware registration and a paired workload/supervisor topology;
-it requires a matching gateway built from the pinned checkout and a qualified
+it requires a matching gateway built from the pinned OpenShell commit (`scripts/install-openshell-cli.sh --all`) and a qualified
 rootful, same-host Docker environment. Test-only startup requires explicit
 `--allow-insecure-local-test` consent.
 

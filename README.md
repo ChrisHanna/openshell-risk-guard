@@ -200,9 +200,9 @@ cd openshell-risk-guard && cargo build --locked
 ```
 
 To move to another OpenShell commit, change `rev` on the seven `openshell-*` lines together and run
-`cargo update -p openshell-core`. A checkout of OpenShell is needed only to *run* it, not to build Risk Guard: the AKS
-scripts install OpenShell from its Helm chart, and the local demo stack builds OpenShell's gateway. Use the same OpenShell
-commit you pinned.
+`cargo update -p openshell-core`. No OpenShell checkout is needed for anything, including running it: the AKS scripts install
+OpenShell from NVIDIA's published Helm chart and images at the pinned commit, and `scripts/install-openshell-cli.sh` builds the
+matching `openshell` CLI (add `--all` for the gateway, supervisor and sandbox the local demo runs).
 
 ## License
 

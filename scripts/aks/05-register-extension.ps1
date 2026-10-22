@@ -16,14 +16,19 @@ Use-Cluster
 $state = Get-ClusterContext
 $ns = Get-StateValue 'namespace' 'openshell'
 $release = Get-StateValue 'releaseName' 'openshell'
-$chart = Get-StateValue 'openshellChart' (Join-Path (Get-OpenShellCheckout $OpenShellPath) 'deploy/helm/openshell')
+# Use the chart step 03 installed from; if it was not recorded, resolve it the same way 03 does.
+$chart = Get-StateValue 'openshellChart'
+$chartVersion = Get-StateValue 'openshellChartVersion'
+if (-not $chart) { $chartInfo = Get-OpenShellChart $OpenShellPath; $chart = $chartInfo.Ref; $chartVersion = $chartInfo.Version }
 
 Write-Step 'Confirming Risk Guard is ready before the gateway depends on it'
 Invoke-Native kubectl @('rollout', 'status', 'deploy/risk-guard', '-n', $ns, '--timeout=120s') | Out-Null
 
 Write-Step 'Registering the interceptor and middleware'
-Invoke-Native helm @('upgrade', $release, $chart, '-n', $ns, '--reuse-values', '-f', (Join-Path $script:RepoRoot 'deploy/aks/gateway-extensions-values.yaml'),
-    '--wait', '--timeout', '10m') -Retries 1 | Out-Null
+$helmArgs = @('upgrade', $release, $chart, '-n', $ns, '--reuse-values', '-f', (Join-Path $script:RepoRoot 'deploy/aks/gateway-extensions-values.yaml'),
+    '--wait', '--timeout', '10m')
+if ($chartVersion) { $helmArgs += @('--version', $chartVersion) }
+Invoke-Native helm $helmArgs -Retries 1 | Out-Null
 
 Write-Step 'Gateway log lines about Risk Guard'
 Start-Sleep -Seconds 5

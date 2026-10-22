@@ -4,8 +4,9 @@
 
 .DESCRIPTION
   OpenShell's chart requires the Agent Sandbox CRDs and controller, so a pinned release is applied
-  first. OpenShell images come from ghcr.io/nvidia/openshell at the tag you pass (default: the commit of
-  your OpenShell checkout, which published images are tagged with).
+  first. The chart and the gateway images come from NVIDIA's public registry (ghcr.io/nvidia/openshell) at the OpenShell
+  commit pinned in this repository's Cargo.toml, so no OpenShell checkout is needed. Pass -OpenShellPath to use a local
+  checkout's chart instead (for working on OpenShell itself); -ImageTag overrides the image tag.
 
   Pass -RuntimeClass kata-vm-isolation to schedule every sandbox pod in a Kata VM (see 06-add-kata-pool.ps1).
 #>
@@ -23,10 +24,9 @@ param(
 Assert-Tools
 Use-Cluster
 
-$openshell = Get-OpenShellCheckout $OpenShellPath
-$chart = Join-Path $openshell 'deploy/helm/openshell'
-if (-not (Test-Path $chart)) { throw "Chart not found at $chart" }
-if (-not $ImageTag) { $ImageTag = (Invoke-Native git @('-C', $openshell, 'rev-parse', 'HEAD') | Select-Object -First 1).Trim() }
+$chartInfo = Get-OpenShellChart $OpenShellPath
+$chart = $chartInfo.Ref
+if (-not $ImageTag) { $ImageTag = $chartInfo.ImageTag }
 
 Write-Step "Agent Sandbox controller $AgentSandboxVersion (cluster-wide CRD and controller from kubernetes-sigs)"
 Write-Note 'Pinned release, not "latest". Review the manifest if you need to: github.com/kubernetes-sigs/agent-sandbox/releases'
@@ -36,13 +36,14 @@ Invoke-Native kubectl @('-n', 'agent-sandbox-system', 'rollout', 'status', 'depl
 Write-Step "OpenShell chart ($ImageTag) into namespace $Namespace"
 $helmArgs = @('upgrade', '--install', $ReleaseName, $chart, '-n', $Namespace, '--create-namespace',
     '--set', "global.image.tag=$ImageTag", '--wait', '--timeout', '10m')
+if ($chartInfo.Version) { $helmArgs += @('--version', $chartInfo.Version) }
 if ($RuntimeClass) { $helmArgs += @('--set', "server.defaultRuntimeClassName=$RuntimeClass") }
 if ($ClearRuntimeClass) { $helmArgs += @('--set', 'server.defaultRuntimeClassName=') }
 # Keep values from earlier steps (such as the extension registration from 05) when upgrading an existing release.
 $exists = Invoke-Native helm @('status', $ReleaseName, '-n', $Namespace) -AllowFailure -Retries 1
 if ($exists) { $helmArgs += '--reset-then-reuse-values' }
 Invoke-Native helm $helmArgs -Retries 1 | Out-Null
-Save-State @{ namespace = $Namespace; releaseName = $ReleaseName; openshellImageTag = $ImageTag; openshellChart = $chart }
+Save-State @{ namespace = $Namespace; releaseName = $ReleaseName; openshellImageTag = $ImageTag; openshellChart = $chart; openshellChartVersion = $chartInfo.Version }
 
 kubectl get pods -n $Namespace
 Write-Host "`nDone. Next: scripts/aks/04-deploy-risk-guard.ps1" -ForegroundColor Green

@@ -89,12 +89,28 @@ function Use-Cluster {
     Invoke-Native az @('aks', 'get-credentials', '-g', $s.resourceGroup, '-n', $s.cluster, '--overwrite-existing', '--only-show-errors') -Retries 6 | Out-Null
 }
 
-function Get-OpenShellCheckout {
+# The OpenShell commit this repository is built against: the one rev pinned on the openshell-* lines in Cargo.toml. The gateway
+# image, the Helm chart and the `openshell` CLI must all come from it.
+function Get-PinnedOpenShellRev {
+    $match = [regex]::Match((Get-Content (Join-Path $script:RepoRoot 'Cargo.toml') -Raw), 'rev = "([0-9a-f]{40})"')
+    if (-not $match.Success) { throw 'No pinned OpenShell commit found in Cargo.toml.' }
+    return $match.Groups[1].Value
+}
+
+# Where the OpenShell Helm chart comes from. By default it is NVIDIA's published chart for the pinned commit
+# (oci://ghcr.io/nvidia/openshell/helm-chart, immutable version 0.0.0-dev.<commit>), so no OpenShell checkout is needed.
+# -OpenShellPath points at a local checkout instead, for working on OpenShell itself.
+function Get-OpenShellChart {
     param([string]$Path)
-    if ($Path) { return (Resolve-Path $Path).Path }
-    $sibling = Join-Path (Split-Path $script:RepoRoot -Parent) 'OpenShell'
-    if (Test-Path $sibling) { return (Resolve-Path $sibling).Path }
-    throw "Pass -OpenShellPath: clone https://github.com/NVIDIA/OpenShell next to this repository, or point to a checkout."
+    if ($Path) {
+        $root = (Resolve-Path $Path).Path
+        $dir = Join-Path $root 'deploy/helm/openshell'
+        if (-not (Test-Path $dir)) { throw "Chart not found at $dir" }
+        $sha = (Invoke-Native git @('-C', $root, 'rev-parse', 'HEAD') | Select-Object -First 1).Trim()
+        return @{ Ref = $dir; Version = $null; ImageTag = $sha }
+    }
+    $rev = Get-PinnedOpenShellRev
+    return @{ Ref = 'oci://ghcr.io/nvidia/openshell/helm-chart'; Version = "0.0.0-dev.$rev"; ImageTag = $rev }
 }
 
 # Apply a manifest passed as text (no temporary files, so secrets never touch disk).

@@ -39,3 +39,28 @@ fn every_openshell_crate_is_pinned_to_the_same_commit() {
     revisions.dedup();
     assert_eq!(revisions.len(), 1, "all openshell-* dependencies must use the same rev: {revisions:?}");
 }
+
+fn pinned_rev() -> String {
+    let manifest = manifest();
+    let line = manifest
+        .lines()
+        .find(|l| l.trim_start().starts_with("openshell-core"))
+        .expect("openshell-core dependency");
+    line.split("rev = \"").nth(1).and_then(|r| r.split('"').next()).expect("rev").to_string()
+}
+
+#[test]
+fn the_pinned_commit_is_the_same_everywhere_it_is_named() {
+    // The Cargo pin is the single source of truth. A script or a doc that names a different OpenShell commit would send a
+    // reader to a CLI, chart or gateway that does not match the one Risk Guard is built against.
+    let rev = pinned_rev();
+    for file in [
+        "scripts/prepare-rail-guard-demo-assets.sh",
+        "docs/design.md",
+        "docs/requirements.md",
+        "docs/anomaly-detection.md",
+    ] {
+        let text = std::fs::read_to_string(format!("{}/{file}", env!("CARGO_MANIFEST_DIR"))).expect(file);
+        assert!(text.contains(&rev), "{file} must name the pinned OpenShell commit {rev}");
+    }
+}
