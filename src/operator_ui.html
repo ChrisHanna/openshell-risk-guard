@@ -1490,6 +1490,11 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
               <option value="contained">With locks in force</option>
               <option value="blocked">With blocked requests</option>
             </select>
+            <select id="fleet-identity-filter" aria-label="Filter workloads by how they are identified">
+              <option value="all">All identities</option>
+              <option value="openshell">OpenShell principals</option>
+              <option value="spiffe">SPIFFE identities</option>
+            </select>
           </div>
         </div>
         <div class="table-scroll" tabindex="0" role="region" aria-label="Workload directory table">
@@ -6364,12 +6369,18 @@ function renderAttentionCards(items, data) {
   }
 }
 
+// How a workload is identified: by the principal OpenShell's gateway authenticated, or by the SPIFFE ID in an X.509-SVID.
+function identitySource(item) {
+  return /\(spiffe\)\s*$/.test(String(item.display_name || "")) ? "spiffe" : "openshell";
+}
+
 function renderFleetDirectory() {
   if (!cachedStateData) return;
   const data = cachedStateData;
   const agents = data.agents || [];
   const q = ($("fleet-agent-search").value || "").trim().toLowerCase();
   const pf = $("fleet-posture-filter").value;
+  const idf = $("fleet-identity-filter").value;
 
   let lockedWorkloads = 0, totalLocks = 0, totalBlocked = 0, totalCalls = 0, peak = 0, topNow = null;
   for (const item of agents) {
@@ -6412,6 +6423,7 @@ function renderFleetDirectory() {
   const rows = agents.filter(item => {
     if (pf === "contained" && !Number(item.active_restriction_count || 0)) return false;
     if (pf === "blocked" && !Number(item.denied_count || 0)) return false;
+    if (idf !== "all" && identitySource(item) !== idf) return false;
     if (q && !`${item.agent_id} ${item.display_name || ""} ${agentRole(item, data)}`.toLowerCase().includes(q)) return false;
     return true;
   }).sort(compareAgents);
@@ -6432,7 +6444,7 @@ function renderFleetDirectory() {
     const role = agentRole(item, data);
     const secondary = document.createElement("span");
     secondary.className = "cell-secondary";
-    secondary.textContent = [role, item.display_name && item.display_name !== item.agent_id && !String(item.display_name).startsWith("default / ") ? `${identityKind(item.agent_id)} ${shortId(item.agent_id, 13)}` : ""].filter(Boolean).join(" · ");
+    secondary.textContent = [identitySource(item) === "spiffe" ? "SPIFFE" : "", role, item.display_name && item.display_name !== item.agent_id && !String(item.display_name).startsWith("default / ") ? `${identityKind(item.agent_id)} ${shortId(item.agent_id, 13)}` : ""].filter(Boolean).join(" · ");
     secondary.title = item.agent_id;
     c1.append(workloadButton(item, item.display_name || item.agent_id, "map"), secondary);
 
@@ -6815,6 +6827,7 @@ $("audit-modal").addEventListener("keydown", event => {
 
 $("fleet-agent-search").addEventListener("input", renderFleetDirectory);
 $("fleet-posture-filter").addEventListener("change", renderFleetDirectory);
+$("fleet-identity-filter").addEventListener("change", renderFleetDirectory);
 
 for (const id of guardrailFieldIds) {
   $(id).addEventListener("input", updateGuardrailDraft);

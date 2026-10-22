@@ -1,6 +1,6 @@
 # A workload that reaches its backend only through the egress proxy, proving who it is with its SPIFFE X.509-SVID.
-# Rendered by scripts/aks/17-deploy-spire.ps1 -EgressProxy. It sends a routine request every 30 seconds; run the second command
-# printed by the script to see a destructive one refused by the proxy.
+# Rendered by scripts/aks/17-deploy-spire.ps1 -EgressProxy. It runs a random mix of routine, borderline and unwanted requests at random
+# intervals; the commands printed by the script send single ones by hand.
 apiVersion: spire.spiffe.io/v1alpha1
 kind: ClusterSPIFFEID
 metadata:
@@ -38,32 +38,76 @@ data:
   call.py: |
     """Call the backend through the egress proxy as this pod's SPIFFE identity, and print what came back.
 
-    usage: call.py METHOD PATH        (waits for the SVID; one request; exit 0 whatever the status)
+    usage: call.py METHOD PATH     one request (waits for the SVID; exit 0 whatever the status)
+           call.py --loop          a workload with a mind of its own: mostly routine calls, some borderline, some it should not
+                                   make, and now and then a run through many repositories, at random intervals
     """
-    import http.client, os, ssl, sys, time
+    import http.client, os, random, ssl, sys, time
 
-    method, path = sys.argv[1], sys.argv[2]
-    for _ in range(60):
-        if os.path.getsize("/certs/svid.pem") if os.path.exists("/certs/svid.pem") else 0:
-            break
-        time.sleep(2)
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    context.load_cert_chain("/certs/svid.pem", "/certs/svid_key.pem")
-    context.load_verify_locations("/certs/bundle.pem")
-    # The proxy's certificate is an SVID with a URI SAN and no DNS name, so the name is not checked; the chain to the SPIRE
-    # bundle is, and so is the proxy's SPIFFE ID.
-    context.check_hostname = False
-    connection = http.client.HTTPSConnection("egress-proxy.openshell.svc", 8443, context=context, timeout=10)
-    connection.connect()
-    peer = connection.sock.getpeercert()
-    uris = [name for kind, name in peer.get("subjectAltName", ()) if kind == "URI"]
-    if not any(uri.endswith("/sa/egress-proxy") for uri in uris):
-        print("refusing: the proxy presented", uris)
-        sys.exit(1)
-    connection.request(method, path, headers={"Host": "api.github.local"})
-    response = connection.getresponse()
-    body = response.read(200).decode("utf-8", "replace").strip().replace("\n", " ")
-    print(f"{method} {path} -> {response.status} {body[:120]}")
+    ROUTINE = ["GET /repos/local/review", "GET /repos/local/review/issues", "GET /repos/local/review/issues/7",
+               "GET /repos/local/review/releases", "GET /repos/local/review/pulls", "GET /repos/local/review/contents/README.md"]
+    BORDERLINE = ["POST /search/code", "GET /repos/org/docs-site/issues", "POST /repos/local/review/issues", "GET /repos/org/sdk-core"]
+    TEMPTING = ["DELETE /repos/local/review", "DELETE /repos/org/payments-prod", "PATCH /repos/org/payments-prod",
+                "PUT /repos/org/payments-prod/contents/.github/workflows/ci.yml", "POST /repos/org/payments-prod/hooks",
+                "GET /repos/org/payments-prod/contents/secrets.env", "DELETE /repos/local/review/releases/1"]
+
+
+    def wait_for_svid():
+        for _ in range(60):
+            if os.path.exists("/certs/svid.pem") and os.path.getsize("/certs/svid.pem"):
+                return
+            time.sleep(2)
+
+
+    def one(method, path):
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.load_cert_chain("/certs/svid.pem", "/certs/svid_key.pem")
+        context.load_verify_locations("/certs/bundle.pem")
+        # The proxy's certificate is an SVID with a URI SAN and no DNS name, so the name is not checked; the chain to the SPIRE
+        # bundle is, and so is the proxy's SPIFFE ID.
+        context.check_hostname = False
+        connection = http.client.HTTPSConnection("egress-proxy.openshell.svc", 8443, context=context, timeout=10)
+        connection.connect()
+        peer = connection.sock.getpeercert()
+        uris = [name for kind, name in peer.get("subjectAltName", ()) if kind == "URI"]
+        if not any(uri.endswith("/sa/egress-proxy") for uri in uris):
+            raise RuntimeError(f"refusing: the proxy presented {uris}")
+        connection.request(method, path, headers={"Host": "api.github.local"})
+        response = connection.getresponse()
+        body = response.read(200).decode("utf-8", "replace").strip().replace("\n", " ")
+        print(f"{method} {path} -> {response.status} {body[:120]}")
+
+
+    def loop():
+        while True:
+            roll = random.randrange(100)
+            if roll < 68:
+                request = random.choice(ROUTINE)
+            elif roll < 84:
+                request = random.choice(BORDERLINE)
+            elif roll < 97:
+                request = random.choice(TEMPTING)
+            else:
+                print("enumerating repositories", flush=True)
+                for n in range(8):
+                    try:
+                        one("GET", f"/repos/org/repo-{random.randrange(900) + n}")
+                    except Exception as error:
+                        print("failed:", error, flush=True)
+                    time.sleep(1)
+                request = "GET /repos/local/review"
+            try:
+                one(*request.split(" ", 1))
+            except Exception as error:
+                print("failed:", error, flush=True)
+            time.sleep(15 + random.randrange(60))
+
+
+    wait_for_svid()
+    if sys.argv[1:] == ["--loop"]:
+        loop()
+    else:
+        one(sys.argv[1], sys.argv[2])
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -112,10 +156,7 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              while :; do
-                python /etc/demo/call.py GET /repos/org/docs-site/issues || true
-                sleep 30
-              done
+              exec python -u /etc/demo/call.py --loop
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
