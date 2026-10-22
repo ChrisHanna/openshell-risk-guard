@@ -65,6 +65,29 @@ The demo workload's network policy (Cilium, which the cluster enforces) lets it 
 time out, so the proxy is its only route. Without a policy like that, a compromised workload could simply connect to the backend
 itself and the proxy would enforce nothing.
 
+## OpenShell's own sandboxes: the tunnel gate
+
+OpenShell can chain a sandbox's policy-approved TLS egress through an operator-owned proxy (the chart's `upstreamProxy`, HTTP `CONNECT`).
+`scripts/aks/18-enable-sandbox-egress.ps1` points it at a second Envoy, `sandbox-egress` (`deploy/aks/sandbox-egress.yaml`), which asks
+Risk Guard about every tunnel. OpenShell still applies its own policy, SSRF checks and Risk Guard's per-request check first.
+
+What the proxy can know is much less than the request-level gate: a `CONNECT` carries only a destination address and port, and the
+connection carries no certificate. So the question it answers is "may this sandbox have the network at all":
+
+* **Which sandbox?** Risk Guard maps the connection's source address to the supervisor pod, whose `openshell.ai/sandbox-id` label names
+  the sandbox it already tracks. This is read-only Kubernetes access (`pods`, one namespace). An address that is no supervisor, or a
+  sandbox Risk Guard has no record of, gets no tunnel.
+* **Quarantine.** An operator can quarantine a workload (`workload-quarantine`, audited; `workload-release` ends it). Its sandboxes get
+  no tunnels, whatever the scoring says and whatever the supervisor does. This is always enforced.
+* **Latched restrictions** (a strict-epoch restriction on some scope) are *recorded* as what would have been refused, and enforced only
+  with `-RestrictionMode enforce`. They are scoped to one kind of request and stay until an operator clears them, so cutting a whole
+  sandbox's network on one is blunt: enforcing them on the demo fleet cut off every agent, which is why shadow is the default.
+* **Fails closed.** If the proxy or Risk Guard cannot answer, no new TLS tunnel is opened.
+
+Limits: sandboxes are identified by pod address, not by a certificate (OpenShell's proxy chaining sends none), so this is as strong as
+the network's refusal to forge source addresses. Plain HTTP is not chained through the proxy. OpenShell's own pods are not otherwise
+fenced by network policy, so a sandbox that could reach the internet some other way is not stopped by this gate.
+
 ## What was verified
 
 On the AKS demo cluster (SPIRE 1.15, Envoy 1.36):
@@ -72,6 +95,9 @@ On the AKS demo cluster (SPIRE 1.15, Envoy 1.36):
 * A pod received a SPIRE-issued SVID, called the SVID listener with it, and was scored as `spiffe://…/sa/svid-demo`.
 * Through the proxy, a routine `GET` reached the backend and a `DELETE` of a repository was answered `403` by the proxy.
 * The network policy blocked a direct connection from the workload to the backend.
+* With the tunnel gate on, the live fleet's model calls went through `sandbox-egress` after OpenShell's checks, and Risk Guard logged each
+  tunnel with the sandbox it belonged to. Quarantining one fleet workload made its next run's tunnels fail (`the sandbox's workload is
+  quarantined`); releasing it restored it. Enforcing latched restrictions was tried and cut off every fleet agent, so it is off by default.
 * In the automated tests (`tests/svid_listener.rs`, real mutual TLS): a forged identity header, a certificate from another authority,
   an untrusted trust domain, no certificate, a CA used as a leaf, two URI SANs, a cross-sandbox call, a workload posing as a proxy,
   and a missing or foreign downstream identity are all refused.
@@ -83,12 +109,12 @@ On the AKS demo cluster (SPIRE 1.15, Envoy 1.36):
   path, and cannot pretend to be another workload.
 * **Does not protect:**
   * Traffic that does not go through the proxy. Forcing it through is the job of network policy or routing; the demo does it with a
-    Cilium policy for one pod. It is not applied to OpenShell's sandboxes.
+    Cilium policy for one pod. It is not applied to OpenShell's sandbox pods.
   * HTTPS destinations. The demo's backend is plain HTTP inside the cluster. To see a method and path for traffic to the internet, the
     proxy must terminate TLS, which needs a certificate authority the workload trusts. Not built.
-  * The OpenShell supervisor path (`--workload-from-principal`) is unchanged, so sandboxes still get their identity from OpenShell's
-    gateway. Connecting OpenShell's sandboxes to this proxy and giving them SPIFFE identities is the next step; OpenShell supports a
-    SPIFFE Workload API socket in sandboxes for provider token grants, which is the natural way in.
+  * OpenShell's sandboxes are not given SPIFFE identities. They keep their gateway-derived identity, and their tunnels are identified by
+    pod address (see above). OpenShell can mount a SPIFFE Workload API socket into sandboxes for provider token grants, but its upstream
+    proxy chaining does not present a certificate, so it cannot be used to authenticate the tunnel.
   * Risk Guard and SPIRE share the cluster. A compromise of the cluster itself is out of scope.
 * **Not the same as NVIDIA Sentry.** Sentry puts the enforcement layer in a separate hardware trust domain (a BlueField DPU). This
   puts it on the network path in software. It improves on enforcement inside the workload's own host, and it is not equivalent to

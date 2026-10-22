@@ -95,8 +95,9 @@ Putting Risk Guard on its own host (or node pool) protects the **decision and th
   from by network identity instead of from the supervisor, which is what Sentry's SPIFFE integration is for.
   **Built as a demonstration:** an Envoy egress proxy that identifies workloads by their SPIFFE SVID and asks Risk Guard (Envoy
   external authorization) about each request, with a network policy that leaves the demo workload no other route. It works end to end on
-  AKS for plain-HTTP traffic inside the cluster. It is not applied to OpenShell's sandboxes, and it does not yet terminate TLS for
-  internet destinations. Details and limits: [workload identity](workload-identity.md).
+  AKS for plain-HTTP traffic inside the cluster. For OpenShell's own sandboxes there is a weaker gate on the network path: their TLS
+  tunnels pass through an Envoy proxy that refuses quarantined workloads and sandboxes Risk Guard does not know; it cannot see paths
+  inside the tunnel. Details and limits: [workload identity](workload-identity.md).
 * **Never reproduced in software on the same host:** host-memory introspection of the kind DOCA Argus does from the DPU.
 
 So a separate host gives tamper-resistant decisions and evidence, not a tamper-proof gate. That is a useful property, and it is

@@ -113,8 +113,9 @@ Where this document says "the sandboxed process", it means the program running i
   list and the high-impact rule enforce. See [Operating Risk Guard](docs/operations.md#rule-modes-shadow-first-then-enforce).
 - **Workload identity beyond OpenShell's gateway (demonstration).** Callers can instead prove who they are with a SPIFFE X.509-SVID
   (SPIRE) over mutual TLS, and an Envoy egress proxy can enforce Risk Guard's decision on the network path, outside the workload.
-  Verified on AKS; applied to demo workloads only, not to OpenShell's sandboxes, and for plain HTTP inside the cluster. See
-  [Workload identity](docs/workload-identity.md).
+  Verified on AKS for demo workloads (plain HTTP inside the cluster). OpenShell's own sandboxes get a weaker gate on the network path:
+  their TLS tunnels go through an Envoy proxy that refuses operator-quarantined workloads. See [Workload identity](docs/workload-identity.md)
+  and the [architecture](docs/architecture.md).
 - **Network only.** Risk Guard scores HTTP/S requests that OpenShell inspects.
   Filesystem and process behavior are enforced statically by OpenShell
   (Landlock and policy), not scored.
