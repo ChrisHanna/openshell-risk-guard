@@ -29,6 +29,8 @@ param(
     [string]$Tag,
     [string]$WslDistro,
     [switch]$SkipVersionCheck,
+    # Also run the SPIFFE token-grant agent (needs 20-deploy-token-grant-demo.ps1).
+    [switch]$TokenAgent,
     # Build in Azure (az acr build) instead of with the local Docker engine.
     [switch]$AcrBuild,
     [switch]$Remove
@@ -152,7 +154,7 @@ try {
     $cm = Invoke-Native kubectl @('create', 'configmap', 'agent-fleet-state', '-n', $ns, "--from-file=state.json=$stateFile", '--dry-run=client', '-o', 'yaml')
     Invoke-KubectlApply ($cm -join "`n")
 } finally { Remove-Item -Force $stateFile -ErrorAction SilentlyContinue }
-$manifest = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/fleet.yaml') -Raw).Replace('__IMAGE__', $image).Replace('__ACR__', $server).Replace('__NAMESPACE__', $ns)
+$manifest = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/fleet.yaml') -Raw).Replace('__IMAGE__', $image).Replace('__ACR__', $server).Replace('__NAMESPACE__', $ns).Replace('__TOKEN_AGENT__', $(if ($TokenAgent) { '1' } else { '0' }))
 Invoke-KubectlApply $manifest
 Invoke-Native kubectl @('rollout', 'restart', 'deploy/agent-fleet', '-n', $ns) | Out-Null
 Invoke-Native kubectl @('rollout', 'status', 'deploy/agent-fleet', '-n', $ns, '--timeout=300s') | Out-Null

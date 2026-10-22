@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --uid 65532 --gid 65532 --no-create-home --shell /usr/sbin/nologin fleet
 
 COPY openshell /usr/local/bin/openshell
-COPY scripts/aks/agent-fleet.sh scripts/aks/run-agent.sh /opt/fleet/scripts/aks/
+COPY scripts/aks/agent-fleet.sh scripts/aks/run-agent.sh scripts/aks/run-token-agent.sh /opt/fleet/scripts/aks/
 COPY deploy/aks/agents /opt/fleet/deploy/aks/agents
 COPY deploy/aks/agent-sandbox-policy.yaml deploy/aks/agent-workflow.yml /opt/fleet/deploy/aks/
 COPY deploy/aks/fleet/entrypoint.sh /opt/fleet/entrypoint.sh

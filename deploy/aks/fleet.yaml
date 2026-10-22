@@ -40,6 +40,9 @@ spec:
               value: __ACR__
             - name: FLEET_STATE
               value: /etc/fleet/state/state.json
+            # 1 also runs the SPIFFE token-grant agent (20-deploy-token-grant-demo.ps1; 16-deploy-fleet.ps1 -TokenAgent).
+            - name: FLEET_TOKEN_AGENT
+              value: "__TOKEN_AGENT__"
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

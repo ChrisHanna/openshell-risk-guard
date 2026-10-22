@@ -75,7 +75,7 @@ __SVID_POD_SPEC__
             - name: baseline
               mountPath: /etc/openshell-risk-guard/baseline
               readOnly: true
-        # One import per agent task profile (support, release, cloud). The image has no shell, so each is its own step.
+        # One import per agent task profile (support, release, cloud, token). The image has no shell, so each is its own step.
         - name: baseline-import-support
           image: __IMAGE__
           args: [baseline-import, --db=/var/lib/openshell-risk-guard/risk-guard.db, --profile=/etc/openshell-risk-guard/baseline/support.json]
@@ -101,6 +101,11 @@ __SVID_POD_SPEC__
         - name: baseline-import-cloud
           image: __IMAGE__
           args: [baseline-import, --db=/var/lib/openshell-risk-guard/risk-guard.db, --profile=/etc/openshell-risk-guard/baseline/cloud.json]
+          securityContext: *baseline-security
+          volumeMounts: *baseline-mounts
+        - name: baseline-import-token
+          image: __IMAGE__
+          args: [baseline-import, --db=/var/lib/openshell-risk-guard/risk-guard.db, --profile=/etc/openshell-risk-guard/baseline/token.json]
           securityContext: *baseline-security
           volumeMounts: *baseline-mounts
       containers:

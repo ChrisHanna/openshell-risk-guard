@@ -1,0 +1,22 @@
+# Sandbox policy for the SPIFFE token-grant agent. The network endpoints come from the provider profile (deploy/aks/token-grant-profile.yaml),
+# which is what lets the supervisor attach a short-lived token it obtained with the sandbox's SPIFFE identity. Every call to alpha and beta
+# is still scored by Risk Guard against the `spiffe-token-demo` task profile.
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only: [/usr, /lib, /lib64, /etc, /proc, /dev/urandom, /opt]
+  read_write: [/sandbox, /tmp, /dev/null]
+landlock:
+  compatibility: hard_requirement
+network_middlewares:
+  risk-guard:
+    middleware: risk-guard
+    order: 10
+    on_error: fail_closed
+    config:
+      task_profile: spiffe-token-demo
+      mode: enforce
+    endpoints:
+      include:
+        - alpha.openshell.svc.cluster.local
+        - beta.openshell.svc.cluster.local

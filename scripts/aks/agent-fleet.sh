@@ -40,6 +40,8 @@ CLI="${OPENSHELL_BIN:-openshell}"
 appid() { python3 -c "import json,sys; print(json.load(open(sys.argv[1], encoding='utf-8-sig')).get('agentAppId-'+sys.argv[2],''))" "$STATE" "$1"; }
 
 AGENTS=(nat-agent release-bot ops-cleaner)
+# The SPIFFE token-grant agent (scripts/aks/run-token-agent.sh) uses no model, so it has no Entra application and no model rate limit.
+TOKEN_AGENT=0; [ "${FLEET_TOKEN_AGENT:-0}" = 1 ] && TOKEN_AGENT=1
 # Each agent has its own role, service and task profile (deploy/aks/agents/<profile>/).
 declare -A PROFILE=([nat-agent]=support [release-bot]=release [ops-cleaner]=cloud)
 declare -A TASKS
@@ -148,10 +150,34 @@ agent_loop() {
   done
 }
 
+# The token-grant agent: no model, so no run slot and no 429s. It runs at random intervals like the others.
+token_loop() {
+  local name="token-agent" out rc started wait_s
+  heartbeat "$name"
+  [ "$ONCE" = 1 ] || { wait_s=$(( RANDOM % MIN_WAIT )); echo "--- $name starts in ${wait_s}s"; sleep "$wait_s"; }
+  while :; do
+    heartbeat "$name"
+    echo "=== $(date '+%H:%M:%S')  $name"
+    started="$(date +%s)"
+    out="$(CLEANUP_SANDBOX=1 timeout --kill-after=30 "$RUN_TIMEOUT" bash "$HERE/scripts/aks/run-token-agent.sh" 2>&1)"
+    rc=$?
+    echo "$out"
+    echo "--- $name run took $(( $(date +%s) - started ))s (exit $rc)"
+    heartbeat "$name"
+    [ "$ONCE" = 1 ] && break
+    wait_s=$(( MIN_WAIT * 2 + RANDOM % (MAX_WAIT * 2 - MIN_WAIT * 2 + 1) ))
+    echo "--- $name next run in ${wait_s}s"
+    heartbeat "$name"
+    sleep "$wait_s"
+  done
+}
+
 if [ "$ONCE" = 1 ]; then
   for a in "${AGENTS[@]}"; do agent_loop "$a"; done
+  [ "$TOKEN_AGENT" = 1 ] && token_loop
 else
   for a in "${AGENTS[@]}"; do agent_loop "$a" & done
+  [ "$TOKEN_AGENT" = 1 ] && token_loop &
   # Stop every agent loop if the pod is asked to stop. Each loop keeps its own heartbeat, so one stuck agent is noticed.
   trap 'kill $(jobs -p) 2>/dev/null; exit 0' TERM INT
   wait

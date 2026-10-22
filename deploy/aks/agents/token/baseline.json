@@ -1,0 +1,18 @@
+{
+  "task_profile": "spiffe-token-demo",
+  "version": "v2",
+  "approved_by": "local-demo-operator",
+  "normalizer_version": "v1",
+  "training_sessions": 0,
+  "training_requests": 0,
+  "expected_binaries": ["/opt/agent/bin/python3.12", "/usr/bin/python3.12"],
+  "approved_resources": ["records"],
+  "allowed_action_classes": ["GET /records", "GET /records/{id}"],
+  "forbidden_action_classes": [],
+  "forbid_unfamiliar_high_impact": true,
+  "rule_modes": {"unapproved_action": "enforce"},
+  "max_req_1m_p95": 60,
+  "max_req_1m_p99": 120,
+  "max_distinct_resources_15m_p95": 4,
+  "max_distinct_resources_15m_p99": 6
+}

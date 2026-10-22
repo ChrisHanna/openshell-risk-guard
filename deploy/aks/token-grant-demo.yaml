@@ -1,0 +1,222 @@
+# The services behind OpenShell's SPIFFE token grants, from OpenShell's examples/spiffe-token-grant-demo, wired for this cluster:
+#
+#   token-issuer  accepts a sandbox's SPIFFE JWT-SVID (checked against SPIRE's published keys) and returns a short-lived access token
+#   alpha, beta   protected services: they accept only a token issued for them
+#
+# The scripts (token-issuer.js, protected-service.js) are not copied into this repository: scripts/aks/20-deploy-token-grant-demo.ps1
+# downloads them from OpenShell at the pinned commit into the ConfigMap spiffe-token-demo-scripts. Rendered by that script, which fills
+# __TRUST_DOMAIN__.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: token-issuer
+  namespace: openshell
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: token-issuer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: token-issuer
+    spec:
+      nodeSelector:
+        kubernetes.azure.com/agentpool: nodepool1
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: token-issuer
+          image: node:22-alpine
+          command: ["node", "/demo/token-issuer.js"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: ACCESS_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: spiffe-token-demo
+                  key: access-token-secret
+            - name: ACCESS_TOKEN_ISSUER
+              value: http://token-issuer.openshell.svc.cluster.local
+            - name: SPIRE_JWKS_URI
+              value: http://spire-spiffe-oidc-discovery-provider.openshell.svc.cluster.local/keys
+            - name: SPIRE_ISSUER
+              value: http://spire-spiffe-oidc-discovery-provider.openshell.svc.cluster.local
+            - name: JWT_SVID_AUDIENCE
+              value: http://token-issuer.openshell.svc.cluster.local
+            - name: TRUST_DOMAIN_PREFIX
+              value: spiffe://__TRUST_DOMAIN__/openshell/sandbox/
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: scripts
+              mountPath: /demo
+              readOnly: true
+      volumes:
+        - name: scripts
+          configMap:
+            name: spiffe-token-demo-scripts
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: token-issuer
+  namespace: openshell
+spec:
+  selector:
+    app.kubernetes.io/name: token-issuer
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alpha
+  namespace: openshell
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alpha
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: alpha
+    spec:
+      nodeSelector:
+        kubernetes.azure.com/agentpool: nodepool1
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: alpha
+          image: node:22-alpine
+          command: ["node", "/demo/protected-service.js"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - { name: SERVICE_NAME, value: alpha }
+            - { name: EXPECTED_AUDIENCE, value: alpha }
+            - { name: EXPECTED_SCOPE, value: alpha }
+            - name: ACCESS_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: spiffe-token-demo
+                  key: access-token-secret
+            - name: ACCESS_TOKEN_ISSUER
+              value: http://token-issuer.openshell.svc.cluster.local
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: scripts
+              mountPath: /demo
+              readOnly: true
+      volumes:
+        - name: scripts
+          configMap:
+            name: spiffe-token-demo-scripts
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alpha
+  namespace: openshell
+spec:
+  selector:
+    app.kubernetes.io/name: alpha
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: beta
+  namespace: openshell
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: beta
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: beta
+    spec:
+      nodeSelector:
+        kubernetes.azure.com/agentpool: nodepool1
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: beta
+          image: node:22-alpine
+          command: ["node", "/demo/protected-service.js"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - { name: SERVICE_NAME, value: beta }
+            - { name: EXPECTED_AUDIENCE, value: beta }
+            - { name: EXPECTED_SCOPE, value: beta }
+            - name: ACCESS_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: spiffe-token-demo
+                  key: access-token-secret
+            - name: ACCESS_TOKEN_ISSUER
+              value: http://token-issuer.openshell.svc.cluster.local
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: scripts
+              mountPath: /demo
+              readOnly: true
+      volumes:
+        - name: scripts
+          configMap:
+            name: spiffe-token-demo-scripts
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: beta
+  namespace: openshell
+spec:
+  selector:
+    app.kubernetes.io/name: beta
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

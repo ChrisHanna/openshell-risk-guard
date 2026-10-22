@@ -281,3 +281,41 @@ routes:
     semantic_category: destructive_admin
     high_impact: true
     resource_template: "{name}"
+
+  # Token-grant demo services (alpha and beta, deploy/aks/token-grant-demo.yaml), reached with a SPIFFE-backed token.
+  - host: alpha.openshell.svc.cluster.local
+    method: GET
+    route_template: /records
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "records"
+  - host: alpha.openshell.svc.cluster.local
+    method: GET
+    route_template: /records/{id}
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "records"
+  - host: alpha.openshell.svc.cluster.local
+    method: DELETE
+    route_template: /records/{id}
+    semantic_category: destructive_admin
+    high_impact: true
+    resource_template: "records"
+  - host: beta.openshell.svc.cluster.local
+    method: GET
+    route_template: /records
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "records"
+  - host: beta.openshell.svc.cluster.local
+    method: GET
+    route_template: /records/{id}
+    semantic_category: read_only
+    high_impact: false
+    resource_template: "records"
+  - host: beta.openshell.svc.cluster.local
+    method: DELETE
+    route_template: /records/{id}
+    semantic_category: destructive_admin
+    high_impact: true
+    resource_template: "records"

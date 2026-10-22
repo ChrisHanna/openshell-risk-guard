@@ -4,6 +4,9 @@
 global:
   spire:
     clusterName: risk-guard-aks
+    # The issuer in JWT-SVIDs, and the address of the OIDC discovery provider below that publishes the keys that sign them. A token
+    # issuer (see deploy/aks/token-grant-demo.yaml) checks a sandbox's JWT-SVID against those keys.
+    jwtIssuer: http://spire-spiffe-oidc-discovery-provider.openshell.svc.cluster.local
     trustDomain: __TRUST_DOMAIN__
     recommendations:
       enabled: false
@@ -23,6 +26,11 @@ spire-agent:
   # The agents read the same ConfigMap, so they must expect the same format.
   trustBundleFormat: pem
 
-# Not needed here: there is no OIDC federation, and the discovery provider needs an ingress and a certificate.
+# Publishes the keys that sign JWT-SVIDs, so a service can verify a sandbox's token. Served over plain HTTP inside the cluster: the keys
+# are public, but a service that trusts them should be told that an in-cluster attacker who can alter this traffic could substitute
+# their own. Use the chart's TLS options for anything beyond this demo.
 spiffe-oidc-discovery-provider:
-  enabled: false
+  enabled: true
+  tls:
+    spire:
+      enabled: false

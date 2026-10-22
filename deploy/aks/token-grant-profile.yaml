@@ -1,0 +1,49 @@
+# Provider profile: calls to alpha and beta carry a short-lived token the supervisor obtains with the sandbox's SPIFFE JWT-SVID, so the
+# sandbox holds no stored secret for them. Adapted from OpenShell's examples/spiffe-token-grant-demo/provider-profile.yaml (Apache-2.0)
+# to this cluster's namespace and service range.
+id: spiffe-token-demo
+display_name: SPIFFE token grant demo
+description: Dynamic token grant for the alpha and beta demo services, authenticated by the sandbox's SPIFFE JWT-SVID
+category: other
+credentials:
+  - name: access_token
+    description: Access token obtained with a SPIFFE JWT client assertion
+    required: false
+    auth_style: bearer
+    header_name: Authorization
+    token_grant:
+      token_endpoint: http://token-issuer.openshell.svc.cluster.local/token
+      audience: demo-default
+      jwt_svid_audience: http://token-issuer.openshell.svc.cluster.local
+      client_assertion_type: urn:ietf:params:oauth:client-assertion-type:jwt-spiffe
+      scopes: [demo]
+      cache_ttl_seconds: 60
+      audience_overrides:
+        - host: alpha.openshell.svc.cluster.local
+          port: 80
+          audience: alpha
+          scopes: [alpha]
+        - host: beta.openshell.svc.cluster.local
+          port: 80
+          audience: beta
+          scopes: [beta]
+endpoints:
+  - host: alpha.openshell.svc.cluster.local
+    port: 80
+    protocol: rest
+    tls: none
+    access: read-write
+    enforcement: enforce
+    allowed_ips:
+      - 10.0.0.0/16
+  - host: beta.openshell.svc.cluster.local
+    port: 80
+    protocol: rest
+    tls: none
+    access: read-write
+    enforcement: enforce
+    allowed_ips:
+      - 10.0.0.0/16
+binaries:
+  - /opt/agent/bin/python3.12
+  - /usr/bin/python3.12
