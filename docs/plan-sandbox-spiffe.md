@@ -1,6 +1,8 @@
 # Plan: SPIFFE identity per sandbox, and a full-request gate on the network path
 
-Status: proposed, not started. Written 22 October 2026 against OpenShell `main` (`ea13dfc`, after v0.1.5) and the commit this repository
+Status (22 October 2026, end of day): **phases 1, 2 and 3 done and verified live; phase 4 not started (waiting on a decision, section 8);
+phase 5 partly done (fail-closed drill for the egress proxy, a measurement of first offences started at 20:24 UTC, fleet rate-limit fix);
+phase 6 partly done (How it works page, architecture and identity docs).** Written 22 October 2026 against OpenShell `main` (`ea13dfc`, after v0.1.5) and the commit this repository
 pins (`55bf786`). Everything marked **verified** was read in OpenShell's documentation, chart or source; nothing here has been run on
 the cluster yet.
 
