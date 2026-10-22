@@ -128,6 +128,10 @@ On the AKS demo cluster (SPIRE 1.15, Envoy 1.36):
 * A pod received a SPIRE-issued SVID, called the SVID listener with it, and was scored as `spiffe://…/sa/svid-demo`.
 * Through the proxy, a routine `GET` reached the backend and a `DELETE` of a repository was answered `403` by the proxy.
 * The network policy blocked a direct connection from the workload to the backend.
+* **Fail-closed drill (22 October 2026).** With Risk Guard scaled to zero, both a routine and a destructive request through the egress
+  proxy came back `403` and nothing reached the backend; once Risk Guard was running again the routine request returned `200`. This
+  exercised the proxy's external authorization. The same drill has not been run for the sandbox tunnel gate, a SPIRE server outage, an
+  SVID expiring mid-run, or a trust-bundle rotation.
 * With the tunnel gate on, the live fleet's model calls went through `sandbox-egress` after OpenShell's checks, and Risk Guard logged each
   tunnel with the sandbox it belonged to. Quarantining one fleet workload made its next run's tunnels fail (`the sandbox's workload is
   quarantined`); releasing it restored it. Enforcing latched restrictions was tried and cut off every fleet agent, so it is off by default.
