@@ -1,0 +1,72 @@
+# The agent fleet, run inside the cluster so it keeps going when no workstation is on. Applied by
+# scripts/aks/16-deploy-fleet.ps1, which fills __IMAGE__, __ACR__ and __NAMESPACE__ and creates the ConfigMap
+# agent-fleet-state (the agents' Entra application IDs) that is mounted below.
+#
+# It holds the cluster's own gateway client certificate (Secret openshell-client-tls, read-only) and nothing else: no
+# Kubernetes API access, no registry credentials, no model key (the key lives in the gateway's provider and is injected
+# on the way out).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-fleet
+  namespace: __NAMESPACE__
+  labels:
+    app.kubernetes.io/name: agent-fleet
+spec:
+  replicas: 1
+  # Two fleets would double the load and fight over the same sandboxes.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-fleet
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agent-fleet
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: fleet
+          image: __IMAGE__
+          env:
+            - name: ACR_SERVER
+              value: __ACR__
+            - name: FLEET_STATE
+              value: /etc/fleet/state/state.json
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: client-tls
+              mountPath: /etc/fleet/client-tls
+              readOnly: true
+            - name: state
+              mountPath: /etc/fleet/state
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: client-tls
+          secret:
+            secretName: openshell-client-tls
+        - name: state
+          configMap:
+            name: agent-fleet-state
+        - name: tmp
+          emptyDir: {}

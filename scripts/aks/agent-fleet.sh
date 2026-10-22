@@ -16,7 +16,9 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")/../.." && pwd)"
-STATE="$HERE/.aks/state.json"
+# FLEET_STATE points at a file with the agents' application IDs: the in-cluster fleet mounts it from a ConfigMap, and a
+# workstation run reads the environment's state file.
+STATE="${FLEET_STATE:-$HERE/.aks/state.json}"
 ONCE=0; GUARD_EVERY=3
 while [ $# -gt 0 ]; do
   case "$1" in

@@ -66,6 +66,7 @@ secrets), and prints the next step. Windows PowerShell 5.1 and PowerShell 7 are 
 | 12 | `12-sync-credentials.ps1` | Copies a Key Vault secret into an OpenShell provider over stdin. |
 | 13 | `13-register-agent-identity.ps1` | Registers an Entra application for an agent; its client secret goes only to Key Vault; its application ID becomes a workload. |
 | 14 | `14-build-agent-image.ps1` | Builds the NeMo Agent Toolkit agent image in the registry. |
+| 16 | `16-deploy-fleet.ps1` | Runs the three-agent fleet inside the cluster, so it keeps going when no workstation is on. |
 | – | `99-teardown.ps1 -Yes` | Deletes the resource group. |
 
 The gateway validates every registered extension when it starts, so Risk Guard (step 4) must be running before step 5.
@@ -244,7 +245,33 @@ an agent is screened by the NeMo Guardrails input rail first (`--guardrails-ever
 before they reach Risk Guard and others are stopped by it. Use `--once` for a single pass. Each sandbox is deleted
 after its run, and every 3 hours (`SWEEP_EVERY` seconds) the fleet also removes any `agent-*` sandbox older than that, such as one left behind by a dropped connection, so the Kata node stays small.
 
+### In the cluster (the normal way)
+
+`16-deploy-fleet.ps1` builds a small image (the `openshell` CLI, the fleet scripts, each agent's policy and workflow) and runs
+it as the Deployment `agent-fleet`, so the fleet keeps going when no workstation is on. The pod holds the cluster's own
+gateway client certificate (the Secret `openshell-client-tls`, mounted read-only) and nothing else: no Kubernetes API access, no
+registry credentials and no model key (the key lives in the gateway's provider). It reaches the gateway by its Service name
+through a localhost relay, because the gateway's certificate is valid for `localhost`, so no `kubectl port-forward` is involved.
+The agents' application IDs come from a ConfigMap created from `.aks/state.json`.
+
+```powershell
+scripts/aks/16-deploy-fleet.ps1            # build, deploy, restart
+kubectl logs -n openshell deploy/agent-fleet -f
+scripts/aks/16-deploy-fleet.ps1 -Remove    # stop it
+```
+
+The `openshell` CLI binary is not part of this repository. The script finds one (`-OpenShellBinary`, `$OPENSHELL_BIN`,
+`~/openshell-demo/bin/openshell`, or `openshell` on PATH, in WSL if need be), and **it must come from the same OpenShell commit
+as the cluster's gateway**: a different version fails with protobuf decode errors, so the script checks the version against the
+gateway image and refuses a mismatch. Every build gets a unique image tag, because a node reuses a cached image for a tag it
+already has. Stop any fleet running on a workstation first; two fleets double the load and fight over sandboxes.
+
+### From a workstation (for development)
+
 ```bash
 export OPENSHELL_BIN=... ACR_SERVER=<registry>.azurecr.io
 scripts/aks/agent-fleet.sh
 ```
+
+This needs the gateway reachable from the workstation (`connect-gateway.sh`, which port-forwards), so it stops when the machine
+sleeps; use the in-cluster fleet for anything that has to keep running.
