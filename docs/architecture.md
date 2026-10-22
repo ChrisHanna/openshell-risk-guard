@@ -48,7 +48,7 @@ A request leaving a sandbox meets up to three gates, in this order. A later gate
 |---|---|---|---|---|
 | 1 | **OpenShell policy** | Supervisor pod | The static policy: hosts, methods, binaries, credentials | Denies |
 | 2 | **Risk Guard middleware** (`PRE_CREDENTIALS`) | Risk Guard, called by the supervisor | Method, host, route and a keyed resource name: is this reasonable for this workload's task? Restrictions that follow the workload. | Denies (500 ms timeout, fail closed) |
-| 3 | **Tunnel gate** (`sandbox-egress`, an Envoy proxy) | On the network path, outside the sandbox and its supervisor | Which sandbox the connection came from (by pod address) and where it is going. Refuses unknown sandboxes and quarantined workloads. | No tunnel (fail closed) |
+| 3 | **Tunnel gate** (`sandbox-egress`, an Envoy proxy) | On the network path, outside the sandbox and its supervisor | Which sandbox the connection came from (by pod address) and where it is going (the destination hostname, checked against the task's approved egress hosts). Refuses unknown sandboxes, quarantined workloads and, when enforced, unapproved destinations. | No tunnel (fail closed) |
 
 Gate 1 and 2 run inside OpenShell's own enforcement point, the supervisor. Gate 3 does not: it is the part that still holds if the
 supervisor is compromised, within the limits in [Workload identity](workload-identity.md).

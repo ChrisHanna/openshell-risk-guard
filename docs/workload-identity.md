@@ -112,10 +112,36 @@ connection carries no certificate. So the question it answers is "may this sandb
   sandbox Risk Guard has no record of, gets no tunnel.
 * **Quarantine.** An operator can quarantine a workload (`workload-quarantine`, audited; `workload-release` ends it). Its sandboxes get
   no tunnels, whatever the scoring says and whatever the supervisor does. This is always enforced.
+* **Approved egress hosts.** A task profile may list the hostnames its sandboxes may open an encrypted connection to
+  (`approved_egress_hosts`, for example `integrate.api.nvidia.com`; `*.example.org` matches subdomains but not the apex). OpenShell is set to
+  send the destination's *name* in the CONNECT (`upstreamProxy.connectByHostname`), so the gate can check it without decrypting
+  anything. The rule is `egress_destination` in the profile's `rule_modes`, default **shadow** (recorded, not refused) like the other
+  rules; an address instead of a name never matches a non-empty list; an empty list approves everything. This is the part of a
+  full-request gate that is worth having here (see "Why not a TLS-intercepting proxy" below): a compromised supervisor cannot reach a host
+  the task never needed, because the gate is outside it.
 * **Latched restrictions** (a strict-epoch restriction on some scope) are *recorded* as what would have been refused, and enforced only
   with `-RestrictionMode enforce`. They are scoped to one kind of request and stay until an operator clears them, so cutting a whole
   sandbox's network on one is blunt: enforcing them on the demo fleet cut off every agent, which is why shadow is the default.
 * **Fails closed.** If the proxy or Risk Guard cannot answer, no new TLS tunnel is opened.
+
+Because the gate now asks the proxy to resolve names (`connectByHostname`, which OpenShell's documentation calls a last resort), the proxy
+could be asked for a name that points inside the cluster. A network policy therefore limits the proxy to the public internet, Risk Guard's
+SPIFFE listener and DNS, and only supervisor pods may connect to it (`deploy/aks/sandbox-egress.yaml`).
+
+### Why not a TLS-intercepting proxy
+
+OpenShell supports one (`upstreamProxy.caBundle`), and a proxy such as mitmproxy could show Risk Guard every method and path. It was
+designed and then not built, for two reasons found while designing it:
+
+1. **It would see almost nothing worth scoring.** Risk Guard's per-request checks apply to the task APIs a profile attaches it to. In this
+   deployment those are plain HTTP inside the cluster, which OpenShell never sends through the upstream proxy. Through the proxy goes
+   only the encrypted traffic: the calls to the hosted model. Risk Guard has no task semantics for those.
+2. **It would hold the model API key.** The supervisor injects provider credentials after Risk Guard's check, so an intercepting proxy
+   sees them in memory. Risk Guard is designed never to handle a secret.
+
+A path-level gate becomes worth building when a task's own API is reached over HTTPS from the sandbox. Until then the destination check
+above gives the part of it that matters here, with no decryption and no exposure. If you build the intercepting variant, keep it in its own
+namespace, with no header or body logging, a read-only filesystem, a network policy like the one above, and a CA key held only by that proxy.
 
 Limits: sandboxes are identified by pod address, not by a certificate (OpenShell's proxy chaining sends none), so this is as strong as
 the network's refusal to forge source addresses. Plain HTTP is not chained through the proxy. OpenShell's own pods are not otherwise

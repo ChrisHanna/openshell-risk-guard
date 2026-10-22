@@ -70,7 +70,15 @@ one person; the live cluster work is the slow part.
   for it. Needs read access to SPIRE entries; only do it if that access is cheap and least-privilege (decide after phase 1).
 * **Exit:** every live sandbox shows its SPIFFE ID; a test covers the derivation and the migration.
 
-### Phase 4 — A full-request gate for sandboxes (stretch; 3–4 days)
+### Phase 4 — outcome (22 October 2026): built a different, smaller thing
+
+**What was built:** approved egress hosts per task, enforced at the tunnel gate (`approved_egress_hosts`, rule `egress_destination`, shadow by
+default), with OpenShell sending hostnames (`connectByHostname`) and a network policy that keeps the proxy off the cluster network.
+**What was not built, and why:** the TLS-intercepting proxy below. Designing it showed that it would see only the calls to the hosted model
+(the task APIs are plain HTTP inside the cluster and never go through the upstream proxy), and that it would hold the model API key.
+See "Why not a TLS-intercepting proxy" in `workload-identity.md`. The original plan text follows.
+
+### Phase 4 (as planned) — A full-request gate for sandboxes (stretch; 3–4 days)
 
 * Replace the Envoy tunnel gate for sandboxes with a TLS-intercepting proxy (mitmproxy, or squid ssl-bump) whose CA is staged through
   `upstreamProxy.caBundle`. Envoy cannot mint certificates for arbitrary hosts, so it stays only for the SPIFFE demo workloads.
