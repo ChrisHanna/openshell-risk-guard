@@ -215,6 +215,7 @@ impl SqliteRiskStore {
             "gateway_connectivity": connectivity,
             "sandbox_lifecycle": lifecycle,
             "decision_latency": latency,
+            "sandbox_spiffe_trust_domain": self.sandbox_spiffe_trust_domain,
             "coverage": "selected_inspected_http_requests_only",
             "transport_provenance": "per_decision_when_recorded_legacy_history_unknown",
             "total_sandboxes": total,

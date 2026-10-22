@@ -279,6 +279,7 @@ mod tests {
             // Runs: ended and presumed-gone runs are hidden unless asked for.
             "runs-show-all",
             "fleet-identity-filter",
+            "runs-spiffe-note",
             "settings-fold",
             // Sign-in: the screen anonymous visitors get instead of data.
             "signin-gate",

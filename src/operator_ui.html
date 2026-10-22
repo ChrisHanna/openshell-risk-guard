@@ -457,6 +457,8 @@ pre {
 .empty-state p { margin: 0; }
 .directory-table { min-width: 720px; }
 .directory-table .identity-cell { min-width: 190px; max-width: 260px; white-space: normal; }
+.group-row th { text-align: left; padding: 14px 14px 6px; background: var(--bg-code); border-top: 1px solid var(--border); font-weight: 500; }
+.group-row .group-note { display: block; font-weight: 400; color: var(--text-secondary); font-size: 12px; margin-top: 3px; }
 .cell-secondary { display: block; color: var(--text-secondary); font-size: 12px; margin-top: 4px; }
 .identity-cell .cell-secondary { overflow-wrap: anywhere; }
 .table-count { color: var(--text-muted); font-size: 12px; }
@@ -1501,7 +1503,7 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
           <table class="directory-table" id="directory-table">
             <thead>
               <tr>
-                <th scope="col" data-sort-col="name"><button type="button" class="sort-btn" data-sort="name">Workload</button></th>
+                <th scope="col" data-sort-col="name"><button type="button" class="sort-btn" data-sort="name">Name</button></th>
                 <th scope="col" data-sort-col="risk"><button type="button" class="sort-btn" data-sort="risk">Risk now · peak</button></th>
                 <th scope="col" data-sort-col="locks"><button type="button" class="sort-btn" data-sort="locks">Locks</button></th>
                 <th scope="col" data-sort-col="blocked"><button type="button" class="sort-btn" data-sort="blocked">Blocked / inspected</button></th>
@@ -1684,6 +1686,18 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
           </div>
         </section>
       </div>
+
+      <section class="panel" style="margin-top:16px" id="how-names">
+        <div class="panel-header"><div class="panel-title-group"><h2>What each name means</h2><p>Three words that are easy to run together. The directory is grouped by them.</p></div></div>
+        <div class="panel-body how-glossary">
+          <dl>
+            <dt>Agent</dt><dd>One persistent identity, such as an AI program, from OpenShell's gateway or Microsoft Entra. Scores, locks and quarantine follow it from run to run. It runs in many sandboxes over time.</dd>
+            <dt>Sandbox</dt><dd>The isolated environment OpenShell creates for one run, then deletes. Each sandbox has its own SPIFFE ID, so one agent has many SPIFFE IDs.</dd>
+            <dt>SPIFFE ID</dt><dd>A name backed by a certificate that SPIRE issues to a running pod. For a sandbox it names that sandbox and changes every run. For a service it names the service and stays the same. Risk Guard shows a sandbox's SPIFFE ID but does not receive its certificate, so it does not verify it.</dd>
+            <dt>Service</dt><dd>An ordinary pod identified by its SPIFFE ID, such as the demo workloads. One service has one SPIFFE ID, and Risk Guard builds its workload from it.</dd>
+          </dl>
+        </div>
+      </section>
 
       <section class="panel" style="margin-top:16px">
         <div class="panel-header"><div class="panel-title-group"><h2>A real request, from the live data</h2><p id="how-example-sub">Loading the latest blocked request…</p></div></div>
@@ -2235,6 +2249,7 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
           <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="runs-show-all"> Show ended and presumed-gone runs</label>
           <span class="muted" id="runs-filter-note"></span>
         </div>
+        <p class="quiet-note" id="runs-spiffe-note" style="margin:0 18px 10px" hidden></p>
         <div class="table-scroll" tabindex="0" role="region" aria-label="Recorded run lineage">
           <table>
             <thead>
@@ -6221,17 +6236,17 @@ function renderAllForCurrentAgent() {
   const baseline = ctx.baseline || {};
   const fsSummary = extractFilesystemSummary(data);
 
-  const nameText = agentName(data.agent);
+  const nameText = agentName(data.agent) ? plainNameOf(data.agent) : "";
   $("agent-title").textContent = nameText || data.agent.agent_id;
   $("agent-title").title = data.agent.agent_id;
   $("agent-context-label").textContent = [
-    nameText ? `${identityKind(data.agent.agent_id)} ${data.agent.agent_id}` : "",
+    workloadKind(data.agent) === "service" ? `SPIFFE ID ${spiffeIdOf(data.agent)}` : (nameText ? `${identityKind(data.agent.agent_id)} ${data.agent.agent_id}` : ""),
     `${ctx.task_profile || "Task profile not recorded"}${baseline.version ? ` ${baseline.version}` : ""} · agent revision ${ctx.agent_revision || "not recorded"}`
   ].filter(Boolean).join("  ·  ");
   $("sidebar-agent-id").textContent = nameText || data.agent.agent_id;
   $("selected-agent-shortcut").hidden = false;
   $("period-label-text").textContent = selectedPeriodLabel;
-  $("agent-selected").textContent = data.agent.display_name || data.agent.agent_id;
+  $("agent-selected").textContent = plainNameOf(data.agent);
   $("hub-agent-id").textContent = `${identityKind(data.agent.agent_id)}: ${data.agent.agent_id}`;
   $("hub-role").textContent = ctx.task_profile || "Task profile not recorded";
   $("hub-approved-repo").textContent = (baseline.approved_resources || []).join(", ") || "Not recorded";
@@ -6342,7 +6357,7 @@ function renderAttentionCards(items, data) {
     card.className = "attention-card";
     const head = document.createElement("div");
     head.className = "attention-head";
-    const title = workloadButton(item, item.display_name || item.agent_id, "detections", "link-button attention-name");
+    const title = workloadButton(item, plainNameOf(item), "detections", "link-button attention-name");
     const role = document.createElement("span");
     role.className = "cell-secondary";
     role.textContent = agentRole(item, data);
@@ -6387,6 +6402,38 @@ function renderAttentionCards(items, data) {
 // How a workload is identified: by the principal OpenShell's gateway authenticated, or by the SPIFFE ID in an X.509-SVID.
 function identitySource(item) {
   return /\(spiffe\)\s*$/.test(String(item.display_name || "")) ? "spiffe" : "openshell";
+}
+
+// What a row is. An agent is one persistent identity (from OpenShell's gateway or Microsoft Entra) that runs in many sandboxes over time,
+// each sandbox with its own SPIFFE ID. A service is named by its one SPIFFE ID. Unattributed sandboxes had no workload name given.
+function workloadKind(item) {
+  if (String(item.display_name || "").startsWith("default / ")) return "unattributed";
+  return identitySource(item) === "spiffe" ? "service" : "agent";
+}
+
+const KIND_GROUPS = [
+  { kind: "agent", title: "Agents in OpenShell sandboxes",
+    note: "One persistent identity each, from OpenShell's gateway or Microsoft Entra. Every run is a new sandbox, and each sandbox has its own SPIFFE ID, so one agent has many." },
+  { kind: "service", title: "Services identified by SPIFFE",
+    note: "A service with a certificate from SPIRE. The SPIFFE ID is its identity: one ID per service." },
+  { kind: "unattributed", title: "Unattributed",
+    note: "Sandboxes whose creator was not given a workload name. Named from the authenticated principal; mostly test sandboxes." },
+];
+
+// A SPIFFE service's display name is "spiffe / workload:spiffe://domain/ns/<namespace>/sa/<service account> (spiffe)": show the service account.
+function plainServiceName(item) {
+  const m = /spiffe:\/\/[^/]+\/ns\/([^/]+)\/sa\/([^\s)]+)/.exec(String(item.display_name || ""));
+  return m ? m[2] : (item.display_name || item.agent_id);
+}
+
+// The name a row, card or page title shows: a service by its service account, anything else by its display name.
+function plainNameOf(item) {
+  return workloadKind(item) === "service" ? plainServiceName(item) : (item.display_name || item.agent_id);
+}
+
+function spiffeIdOf(item) {
+  const m = /(spiffe:\/\/[^\s)]+)/.exec(String(item.display_name || ""));
+  return m ? m[1] : "";
 }
 
 function renderFleetDirectory() {
@@ -6447,7 +6494,7 @@ function renderFleetDirectory() {
     th.setAttribute("aria-sort", th.dataset.sortCol === directorySort.key ? (directorySort.dir === "asc" ? "ascending" : "descending") : "none");
   }
 
-  $("agents").replaceChildren(...rows.map(item => {
+  const rowElements = rows.map(item => {
     const locks = Number(item.active_restriction_count || 0);
     const denied = Number(item.denied_count || 0);
     const row = document.createElement("tr");
@@ -6457,11 +6504,14 @@ function renderFleetDirectory() {
     const c1 = document.createElement("td");
     c1.className = "identity-cell";
     const role = agentRole(item, data);
+    const kind = workloadKind(item);
     const secondary = document.createElement("span");
     secondary.className = "cell-secondary";
-    secondary.textContent = [identitySource(item) === "spiffe" ? "SPIFFE" : "", role, item.display_name && item.display_name !== item.agent_id && !String(item.display_name).startsWith("default / ") ? `${identityKind(item.agent_id)} ${shortId(item.agent_id, 13)}` : ""].filter(Boolean).join(" · ");
+    secondary.textContent = kind === "service"
+      ? spiffeIdOf(item)
+      : [role, item.display_name && item.display_name !== item.agent_id && kind !== "unattributed" ? `${identityKind(item.agent_id)} ${shortId(item.agent_id, 13)}` : ""].filter(Boolean).join(" · ");
     secondary.title = item.agent_id;
-    c1.append(workloadButton(item, item.display_name || item.agent_id, "map"), secondary);
+    c1.append(workloadButton(item, plainNameOf(item), "map"), secondary);
 
     const c2 = document.createElement("td");
     const risk = riskNowPeak(item);
@@ -6489,6 +6539,17 @@ function renderFleetDirectory() {
     const open = Number(item.open_sandbox_count ?? item.active_sandbox_count);
     const gone = Number(item.presumed_gone_sandbox_count || 0);
     c5.textContent = `${item.sandbox_count} recorded${Number.isFinite(open) ? ` · ${open} open` : ""}${gone ? ` · ${gone} presumed gone` : ""}`;
+    if (data.sandbox_spiffe_trust_domain && kind === "agent" && Number(item.sandbox_count) > 0) {
+      const ids = document.createElement("span");
+      ids.className = "cell-secondary";
+      ids.textContent = `${item.sandbox_count} SPIFFE ID${Number(item.sandbox_count) === 1 ? "" : "s"}, one per sandbox`;
+      c5.append(ids);
+    } else if (kind === "service") {
+      const ids = document.createElement("span");
+      ids.className = "cell-secondary";
+      ids.textContent = "1 SPIFFE ID";
+      c5.append(ids);
+    }
     c5.title = "Open: seen within the last 6 hours. Presumed gone: not seen for 6 hours and never reported deleted. OpenShell's delete event is fail-open, so a missed one leaves no trace; a sandbox that speaks again counts as open again.";
     c5.className = "muted";
 
@@ -6503,7 +6564,26 @@ function renderFleetDirectory() {
     c7.append(workloadButton(item, "Open", "map", "btn"));
     row.append(c1, c2, c3, c4, c5, c6, c7);
     return row;
-  }));
+  });
+  // Sections by kind, so an agent (many sandboxes, one identity) is not read as the same thing as a service (one SPIFFE ID).
+  const sections = [];
+  for (const group of KIND_GROUPS) {
+    const members = rows.map((item, index) => [item, index]).filter(([item]) => workloadKind(item) === group.kind);
+    if (!members.length) continue;
+    const header = document.createElement("tr");
+    header.className = "group-row";
+    const cell = document.createElement("th");
+    cell.colSpan = 7;
+    cell.scope = "colgroup";
+    cell.textContent = `${group.title} · ${members.length}`;
+    const note = document.createElement("span");
+    note.className = "group-note";
+    note.textContent = group.note;
+    cell.append(note);
+    header.append(cell);
+    sections.push(header, ...members.map(([, index]) => rowElements[index]));
+  }
+  $("agents").replaceChildren(...sections);
 
   const life = data.sandbox_lifecycle && typeof data.sandbox_lifecycle === "object" ? data.sandbox_lifecycle : null;
   const sortNames = { name: "name", risk: "peak risk", locks: "locks", blocked: "blocked requests", seen: "last seen" };
@@ -6659,6 +6739,12 @@ function renderRunsTable(data) {
   const showAll = $("runs-show-all").checked;
   const visible = data.runs.filter(run => showAll || (run.lifecycle || "open") === "open");
   const hidden = data.runs.length - visible.length;
+  const withSpiffe = data.runs.flatMap(run => run.sandboxes || []).filter(b => b.spiffe_id).length;
+  const spiffeNote = $("runs-spiffe-note");
+  spiffeNote.hidden = !withSpiffe;
+  spiffeNote.textContent = withSpiffe
+    ? `${data.runs.length} run${data.runs.length === 1 ? "" : "s"}, ${withSpiffe} sandbox${withSpiffe === 1 ? "" : "es"}: each sandbox has its own SPIFFE ID (shown under it), because SPIRE names the sandbox, not the agent. The agent's identity is the one at the top of this page.`
+    : "";
   $("runs-filter-note").textContent = hidden ? `${hidden} ended or presumed-gone run${hidden === 1 ? " is" : "s are"} hidden` : "";
   $("agent-runs").replaceChildren();
   for (const run of visible) {
