@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use crate::error::{Result, RiskGuardError};
 use crate::types::{
     BaselineProfile, BindingAudit, DecisionOutcome, DetectorContext, EnforcementMode, EpochRecord,
-    HardeningCandidate, NativeObservationSource, NormalizedRequest,
+    HardeningCandidate, NativeObservationSource, NetworkState, NormalizedRequest,
     REASON_BEHAVIORAL_RISK_RESTRICTED, RatchetAction, RiskDetector, RiskEvaluation, RiskStore,
     SandboxBinding, SignalContribution, WindowSnapshot,
 };
@@ -119,6 +119,7 @@ impl SqliteRiskStore {
         ensure_binding_audit_provider_column(&conn)?;
         ensure_epoch_closed_at_column(&conn)?;
         ensure_latency_table(&conn)?;
+        ensure_quarantine_tables(&conn)?;
         conn.execute_batch(SIDECAR_MIGRATION_SQL)?;
 
         let read_conn = Connection::open(path_ref)?;
@@ -151,6 +152,7 @@ impl SqliteRiskStore {
         ensure_binding_audit_provider_column(&conn)?;
         ensure_epoch_closed_at_column(&conn)?;
         ensure_latency_table(&conn)?;
+        ensure_quarantine_tables(&conn)?;
         conn.execute_batch(SIDECAR_MIGRATION_SQL)?;
 
         Ok(Self {
@@ -461,16 +463,15 @@ impl SqliteRiskStore {
         }
     }
 
-    /// Whether the workload behind a sandbox is locked: it holds a strict-epoch restriction, the highest tier, which blocks
-    /// everything. `None` when the sandbox has no active epoch, so Risk Guard knows nothing about it.
-    pub fn sandbox_lock_state(&self, sandbox_id: &str) -> Result<Option<bool>> {
+    /// What the network path needs to know about a sandbox. `None` when the sandbox has no active epoch.
+    pub fn sandbox_network_state(&self, sandbox_id: &str) -> Result<Option<NetworkState>> {
         let conn = self.lock_read_conn()?;
         let Some(epoch) = query_active_epoch(&conn, sandbox_id)? else {
             return Ok(None);
         };
         let identity = resolve_identity(&conn, &epoch)?;
         let owner = state_owner(&epoch, identity.as_ref());
-        let locked: bool = conn.query_row(
+        let restricted: bool = conn.query_row(
             &format!(
                 "SELECT EXISTS(SELECT 1 FROM {} WHERE epoch_id = ?1 AND tier = 'strict_epoch')",
                 owner.restrictions()
@@ -478,7 +479,101 @@ impl SqliteRiskStore {
             params![owner.id],
             |row| row.get(0),
         )?;
-        Ok(Some(locked))
+        let quarantined = match &identity {
+            Some(identity) => conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM workload_quarantine WHERE agent_id = ?1)",
+                params![identity.agent_id],
+                |row| row.get(0),
+            )?,
+            None => false,
+        };
+        Ok(Some(NetworkState {
+            quarantined,
+            restricted,
+        }))
+    }
+
+    /// Quarantine a workload: from now on the network path refuses its sandboxes any tunnel. Recorded with who and why.
+    pub fn quarantine_workload(
+        &self,
+        agent_id: &str,
+        operator: &str,
+        reason: &str,
+        now_ms: i64,
+    ) -> Result<()> {
+        let mut conn = self.lock_conn()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM agents WHERE agent_id = ?1)",
+            params![agent_id],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(RiskGuardError::InvalidArgument(format!(
+                "workload '{agent_id}' not found"
+            )));
+        }
+        for (value, name) in [(operator, "operator"), (reason, "reason")] {
+            if value.trim().is_empty() || value.len() > 1000 || value.chars().any(char::is_control)
+            {
+                return Err(RiskGuardError::InvalidArgument(format!(
+                    "{name} must be 1..1000 bytes without control characters"
+                )));
+            }
+        }
+        tx.execute(
+            "INSERT OR REPLACE INTO workload_quarantine (agent_id, reason, operator, quarantined_at_ms) VALUES (?1, ?2, ?3, ?4)",
+            params![agent_id, reason, operator, now_ms],
+        )?;
+        tx.execute(
+            "INSERT INTO workload_quarantine_audit (agent_id, action, operator, reason, at_ms) VALUES (?1, 'quarantine', ?2, ?3, ?4)",
+            params![agent_id, operator, reason, now_ms],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// End a workload's quarantine. Returns whether it was quarantined.
+    pub fn release_workload(
+        &self,
+        agent_id: &str,
+        operator: &str,
+        reason: &str,
+        now_ms: i64,
+    ) -> Result<bool> {
+        let mut conn = self.lock_conn()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let removed = tx.execute(
+            "DELETE FROM workload_quarantine WHERE agent_id = ?1",
+            params![agent_id],
+        )? > 0;
+        if removed {
+            tx.execute(
+                "INSERT INTO workload_quarantine_audit (agent_id, action, operator, reason, at_ms) VALUES (?1, 'release', ?2, ?3, ?4)",
+                params![agent_id, operator, reason, now_ms],
+            )?;
+        }
+        tx.commit()?;
+        Ok(removed)
+    }
+
+    /// Workloads currently quarantined, newest first.
+    pub fn list_quarantined(&self) -> Result<serde_json::Value> {
+        let conn = self.lock_read_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT agent_id, reason, operator, quarantined_at_ms FROM workload_quarantine ORDER BY quarantined_at_ms DESC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(serde_json::json!({
+                    "agent_id": row.get::<_, String>(0)?,
+                    "reason": row.get::<_, String>(1)?,
+                    "operator": row.get::<_, String>(2)?,
+                    "quarantined_at_ms": row.get::<_, i64>(3)?,
+                }))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(serde_json::json!({ "quarantined": rows }))
     }
 
     fn lock_conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
@@ -842,8 +937,8 @@ impl RiskStore for SqliteRiskStore {
         SqliteRiskStore::close_sandbox_lifecycle(self, sandbox_id)
     }
 
-    fn sandbox_lock_state(&self, sandbox_id: &str) -> Result<Option<bool>> {
-        SqliteRiskStore::sandbox_lock_state(self, sandbox_id)
+    fn sandbox_network_state(&self, sandbox_id: &str) -> Result<Option<NetworkState>> {
+        SqliteRiskStore::sandbox_network_state(self, sandbox_id)
     }
 }
 
@@ -859,6 +954,27 @@ fn ensure_binding_audit_provider_column(conn: &Connection) -> Result<()> {
             "ALTER TABLE workload_binding_audit ADD COLUMN principal_provider TEXT NOT NULL DEFAULT ''",
         )?;
     }
+    Ok(())
+}
+
+/// Workloads an operator has quarantined (their sandboxes get no network tunnels), and the audit of who did what and why.
+fn ensure_quarantine_tables(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS workload_quarantine (
+            agent_id TEXT PRIMARY KEY,
+            reason TEXT NOT NULL,
+            operator TEXT NOT NULL,
+            quarantined_at_ms INTEGER NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS workload_quarantine_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            operator TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            at_ms INTEGER NOT NULL
+         )",
+    )?;
     Ok(())
 }
 

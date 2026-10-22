@@ -140,6 +140,14 @@ pub enum Commands {
         /// nothing about it). Needs --svid-proxy-id, and read access to pods in that namespace.
         #[arg(long = "tunnel-pod-namespace", env = "RISK_GUARD_TUNNEL_POD_NAMESPACE")]
         tunnel_pod_namespace: Option<String>,
+        /// What a latched (strict-epoch) restriction does to a sandbox's tunnels: `shadow` records it, `enforce` refuses them.
+        /// A quarantine set by an operator is always enforced. Restrictions are scoped to one kind of request, so shadow first.
+        #[arg(
+            long = "tunnel-restriction-mode",
+            env = "RISK_GUARD_TUNNEL_RESTRICTION_MODE",
+            default_value = "shadow"
+        )]
+        tunnel_restriction_mode: String,
     },
     /// Evaluate one request as the workload that owns an X.509-SVID, against a running SVID listener, and print the decision.
     SvidProbe {
@@ -200,6 +208,33 @@ pub enum Commands {
         sandbox_id: Option<String>,
         #[arg(long, requires = "agent_id")]
         context_id: Option<String>,
+    },
+    /// Quarantine a workload: its sandboxes get no network tunnels through the egress proxy, whatever the scoring says. Audited.
+    WorkloadQuarantine {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        agent_id: String,
+        #[arg(long)]
+        operator: String,
+        #[arg(long)]
+        reason: String,
+    },
+    /// End a workload's quarantine. Audited.
+    WorkloadRelease {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        agent_id: String,
+        #[arg(long)]
+        operator: String,
+        #[arg(long)]
+        reason: String,
+    },
+    /// List the quarantined workloads.
+    WorkloadQuarantineList {
+        #[arg(long)]
+        db: PathBuf,
     },
     /// Clear one restriction after review; recorded with operator and reason, never broadens OpenShell policy.
     RestrictionClear {
@@ -542,6 +577,7 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             svid_trust_domains,
             svid_proxy_ids,
             tunnel_pod_namespace,
+            tunnel_restriction_mode,
         } => {
             if public_key_pem.is_none() && !allow_insecure_local_test {
                 return Err(RiskGuardError::InvalidArgument(
@@ -689,6 +725,15 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                         policy.clone(),
                         &svid_proxy_ids,
                     )?;
+                    service = service.with_restriction_mode(match tunnel_restriction_mode.as_str() {
+                        "shadow" => crate::ext_authz::TunnelMode::Shadow,
+                        "enforce" => crate::ext_authz::TunnelMode::Enforce,
+                        other => {
+                            return Err(RiskGuardError::InvalidArgument(format!(
+                                "--tunnel-restriction-mode must be shadow or enforce, not '{other}'"
+                            )));
+                        }
+                    });
                     if let Some(namespace) = &tunnel_pod_namespace {
                         service = service.with_tunnel_resolver(Arc::new(
                             crate::pod_resolver::KubePodResolver::in_cluster(namespace)?,
@@ -1216,6 +1261,40 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             let view = SqliteRiskStore::open(&db)?.list_restrictions(target, now_unix_ms())?;
             Ok(serde_json::to_string_pretty(&view)?)
         }
+
+        Commands::WorkloadQuarantine {
+            db,
+            agent_id,
+            operator,
+            reason,
+        } => {
+            SqliteRiskStore::open(&db)?.quarantine_workload(
+                &agent_id,
+                &operator,
+                &reason,
+                now_unix_ms(),
+            )?;
+            Ok(serde_json::json!({"agent_id": agent_id, "status": "quarantined"}).to_string())
+        }
+
+        Commands::WorkloadRelease {
+            db,
+            agent_id,
+            operator,
+            reason,
+        } => {
+            let was = SqliteRiskStore::open(&db)?.release_workload(
+                &agent_id,
+                &operator,
+                &reason,
+                now_unix_ms(),
+            )?;
+            Ok(serde_json::json!({"agent_id": agent_id, "status": if was { "released" } else { "was not quarantined" }}).to_string())
+        }
+
+        Commands::WorkloadQuarantineList { db } => Ok(serde_json::to_string_pretty(
+            &SqliteRiskStore::open(&db)?.list_quarantined()?,
+        )?),
 
         Commands::RestrictionClear {
             db,

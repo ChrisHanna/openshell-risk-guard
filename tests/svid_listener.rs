@@ -12,7 +12,7 @@ use openshell_core::proto::{
 use openshell_risk_guard::detector::InteractionRiskDetector;
 use openshell_risk_guard::ext_authz::{
     Address, AttributeContext, AttributeRequest, CheckRequest, CheckResponse, ExtAuthzService,
-    HttpRequest, Peer, SocketAddress,
+    HttpRequest, Peer, SocketAddress, TunnelMode,
 };
 use openshell_risk_guard::fixture::build_standard_corpus;
 use openshell_risk_guard::middleware_service::RiskGuardMiddlewareService;
@@ -148,7 +148,7 @@ async fn start_full(
     authority: &Authority,
     trust_domains: &[&str],
     proxies: &[&str],
-    tunnels: Option<Arc<dyn PodResolver>>,
+    tunnels: Option<(Arc<dyn PodResolver>, TunnelMode)>,
 ) -> Running {
     let dir = tempfile::tempdir().unwrap();
     let secrets = dir.path().join("secrets");
@@ -184,7 +184,9 @@ async fn start_full(
         )
         .unwrap();
         Some(match tunnels {
-            Some(resolver) => service.with_tunnel_resolver(resolver),
+            Some((resolver, mode)) => service
+                .with_tunnel_resolver(resolver)
+                .with_restriction_mode(mode),
             None => service,
         })
     };
@@ -647,55 +649,59 @@ async fn tunnel_check(channel: Channel, source_ip: &str) -> CheckResponse {
     .into_inner()
 }
 
-#[tokio::test]
-async fn a_sandbox_tunnel_is_carried_unless_the_sandbox_is_unknown_or_its_workload_is_locked() {
+/// A sandbox with an active epoch, bound to a workload when `agent` is given.
+fn enrol_sandbox(store: &SqliteRiskStore, sandbox: &str, agent: Option<&str>) {
     use openshell_risk_guard::detector::compute_baseline_hash;
-    use openshell_risk_guard::types::{EnforcementMode, EpochRecord, RawRequestInput};
+    use openshell_risk_guard::types::{EnforcementMode, EpochRecord};
 
-    let authority = Authority::new();
-    let proxy_id = "spiffe://example.org/ns/edge/sa/sandbox-egress";
-    let resolver: Arc<dyn PodResolver> = Arc::new(StaticPodResolver(
-        [
-            ("10.0.0.1".parse().unwrap(), "sbx-open".to_string()),
-            ("10.0.0.2".parse().unwrap(), "sbx-locked".to_string()),
-            (
-                "10.0.0.3".parse().unwrap(),
-                "sbx-never-registered".to_string(),
-            ),
-        ]
-        .into(),
-    ));
-    let running = start_full(&authority, &[TRUST_DOMAIN], &[proxy_id], Some(resolver)).await;
-
-    let baseline = build_standard_corpus().default_baseline;
-    for sandbox in ["sbx-open", "sbx-locked"] {
-        running
-            .store
-            .upsert_epoch(&EpochRecord {
-                epoch_id: format!("ep-{sandbox}"),
-                gateway_id: "svid-gateway".into(),
-                sandbox_id: sandbox.into(),
-                task_profile: baseline.task_profile.clone(),
-                baseline_hash: compute_baseline_hash(&baseline),
-                mode: EnforcementMode::Enforce,
-                active: true,
-                next_sequence: 1,
-                created_at_ms: 0,
-                credentialed_endpoints: Default::default(),
-                active_policy_hash: None,
-            })
+    // The baseline exactly as the listener stored it (its normalizer version was set), so the hashes agree.
+    let baseline = store
+        .get_baseline(&build_standard_corpus().default_baseline.task_profile)
+        .unwrap()
+        .unwrap();
+    store
+        .upsert_epoch(&EpochRecord {
+            epoch_id: format!("ep-{sandbox}"),
+            gateway_id: "svid-gateway".into(),
+            sandbox_id: sandbox.into(),
+            task_profile: baseline.task_profile.clone(),
+            baseline_hash: compute_baseline_hash(&baseline),
+            mode: EnforcementMode::Enforce,
+            active: true,
+            next_sequence: 1,
+            created_at_ms: 0,
+            credentialed_endpoints: Default::default(),
+            active_policy_hash: None,
+        })
+        .unwrap();
+    if let Some(agent) = agent {
+        store.register_agent(agent, agent).unwrap();
+        let run = format!("run-{sandbox}");
+        store
+            .create_agent_run(
+                agent,
+                &run,
+                "r1",
+                &baseline.task_profile,
+                EnforcementMode::Enforce,
+            )
             .unwrap();
+        store.bind_agent_run(&run, sandbox, "svid-gateway").unwrap();
     }
+}
 
-    // Lock one sandbox's workload the way the supervisor path does: by repeating a destructive call until the ratchet latches.
+/// Latch a strict-epoch restriction on a sandbox's workload the way the supervisor path does: repeat a destructive call.
+fn latch_restriction(store: &SqliteRiskStore, sandbox: &str) {
+    use openshell_risk_guard::types::RawRequestInput;
+
     let normalizer = CanonicalNormalizer::new_default(&[9u8; 32]);
     let detector = InteractionRiskDetector::new_default();
     for n in 0..20_i64 {
         let request = normalizer
             .normalize(&RawRequestInput {
-                request_id: format!("lock-{n}"),
-                sandbox_id: "sbx-locked".into(),
-                sandbox_name: "sbx-locked".into(),
+                request_id: format!("lock-{sandbox}-{n}"),
+                sandbox_id: sandbox.into(),
+                sandbox_name: sandbox.into(),
                 workspace: "default".into(),
                 scheme: "https".into(),
                 host: "api.github.local".into(),
@@ -708,32 +714,68 @@ async fn a_sandbox_tunnel_is_carried_unless_the_sandbox_is_unknown_or_its_worklo
                 timestamp_ms: 1_800_000_000_000 + n * 1_000,
             })
             .unwrap();
-        let _ = running
-            .store
-            .evaluate_authenticated(&request, &detector, "svid-gateway", false);
-        if running.store.sandbox_lock_state("sbx-locked").unwrap() == Some(true) {
-            break;
+        let _ = store.evaluate_authenticated(&request, &detector, "svid-gateway", false);
+        if store
+            .sandbox_network_state(sandbox)
+            .unwrap()
+            .is_some_and(|s| s.restricted)
+        {
+            return;
         }
     }
-    assert_eq!(
-        running.store.sandbox_lock_state("sbx-locked").unwrap(),
-        Some(true),
-        "the test needs a locked workload"
-    );
-    assert_eq!(
-        running.store.sandbox_lock_state("sbx-open").unwrap(),
-        Some(false)
-    );
+    panic!("the test needs a restricted workload");
+}
+
+fn tunnel_table() -> Arc<dyn PodResolver> {
+    Arc::new(StaticPodResolver(
+        [
+            ("10.0.0.1".parse().unwrap(), "sbx-open".to_string()),
+            ("10.0.0.2".parse().unwrap(), "sbx-restricted".to_string()),
+            (
+                "10.0.0.3".parse().unwrap(),
+                "sbx-never-registered".to_string(),
+            ),
+        ]
+        .into(),
+    ))
+}
+
+#[tokio::test]
+async fn a_sandbox_tunnel_is_carried_unless_the_sandbox_is_unknown_quarantined_or_restricted_in_enforce_mode()
+ {
+    let authority = Authority::new();
+    let proxy_id = "spiffe://example.org/ns/edge/sa/sandbox-egress";
+    let running = start_full(
+        &authority,
+        &[TRUST_DOMAIN],
+        &[proxy_id],
+        Some((tunnel_table(), TunnelMode::Enforce)),
+    )
+    .await;
+    enrol_sandbox(&running.store, "sbx-open", Some("workload-open"));
+    enrol_sandbox(&running.store, "sbx-restricted", None);
+    latch_restriction(&running.store, "sbx-restricted");
+    let state = |sandbox: &str| {
+        running
+            .store
+            .sandbox_network_state(sandbox)
+            .unwrap()
+            .unwrap()
+    };
+    assert!(!state("sbx-open").restricted && !state("sbx-open").quarantined);
 
     let (cert, key) = authority.svid(&[proxy_id]);
     let channel = connect(&running, Some((&cert, &key))).await.unwrap();
     let carried = tunnel_check(channel.clone(), "10.0.0.1").await;
     assert!(
         carried.ok_response.is_some(),
-        "an unlocked sandbox's tunnel is carried: {carried:?}"
+        "an ordinary sandbox's tunnel is carried: {carried:?}"
     );
     for (source, why) in [
-        ("10.0.0.2", "a locked workload"),
+        (
+            "10.0.0.2",
+            "a restricted workload when restrictions are enforced",
+        ),
         ("10.0.0.3", "a sandbox Risk Guard has no record of"),
         ("10.9.9.9", "an address that is no sandbox"),
         ("not-an-address", "a malformed address"),
@@ -744,6 +786,81 @@ async fn a_sandbox_tunnel_is_carried_unless_the_sandbox_is_unknown_or_its_worklo
             "{why} must not get a tunnel: {refused:?}"
         );
     }
+
+    // An operator quarantines the workload: its next tunnel is refused; releasing it restores the network.
+    running
+        .store
+        .quarantine_workload(
+            "workload-open",
+            "ops@example.org",
+            "suspected compromise",
+            1,
+        )
+        .unwrap();
+    assert!(state("sbx-open").quarantined);
+    assert!(
+        tunnel_check(channel.clone(), "10.0.0.1")
+            .await
+            .denied_response
+            .is_some()
+    );
+    assert!(
+        running
+            .store
+            .release_workload("workload-open", "ops@example.org", "cleared", 2)
+            .unwrap()
+    );
+    assert!(
+        tunnel_check(channel, "10.0.0.1")
+            .await
+            .ok_response
+            .is_some()
+    );
+    assert!(
+        running
+            .store
+            .quarantine_workload("no-such-workload", "ops@example.org", "x", 3)
+            .is_err(),
+        "an unknown workload cannot be quarantined"
+    );
+    running.stop.notify_one();
+}
+
+#[tokio::test]
+async fn in_shadow_mode_a_restriction_is_recorded_but_only_a_quarantine_blocks() {
+    let authority = Authority::new();
+    let proxy_id = "spiffe://example.org/ns/edge/sa/sandbox-egress";
+    let running = start_full(
+        &authority,
+        &[TRUST_DOMAIN],
+        &[proxy_id],
+        Some((tunnel_table(), TunnelMode::Shadow)),
+    )
+    .await;
+    enrol_sandbox(
+        &running.store,
+        "sbx-restricted",
+        Some("workload-restricted"),
+    );
+    latch_restriction(&running.store, "sbx-restricted");
+    let (cert, key) = authority.svid(&[proxy_id]);
+    let channel = connect(&running, Some((&cert, &key))).await.unwrap();
+
+    let carried = tunnel_check(channel.clone(), "10.0.0.2").await;
+    assert!(
+        carried.ok_response.is_some(),
+        "shadow mode must not cut a restricted sandbox: {carried:?}"
+    );
+
+    running
+        .store
+        .quarantine_workload("workload-restricted", "ops@example.org", "contain it", 1)
+        .unwrap();
+    let refused = tunnel_check(channel, "10.0.0.2").await;
+    assert!(
+        refused.denied_response.is_some(),
+        "a quarantine is enforced whatever the mode"
+    );
     running.stop.notify_one();
 }
 

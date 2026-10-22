@@ -403,6 +403,15 @@ pub trait RiskDetector: Send + Sync {
 }
 
 /// Trait for the transactional SQLite state and audit store.
+/// What a network-path gate needs to know about a sandbox's workload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NetworkState {
+    /// An operator has quarantined the workload: it gets no network, whatever it has or has not done.
+    pub quarantined: bool,
+    /// The workload holds at least one strict-epoch restriction (some scope is latched). Scoped, so blunt as a network signal.
+    pub restricted: bool,
+}
+
 /// Everything needed to attach a freshly created sandbox to a workload.
 #[derive(Debug, Clone, Copy)]
 pub struct SandboxBinding<'a> {
@@ -495,8 +504,8 @@ pub trait RiskStore: Send + Sync {
     fn auto_bind_sandbox_epoch(&self, _binding: &SandboxBinding) -> Result<()> {
         Ok(())
     }
-    /// Whether the workload behind a sandbox is locked (holds a strict-epoch restriction); `None` if the sandbox is unknown.
-    fn sandbox_lock_state(&self, _sandbox_id: &str) -> Result<Option<bool>> {
+    /// What the network path needs to know about a sandbox; `None` if Risk Guard has no active epoch for it.
+    fn sandbox_network_state(&self, _sandbox_id: &str) -> Result<Option<NetworkState>> {
         Ok(None)
     }
     /// Append one workload-binding attempt (accepted or refused) to the audit trail.

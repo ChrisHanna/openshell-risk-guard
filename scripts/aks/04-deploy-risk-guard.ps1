@@ -121,7 +121,7 @@ if ($svidDomain) {
     if (Get-StateValue 'svidSandboxEgress') {
         # The sandbox egress proxy (18-enable-sandbox-egress.ps1) asks about OpenShell's sandbox tunnels. Risk Guard maps each
         # tunnel's source address to a sandbox by reading supervisor pods, with a service account that can do only that.
-        $svid.args += "`n            - --svid-proxy-id=spiffe://$svidDomain/ns/$ns/sa/sandbox-egress`n            - --tunnel-pod-namespace=$ns"
+        $svid.args += "`n            - --svid-proxy-id=spiffe://$svidDomain/ns/$ns/sa/sandbox-egress`n            - --tunnel-pod-namespace=$ns`n            - --tunnel-restriction-mode=$(Get-StateValue 'svidTunnelRestrictionMode' 'shadow')"
         $svid.podSpec = '      serviceAccountName: risk-guard-tunnels'
     }
     $svid.containerPort = "            - name: grpc-svid`n              containerPort: 50062"

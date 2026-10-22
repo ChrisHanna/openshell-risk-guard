@@ -183,6 +183,15 @@ pub struct ExtAuthzService {
     proxies: Arc<BTreeSet<String>>,
     /// Resolves the address of a tunnelling sandbox supervisor to its sandbox. Without it, tunnels are refused.
     tunnels: Option<Arc<dyn PodResolver>>,
+    /// What happens to a sandbox whose workload holds a strict-epoch restriction. Quarantine is always enforced.
+    restriction_mode: TunnelMode,
+}
+
+/// Whether a signal blocks the tunnel (`Enforce`) or is only recorded as what would have been blocked (`Shadow`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TunnelMode {
+    Shadow,
+    Enforce,
 }
 
 impl ExtAuthzService {
@@ -211,6 +220,7 @@ impl ExtAuthzService {
             workload_policy,
             proxies: Arc::new(proxies),
             tunnels: None,
+            restriction_mode: TunnelMode::Shadow,
         })
     }
 
@@ -221,10 +231,18 @@ impl ExtAuthzService {
         self
     }
 
+    /// Set what a latched restriction does to a sandbox's tunnels. The default is shadow: it is recorded, not enforced, because a
+    /// restriction is scoped to one kind of request and is a blunt signal to cut a whole sandbox's network on.
+    #[must_use]
+    pub fn with_restriction_mode(mut self, mode: TunnelMode) -> Self {
+        self.restriction_mode = mode;
+        self
+    }
+
     /// An HTTP `CONNECT` from a sandbox's supervisor: OpenShell has already applied its own policy and now asks the network path
     /// to carry a TLS tunnel. All the proxy knows is where the connection came from and where it is going (the request inside
-    /// the tunnel is encrypted), so the question is whether this sandbox may still reach the network at all. It may not if Risk
-    /// Guard has locked its workload, or if nothing about it is known.
+    /// the tunnel is encrypted), so the question is whether this sandbox may still reach the network at all. It may not if an operator has
+    /// quarantined its workload, or if nothing about it is known; a latched restriction counts too once enforced.
     async fn check_tunnel(
         &self,
         source: Option<&Peer>,
@@ -245,17 +263,24 @@ impl ExtAuthzService {
             Ok(None) => return Ok(deny("the source is not a known sandbox")),
             Err(error) => return Err(tonic::Status::unavailable(error.to_string())),
         };
-        let store = Arc::clone(&self.store);
-        let looked_up = Arc::clone(&store);
+        let looked_up = Arc::clone(&self.store);
         let id = sandbox_id.clone();
-        let locked = tokio::task::spawn_blocking(move || looked_up.sandbox_lock_state(&id))
+        let state = tokio::task::spawn_blocking(move || looked_up.sandbox_network_state(&id))
             .await
             .map_err(|_| tonic::Status::unavailable("risk state unavailable"))?
             .map_err(|_| tonic::Status::unavailable("risk state unavailable"))?;
-        let (verdict, reason) = match locked {
+        let enforcing = self.restriction_mode == TunnelMode::Enforce;
+        let (verdict, reason) = match state {
             None => ("deny", "Risk Guard has no record of this sandbox"),
-            Some(true) => ("deny", "the sandbox's workload is locked"),
-            Some(false) => ("allow", ""),
+            Some(state) if state.quarantined => ("deny", "the sandbox's workload is quarantined"),
+            Some(state) if state.restricted && enforcing => {
+                ("deny", "the sandbox's workload holds a latched restriction")
+            }
+            Some(state) if state.restricted => (
+                "allow",
+                "shadow: the workload holds a latched restriction, which would block this tunnel in enforce mode",
+            ),
+            Some(_) => ("allow", ""),
         };
         tracing::info!(%sandbox_id, destination, verdict, reason, "sandbox tunnel checked");
         Ok(if verdict == "allow" {

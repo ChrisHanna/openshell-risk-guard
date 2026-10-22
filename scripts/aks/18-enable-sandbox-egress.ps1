@@ -13,6 +13,8 @@
      checks first; only policy-approved TLS egress is chained through the proxy, with HTTP CONNECT. Plain HTTP and the cluster's
      own addresses (`noProxy`) do not go through it. The gateway restarts, and sandboxes created afterwards use the proxy.
 
+  What the proxy refuses: a sandbox Risk Guard has no record of, and a workload an operator has quarantined
+  (scripts: openshell-risk-guard workload-quarantine). A latched restriction is only recorded unless -RestrictionMode enforce.
   Fails closed: if the proxy or Risk Guard is down, new TLS egress from sandboxes fails. -Remove turns it off again.
 #>
 [CmdletBinding()]
@@ -20,6 +22,10 @@ param(
     [string]$ImageTag,
     [string]$OpenShellPath,
     # Destinations that bypass the proxy (OpenShell policy still applies to them).
+    # What a latched (strict-epoch) restriction does to a sandbox's tunnels. Shadow records it; enforce refuses the tunnels. A
+    # quarantine set by an operator is always enforced. Restrictions are scoped to one kind of request and stay latched until an
+    # operator clears them, so enforcing them would cut off the demo fleet's agents: start in shadow.
+    [ValidateSet('shadow', 'enforce')][string]$RestrictionMode = 'shadow',
     [string]$NoProxy = '.svc,.svc.cluster.local,10.0.0.0/8',
     [switch]$Remove
 )
@@ -37,10 +43,15 @@ $chartVersion = Get-StateValue 'openshellChartVersion'
 if (-not $chart) { $chartInfo = Get-OpenShellChart $OpenShellPath; $chart = $chartInfo.Ref; $chartVersion = $chartInfo.Version }
 
 function Set-GatewayUpstreamProxy([string]$Url, [string]$Bypass) {
-    $helmArgs = @('upgrade', $release, $chart, '-n', $ns, '--reuse-values',
-        '--set', "upstreamProxy.url=$Url", '--set-string', "upstreamProxy.noProxy=$Bypass", '--wait', '--timeout', '10m')
-    if ($chartVersion) { $helmArgs += @('--version', $chartVersion) }
-    Invoke-Native helm $helmArgs -Retries 1 | Out-Null
+    # A values file, not --set: the bypass list has commas, which --set would split.
+    $values = Join-Path ([IO.Path]::GetTempPath()) ("upstream-proxy-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.yaml')
+    try {
+        @{ upstreamProxy = @{ url = $Url; noProxy = $Bypass } } | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 $values
+        $helmArgs = @('upgrade', $release, $chart, '-n', $ns, '--reuse-values', '-f', $values, '--wait', '--timeout', '10m')
+        if ($chartVersion) { $helmArgs += @('--version', $chartVersion) }
+        Invoke-Native helm $helmArgs -Retries 1 | Out-Null
+    }
+    finally { Remove-Item -Force $values -ErrorAction SilentlyContinue }
 }
 
 if ($Remove) {
@@ -58,10 +69,16 @@ Invoke-KubectlApply ((Get-Content (Join-Path $script:RepoRoot 'deploy/aks/sandbo
 Invoke-Native kubectl @('rollout', 'status', 'deploy/sandbox-egress', '-n', $ns, '--timeout=300s') | Out-Null
 
 Write-Step 'Redeploying Risk Guard to answer its checks'
-Save-State @{ svidSandboxEgress = $true }
+Save-State @{ svidSandboxEgress = $true; svidTunnelRestrictionMode = $RestrictionMode }
 $deployArgs = @{}
 if ($ImageTag) { $deployArgs.ImageTag = $ImageTag }
-& "$PSScriptRoot/04-deploy-risk-guard.ps1" @deployArgs
+try { & "$PSScriptRoot/04-deploy-risk-guard.ps1" @deployArgs }
+catch {
+    # 04 ends by checking the public certificate, which can time out while the pod is still being replaced. What matters is that
+    # the new pod becomes ready, so wait for that instead.
+    Write-Note "04 reported: $($_.Exception.Message.Split("`n")[0])"
+}
+Invoke-Native kubectl @('rollout', 'status', 'deploy/risk-guard', '-n', $ns, '--timeout=300s') | Out-Null
 
 Write-Step 'Pointing the gateway at the proxy'
 Set-GatewayUpstreamProxy "http://sandbox-egress.$ns.svc:8444" $NoProxy
