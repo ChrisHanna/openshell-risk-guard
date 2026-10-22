@@ -28,7 +28,7 @@ flowchart LR
 ```
 
 * **OpenShell** is installed from the chart in your OpenShell checkout, with images from `ghcr.io/nvidia/openshell` at the
-  checkout's commit.
+  checkout's commit (use the commit pinned in `Cargo.toml`).
 * **Risk Guard** runs as its own Deployment (one replica, `Recreate` rollout, because it is a single-writer SQLite store)
   with a read-only console on the pod's loopback. It binds each sandbox to a workload derived from the workspace and the
   principal the gateway authenticated, or to a workload named by an allowlisted label such as an agent's Entra application ID.
@@ -38,8 +38,9 @@ flowchart LR
 
 * An Azure subscription where you can create AKS clusters, and the Azure CLI signed in (`az login`).
 * `kubectl` and Helm 3.14+ (or 4). PowerShell 5.1 or 7+ (the scripts also run on Linux and macOS with `pwsh`).
-* A checkout of [NVIDIA/OpenShell](https://github.com/NVIDIA/OpenShell) next to this repository, or pass `-OpenShellPath`.
-  Risk Guard builds against it, so use the same commit you deploy.
+* A checkout of [NVIDIA/OpenShell](https://github.com/NVIDIA/OpenShell) next to this repository, or pass `-OpenShellPath`,
+  to install OpenShell itself (its Helm chart; steps 3 and 5). Risk Guard does not need it to build: it is built from this
+  repository alone, with the OpenShell crates fetched at the commit pinned in `Cargo.toml`. Install OpenShell from that same commit.
 * For the Kata pool: quota for a Gen2 VM size with nested virtualization (for example `Standard_D4s_v5`).
 * The `openshell` CLI (Linux or macOS; on Windows use WSL) to create sandboxes.
 

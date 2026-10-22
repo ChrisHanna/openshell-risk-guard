@@ -1601,6 +1601,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 [[package]]
 name = "openshell-core"
 version = "0.0.0"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=55bf786453395f3fe1858a187152537b457de77d#55bf786453395f3fe1858a187152537b457de77d"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1636,6 +1637,7 @@ dependencies = [
 [[package]]
 name = "openshell-extension-core"
 version = "0.0.0"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=55bf786453395f3fe1858a187152537b457de77d#55bf786453395f3fe1858a187152537b457de77d"
 dependencies = [
  "hyper-util",
  "serde",
@@ -1648,6 +1650,7 @@ dependencies = [
 [[package]]
 name = "openshell-gateway-interceptors"
 version = "0.0.0"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=55bf786453395f3fe1858a187152537b457de77d#55bf786453395f3fe1858a187152537b457de77d"
 dependencies = [
  "json-patch",
  "metrics",
@@ -1667,6 +1670,7 @@ dependencies = [
 [[package]]
 name = "openshell-policy"
 version = "0.0.0"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=55bf786453395f3fe1858a187152537b457de77d#55bf786453395f3fe1858a187152537b457de77d"
 dependencies = [
  "hickory-proto",
  "miette",
@@ -1680,6 +1684,7 @@ dependencies = [
 [[package]]
 name = "openshell-policy-schema"
 version = "0.0.0"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=55bf786453395f3fe1858a187152537b457de77d#55bf786453395f3fe1858a187152537b457de77d"
 dependencies = [
  "miette",
  "noyalib",
@@ -1692,6 +1697,7 @@ dependencies = [
 [[package]]
 name = "openshell-prover"
 version = "0.0.0"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=55bf786453395f3fe1858a187152537b457de77d#55bf786453395f3fe1858a187152537b457de77d"
 dependencies = [
  "glob",
  "include_dir",
@@ -1747,6 +1753,7 @@ dependencies = [
 [[package]]
 name = "openshell-supervisor-middleware"
 version = "0.0.0"
+source = "git+https://github.com/NVIDIA/OpenShell?rev=55bf786453395f3fe1858a187152537b457de77d#55bf786453395f3fe1858a187152537b457de77d"
 dependencies = [
  "futures",
  "miette",

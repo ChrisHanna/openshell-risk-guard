@@ -1,0 +1,10 @@
+# Keep the build context small and free of local state.
+.git
+.aks
+target
+node_modules
+.venv
+*.db
+*.db-wal
+*.db-shm
+*.env

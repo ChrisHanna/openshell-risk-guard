@@ -3,14 +3,13 @@
   Build the Risk Guard sidecar image remotely in your Azure Container Registry.
 
 .DESCRIPTION
-  Risk Guard builds against crates in an OpenShell checkout (a path dependency), so the Docker build
-  context holds both repositories side by side. This script stages a clean copy (no .git, no build
-  output, no databases or env files) and runs `az acr build`, so no Docker daemon is needed locally.
-  The image is tagged with the Risk Guard git commit and `latest`.
+  Risk Guard builds on its own: the OpenShell crates it uses are fetched from NVIDIA's public repository at the
+  commit pinned in Cargo.toml (the build needs network access to github.com). This script stages a clean copy of
+  this repository (no .git, no build output, no databases or env files) and runs `az acr build`, so no Docker
+  daemon is needed locally. The image is tagged with the Risk Guard git commit and `latest`.
 #>
 [CmdletBinding()]
 param(
-    [string]$OpenShellPath,
     [string]$Tag,
     # Build with the local Docker engine and push, instead of `az acr build`. Use it when the ACR build service is
     # unreachable from this machine (the az client's connection to it is reset by some networks).
@@ -20,7 +19,6 @@ param(
 Assert-Tool az 'Install the Azure CLI.'
 
 $state = Get-ClusterContext
-$openshell = Get-OpenShellCheckout $OpenShellPath
 if (-not $Tag) { $Tag = (Invoke-Native git @('-C', $script:RepoRoot, 'rev-parse', '--short', 'HEAD') | Select-Object -First 1).Trim() }
 
 $stage = Join-Path ([IO.Path]::GetTempPath()) ("rg-acr-context-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -40,8 +38,7 @@ try {
             if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
         }
     }
-    Copy-Clean $openshell (Join-Path $stage 'OpenShell') @('.git', 'target', 'node_modules', '.venv') @()
-    Copy-Clean $script:RepoRoot (Join-Path $stage 'openshell-risk-guard') @('.git', 'target', 'node_modules', '.venv', '.aks') @('*.db', '*.db-wal', '*.db-shm', '*.env')
+    Copy-Clean $script:RepoRoot $stage @('.git', 'target', 'node_modules', '.venv', '.aks') @('*.db', '*.db-wal', '*.db-shm', '*.env')
     $mb = [math]::Round((Get-ChildItem $stage -Recurse -File | Measure-Object Length -Sum).Sum / 1MB, 1)
     Write-Note "context: $mb MB"
 
@@ -54,7 +51,7 @@ try {
         # Docker writes progress to stderr, which PowerShell 5.1 would turn into a terminating error.
         $previous = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
         try {
-            & docker build --progress=plain -t "$server/openshell-risk-guard:$Tag" -t "$server/openshell-risk-guard:latest" -f (Join-Path $stage 'openshell-risk-guard/Dockerfile') $stage 2>&1 | ForEach-Object { "$_" } | Select-Object -Last 30
+            & docker build --progress=plain -t "$server/openshell-risk-guard:$Tag" -t "$server/openshell-risk-guard:latest" -f (Join-Path $stage 'Dockerfile') $stage 2>&1 | ForEach-Object { "$_" } | Select-Object -Last 30
             if ($LASTEXITCODE -ne 0) { throw 'docker build failed' }
             & docker push "$server/openshell-risk-guard:$Tag" 2>&1 | Select-Object -Last 3; if ($LASTEXITCODE -ne 0) { throw 'docker push failed' }
             & docker push "$server/openshell-risk-guard:latest" 2>&1 | Select-Object -Last 3; if ($LASTEXITCODE -ne 0) { throw 'docker push failed' }
@@ -65,7 +62,7 @@ try {
     }
     Write-Step "Building openshell-risk-guard:$Tag in $($state.acr) (several minutes, runs in Azure)"
     $queued = Invoke-Native az @('acr', 'build', '-r', $state.acr, '-t', "openshell-risk-guard:$Tag", '-t', 'openshell-risk-guard:latest',
-        '-f', (Join-Path $stage 'openshell-risk-guard/Dockerfile'), $stage, '--no-logs', '--no-wait', '--only-show-errors') -Retries 1
+        '-f', (Join-Path $stage 'Dockerfile'), $stage, '--no-logs', '--no-wait', '--only-show-errors') -Retries 1
     # --no-wait prints nothing useful with --only-show-errors, so read the newest run back instead.
     $runId = (Invoke-Native az @('acr', 'task', 'list-runs', '-r', $state.acr, '--top', '1', '--query', '[0].runId', '-o', 'tsv', '--only-show-errors') -Retries 5 | Select-Object -First 1)
     if (-not $runId) { throw 'Could not find the queued build run.' }

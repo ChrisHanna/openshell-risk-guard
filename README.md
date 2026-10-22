@@ -187,14 +187,19 @@ cargo run -- hardening-report \
 
 ## Building
 
-`openshell-risk-guard` depends on crates from [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) by relative
-path. Clone both repositories side by side, then build:
+`openshell-risk-guard` builds on its own. The few [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) crates it uses
+are fetched from NVIDIA's public repository, pinned to one commit in `Cargo.toml`, so the build needs network access to
+github.com and nothing else:
 
 ```bash
-git clone https://github.com/NVIDIA/OpenShell.git
 git clone https://github.com/ChrisHanna/openshell-risk-guard.git
 cd openshell-risk-guard && cargo build --locked
 ```
+
+To move to another OpenShell commit, change `rev` on the seven `openshell-*` lines together and run
+`cargo update -p openshell-core`. A checkout of OpenShell is needed only to *run* it, not to build Risk Guard: the AKS
+scripts install OpenShell from its Helm chart, and the local demo stack builds OpenShell's gateway. Use the same OpenShell
+commit you pinned.
 
 ## License
 

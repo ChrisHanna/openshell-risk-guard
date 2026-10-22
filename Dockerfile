@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Multi-stage container image for the `openshell-risk-guard` sidecar.
-# Build from the repository root (the directory that holds both `openshell-risk-guard/` and `OpenShell/`):
-#   docker build -f openshell-risk-guard/Dockerfile -t openshell-risk-guard:local .
+# Build from this repository's root; nothing else is needed. The OpenShell crates it uses are fetched from NVIDIA's
+# public repository at the commit pinned in Cargo.toml, so the build needs network access to github.com:
+#   docker build -t openshell-risk-guard:local .
 
 # OpenShell's prebuilt Z3 needs glibc 2.38+ and libstdc++ 13+, so build and run on Debian 13 (trixie).
 FROM rust:1.95-trixie AS builder
@@ -15,8 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
-COPY OpenShell ./OpenShell
-COPY openshell-risk-guard ./openshell-risk-guard
+COPY . ./openshell-risk-guard
 
 RUN cargo build \
     --manifest-path openshell-risk-guard/Cargo.toml \
