@@ -9,15 +9,19 @@ global:
       enabled: false
 
 spire-server:
-  # Publish the trust bundle (the certificate authorities that sign SVIDs) as PEM into the openshell namespace, where Risk Guard
-  # mounts it as the roots it accepts for client certificates. SPIRE keeps the ConfigMap current as its keys rotate.
+  # SPIRE is installed into the openshell namespace, next to Risk Guard, so the trust bundle (the certificate authorities that
+  # sign SVIDs) that SPIRE publishes as the ConfigMap `spire-bundle` can be mounted by Risk Guard and the egress proxy as the roots
+  # they accept for client certificates. SPIRE keeps it current as its keys rotate. PEM, because that is what they read.
   bundlePublisher:
     k8sConfigMap:
       enabled: true
-      namespace: openshell
       format: pem
     externalK8sConfigMap:
       enabled: false
+
+spire-agent:
+  # The agents read the same ConfigMap, so they must expect the same format.
+  trustBundleFormat: pem
 
 # Not needed here: there is no OIDC federation, and the discovery provider needs an ingress and a certificate.
 spiffe-oidc-discovery-provider:

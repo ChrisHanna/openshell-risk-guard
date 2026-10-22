@@ -114,6 +114,10 @@ $svidDomain = Get-StateValue 'svidTrustDomain'
 if ($svidDomain) {
     $svid.args = "            - --svid-listen=0.0.0.0:50062`n            - --svid-bundle=/etc/spire/bundle/bundle.crt`n            - --svid-trust-domain=$svidDomain"
     $svid.servicePort = "    - name: grpc-svid`n      port: 50062`n      targetPort: grpc-svid"
+    if (Get-StateValue 'svidEgressProxy') {
+        # The egress proxy (17-deploy-spire.ps1 -EgressProxy) may ask for decisions on behalf of the workloads it has verified.
+        $svid.args += "`n            - --svid-proxy-id=spiffe://$svidDomain/ns/$ns/sa/egress-proxy"
+    }
     $svid.containerPort = "            - name: grpc-svid`n              containerPort: 50062"
     $svid.mount = "            - name: spire-bundle`n              mountPath: /etc/spire/bundle`n              readOnly: true"
     $svid.volume = "        - name: spire-bundle`n          configMap:`n            name: spire-bundle`n            optional: true"

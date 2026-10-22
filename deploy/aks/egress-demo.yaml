@@ -1,0 +1,138 @@
+# A workload that reaches its backend only through the egress proxy, proving who it is with its SPIFFE X.509-SVID.
+# Rendered by scripts/aks/17-deploy-spire.ps1 -EgressProxy. It sends a routine request every 30 seconds; run the second command
+# printed by the script to see a destructive one refused by the proxy.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: risk-guard-egress-demo
+spec:
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: egress-demo
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshell
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: egress-demo
+  namespace: openshell
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: egress-demo-script
+  namespace: openshell
+data:
+  helper.conf: |
+    agent_address = "/spiffe-workload-api/spire-agent.sock"
+    cert_dir = "/certs"
+    svid_file_name = "svid.pem"
+    svid_key_file_name = "svid_key.pem"
+    svid_bundle_file_name = "bundle.pem"
+    daemon_mode = true
+  call.py: |
+    """Call the backend through the egress proxy as this pod's SPIFFE identity, and print what came back.
+
+    usage: call.py METHOD PATH        (waits for the SVID; one request; exit 0 whatever the status)
+    """
+    import http.client, os, ssl, sys, time
+
+    method, path = sys.argv[1], sys.argv[2]
+    for _ in range(60):
+        if os.path.getsize("/certs/svid.pem") if os.path.exists("/certs/svid.pem") else 0:
+            break
+        time.sleep(2)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.load_cert_chain("/certs/svid.pem", "/certs/svid_key.pem")
+    context.load_verify_locations("/certs/bundle.pem")
+    # The proxy's certificate is an SVID with a URI SAN and no DNS name, so the name is not checked; the chain to the SPIRE
+    # bundle is, and so is the proxy's SPIFFE ID.
+    context.check_hostname = False
+    connection = http.client.HTTPSConnection("egress-proxy.openshell.svc", 8443, context=context, timeout=10)
+    connection.connect()
+    peer = connection.sock.getpeercert()
+    uris = [name for kind, name in peer.get("subjectAltName", ()) if kind == "URI"]
+    if not any(uri.endswith("/sa/egress-proxy") for uri in uris):
+        print("refusing: the proxy presented", uris)
+        sys.exit(1)
+    connection.request(method, path, headers={"Host": "api.github.local"})
+    response = connection.getresponse()
+    body = response.read(200).decode("utf-8", "replace").strip().replace("\n", " ")
+    print(f"{method} {path} -> {response.status} {body[:120]}")
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: egress-demo
+  namespace: openshell
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: egress-demo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: egress-demo
+    spec:
+      serviceAccountName: egress-demo
+      nodeSelector:
+        kubernetes.azure.com/agentpool: nodepool1
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: spiffe-helper
+          image: ghcr.io/spiffe/spiffe-helper:0.12.1
+          args: ["-config", "/etc/demo/helper.conf"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: spiffe-workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
+            - name: script
+              mountPath: /etc/demo
+              readOnly: true
+            - name: certs
+              mountPath: /certs
+        - name: caller
+          image: python:3.12-slim
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              while :; do
+                python /etc/demo/call.py GET /repos/org/docs-site/issues || true
+                sleep 30
+              done
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: script
+              mountPath: /etc/demo
+              readOnly: true
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+      volumes:
+        - name: spiffe-workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+        - name: script
+          configMap:
+            name: egress-demo-script
+        - name: certs
+          emptyDir: {}

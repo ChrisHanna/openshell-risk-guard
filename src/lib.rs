@@ -12,6 +12,7 @@ pub mod dashboard;
 pub mod detector;
 pub mod entra_auth;
 pub mod error;
+pub mod ext_authz;
 pub mod fixture;
 pub mod guardrails;
 pub mod hardening;

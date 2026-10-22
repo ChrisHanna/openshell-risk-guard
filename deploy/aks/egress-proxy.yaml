@@ -1,0 +1,219 @@
+# An egress proxy that enforces Risk Guard's decisions on the network path, outside the workload and its supervisor.
+# Rendered by scripts/aks/17-deploy-spire.ps1 -EgressProxy, which fills __TRUST_DOMAIN__.
+#
+#   workload --(mTLS, X.509-SVID)--> Envoy --(ext_authz, gRPC over mTLS with Envoy's own SVID)--> Risk Guard
+#                                       |  allow: forwards to the backend
+#                                       '-- deny:  answers 403 itself; the request never leaves the proxy
+#
+# Envoy knows the caller by the SPIFFE ID in the certificate it verified against the SPIRE trust bundle, so the workload cannot
+# claim to be someone else. Risk Guard only accepts `Check` calls from this proxy's SPIFFE ID (--svid-proxy-id).
+# The backend here is the demo fixture API; point the `backend` cluster at a real destination to use it for real.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: risk-guard-egress-proxy
+spec:
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: egress-proxy
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshell
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: egress-proxy
+  namespace: openshell
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: egress-proxy-config
+  namespace: openshell
+data:
+  envoy.yaml: |
+    admin:
+      address: { socket_address: { address: 127.0.0.1, port_value: 9901 } }
+    static_resources:
+      listeners:
+        - name: egress
+          address: { socket_address: { address: 0.0.0.0, port_value: 8443 } }
+          filter_chains:
+            - transport_socket:
+                name: envoy.transport_sockets.tls
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+                  require_client_certificate: true
+                  common_tls_context:
+                    tls_certificate_sds_secret_configs:
+                      - name: default
+                        sds_config: &spire_sds
+                          resource_api_version: V3
+                          api_config_source:
+                            api_type: GRPC
+                            transport_api_version: V3
+                            grpc_services:
+                              - envoy_grpc: { cluster_name: spire_agent }
+                    combined_validation_context:
+                      default_validation_context:
+                        match_typed_subject_alt_names:
+                          - san_type: URI
+                            matcher: { prefix: "spiffe://__TRUST_DOMAIN__/" }
+                      validation_context_sds_secret_config:
+                        name: ROOTCA
+                        sds_config: *spire_sds
+              filters:
+                - name: envoy.filters.network.http_connection_manager
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                    stat_prefix: egress
+                    route_config:
+                      name: all
+                      virtual_hosts:
+                        - name: any
+                          domains: ["*"]
+                          routes:
+                            - match: { prefix: "/" }
+                              route: { cluster: backend, timeout: 15s }
+                    http_filters:
+                      - name: envoy.filters.http.ext_authz
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+                          transport_api_version: V3
+                          # If Risk Guard cannot be reached or cannot decide, the request is not forwarded.
+                          failure_mode_allow: false
+                          grpc_service:
+                            envoy_grpc: { cluster_name: risk_guard_authz }
+                            timeout: 1s
+                      - name: envoy.filters.http.router
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+      clusters:
+        - name: spire_agent
+          type: STATIC
+          connect_timeout: 1s
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+              "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+              explicit_http_config: { http2_protocol_options: {} }
+          load_assignment:
+            cluster_name: spire_agent
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address: { pipe: { path: /spiffe-workload-api/spire-agent.sock } }
+        - name: risk_guard_authz
+          type: STRICT_DNS
+          connect_timeout: 2s
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+              "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+              explicit_http_config: { http2_protocol_options: {} }
+          load_assignment:
+            cluster_name: risk_guard_authz
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address: { socket_address: { address: risk-guard.openshell.svc.cluster.local, port_value: 50062 } }
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+              sni: risk-guard.openshell.svc
+              common_tls_context:
+                # Envoy presents its own SVID, which is what Risk Guard checks against --svid-proxy-id ...
+                tls_certificate_sds_secret_configs:
+                  - name: default
+                    sds_config: *spire_sds
+                # ... and verifies Risk Guard's server certificate against the CA that signed it.
+                validation_context:
+                  trusted_ca: { filename: /etc/risk-guard-ca/ca.crt }
+        - name: backend
+          type: STRICT_DNS
+          connect_timeout: 2s
+          load_assignment:
+            cluster_name: backend
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address: { socket_address: { address: risk-guard-fixture.openshell.svc.cluster.local, port_value: 18081 } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: egress-proxy
+  namespace: openshell
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: egress-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: egress-proxy
+    spec:
+      serviceAccountName: egress-proxy
+      nodeSelector:
+        kubernetes.azure.com/agentpool: nodepool1
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: envoy
+          image: envoyproxy/envoy:v1.36.0
+          args: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]
+          ports:
+            - name: egress
+              containerPort: 8443
+          readinessProbe:
+            tcpSocket: { port: 8443 }
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/envoy
+              readOnly: true
+            - name: spiffe-workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
+            - name: risk-guard-ca
+              mountPath: /etc/risk-guard-ca
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: egress-proxy-config
+        - name: spiffe-workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+        - name: risk-guard-ca
+          configMap:
+            name: risk-guard-ca
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: egress-proxy
+  namespace: openshell
+spec:
+  selector:
+    app.kubernetes.io/name: egress-proxy
+  ports:
+    - name: egress
+      port: 8443
+      targetPort: egress

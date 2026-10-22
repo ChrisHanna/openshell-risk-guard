@@ -10,12 +10,16 @@ use openshell_core::proto::{
     SupervisorMiddlewarePhase,
 };
 use openshell_risk_guard::detector::InteractionRiskDetector;
+use openshell_risk_guard::ext_authz::{
+    AttributeContext, AttributeRequest, CheckRequest, CheckResponse, ExtAuthzService, HttpRequest,
+    Peer,
+};
 use openshell_risk_guard::fixture::build_standard_corpus;
 use openshell_risk_guard::middleware_service::RiskGuardMiddlewareService;
 use openshell_risk_guard::normalizer::CanonicalNormalizer;
 use openshell_risk_guard::sidecar;
 use openshell_risk_guard::spiffe::{
-    PEER_SPIFFE_HEADER, SpiffeId, SvidAuthVerifier, SvidPolicy, serve_svid_listener,
+    PEER_SPIFFE_HEADER, SpiffeId, SvidAuthVerifier, SvidEnroller, SvidPolicy, serve_svid_listener,
     spiffe_id_from_certificate,
 };
 use openshell_risk_guard::store::SqliteRiskStore;
@@ -128,6 +132,14 @@ struct Running {
 }
 
 async fn start(authority: &Authority, trust_domains: &[&str]) -> Running {
+    start_with_proxies(authority, trust_domains, &[]).await
+}
+
+async fn start_with_proxies(
+    authority: &Authority,
+    trust_domains: &[&str],
+    proxies: &[&str],
+) -> Running {
     let dir = tempfile::tempdir().unwrap();
     let secrets = dir.path().join("secrets");
     sidecar::generate_local_secrets(&secrets, &["127.0.0.1".into(), "localhost".into()]).unwrap();
@@ -140,12 +152,30 @@ async fn start(authority: &Authority, trust_domains: &[&str]) -> Running {
     store.store_baseline(&baseline).unwrap();
 
     let policy = SvidPolicy::new(trust_domains).unwrap();
-    let verifier: Arc<dyn AuthVerifier> = Arc::new(SvidAuthVerifier::new(
-        policy.clone(),
+    let enroller = Arc::new(SvidEnroller::new(
         Arc::clone(&store) as Arc<dyn RiskStore>,
         "svid-gateway",
         baseline.task_profile.clone(),
     ));
+    let verifier: Arc<dyn AuthVerifier> = Arc::new(SvidAuthVerifier::with_enroller(
+        policy.clone(),
+        Arc::clone(&enroller),
+    ));
+    let ext_authz = if proxies.is_empty() {
+        None
+    } else {
+        Some(
+            ExtAuthzService::new(
+                Arc::clone(&store) as Arc<dyn RiskStore>,
+                Arc::new(CanonicalNormalizer::new_default(&[9u8; 32])),
+                Arc::new(InteractionRiskDetector::new_default()),
+                enroller,
+                policy.clone(),
+                proxies,
+            )
+            .unwrap(),
+        )
+    };
     let service = RiskGuardMiddlewareService::new(
         verifier,
         Arc::new(CanonicalNormalizer::new_default(&[9u8; 32])),
@@ -168,10 +198,18 @@ async fn start(authority: &Authority, trust_domains: &[&str]) -> Running {
     let stop = Arc::new(tokio::sync::Notify::new());
     let stopper = Arc::clone(&stop);
     tokio::spawn(async move {
-        let _ = serve_svid_listener(addr, server_tls, bundle, policy, service, move || {
-            let stopper = Arc::clone(&stopper);
-            async move { stopper.notified().await }
-        })
+        let _ = serve_svid_listener(
+            addr,
+            server_tls,
+            bundle,
+            policy,
+            service,
+            ext_authz,
+            move || {
+                let stopper = Arc::clone(&stopper);
+                async move { stopper.notified().await }
+            },
+        )
         .await;
     });
     // The listener binds asynchronously.
@@ -428,5 +466,134 @@ async fn the_probe_command_reports_a_decision_for_the_workload_that_owns_the_svi
     assert_eq!(allowed["sandbox_id"], me.sandbox_id());
     let denied = probe("DELETE", "/repos/org/payments-prod").await;
     assert_eq!(denied["decision"], "deny");
+    running.stop.notify_one();
+}
+
+async fn check(
+    channel: Channel,
+    workload: &str,
+    method: &str,
+    path: &str,
+) -> Result<CheckResponse, tonic::Status> {
+    let mut grpc = tonic::client::Grpc::new(channel);
+    grpc.ready().await.unwrap();
+    grpc.unary(
+        Request::new(CheckRequest {
+            attributes: Some(AttributeContext {
+                source: Some(Peer {
+                    service: String::new(),
+                    principal: workload.to_string(),
+                }),
+                request: Some(AttributeRequest {
+                    http: Some(HttpRequest {
+                        id: uuid_like(method, path),
+                        method: method.into(),
+                        path: path.into(),
+                        host: "api.github.local:443".into(),
+                        scheme: "https".into(),
+                    }),
+                }),
+            }),
+        }),
+        tonic::codegen::http::uri::PathAndQuery::from_static(
+            "/envoy.service.auth.v3.Authorization/Check",
+        ),
+        tonic_prost::ProstCodec::<CheckRequest, CheckResponse>::default(),
+    )
+    .await
+    .map(tonic::Response::into_inner)
+}
+
+fn uuid_like(method: &str, path: &str) -> String {
+    format!("check-{method}-{}", path.replace('/', "_"))
+}
+
+#[tokio::test]
+async fn a_trusted_proxy_gets_allow_and_deny_decisions_for_the_workload_it_verified() {
+    let authority = Authority::new();
+    let proxy_id = "spiffe://example.org/ns/edge/sa/egress-proxy";
+    let running = start_with_proxies(&authority, &[TRUST_DOMAIN], &[proxy_id]).await;
+    let (cert, key) = authority.svid(&[proxy_id]);
+    let channel = connect(&running, Some((&cert, &key))).await.unwrap();
+    let workload = "spiffe://example.org/ns/prod/sa/release-bot";
+
+    let allowed = check(
+        channel.clone(),
+        workload,
+        "GET",
+        "/repos/org/docs-site/issues",
+    )
+    .await
+    .unwrap();
+    assert!(
+        allowed.ok_response.is_some() && allowed.denied_response.is_none(),
+        "{allowed:?}"
+    );
+
+    let denied = check(
+        channel.clone(),
+        workload,
+        "DELETE",
+        "/repos/org/payments-prod?force=1",
+    )
+    .await
+    .unwrap();
+    assert_eq!(denied.denied_response.unwrap().status.unwrap().code, 403);
+    assert_eq!(denied.status.unwrap().code, 7);
+
+    // The workload was enrolled under its own identity, not the proxy's.
+    let id = SpiffeId::parse(workload).unwrap();
+    assert!(
+        running
+            .store
+            .get_active_epoch(&id.sandbox_id())
+            .unwrap()
+            .is_some()
+    );
+    let proxy = SpiffeId::parse(proxy_id).unwrap();
+    assert!(
+        running
+            .store
+            .get_active_epoch(&proxy.sandbox_id())
+            .unwrap()
+            .is_none()
+    );
+
+    // No verified identity for the downstream caller, or one from another trust domain: nothing to score, so no forward.
+    for principal in ["", "CN=someone", "spiffe://evil.org/ns/prod/sa/bot"] {
+        let refused = check(
+            channel.clone(),
+            principal,
+            "GET",
+            "/repos/org/docs-site/issues",
+        )
+        .await
+        .unwrap();
+        assert!(
+            refused.denied_response.is_some(),
+            "{principal:?} must not be forwarded"
+        );
+    }
+    running.stop.notify_one();
+}
+
+#[tokio::test]
+async fn only_a_listed_proxy_may_ask_and_a_workload_cannot_vouch_for_itself() {
+    let authority = Authority::new();
+    let proxy_id = "spiffe://example.org/ns/edge/sa/egress-proxy";
+    let running = start_with_proxies(&authority, &[TRUST_DOMAIN], &[proxy_id]).await;
+
+    // A workload with a perfectly good SVID is still not a proxy: it cannot claim to be someone else's gateway.
+    let (cert, key) = authority.svid(&["spiffe://example.org/ns/prod/sa/release-bot"]);
+    let channel = connect(&running, Some((&cert, &key))).await.unwrap();
+    let error = check(
+        channel,
+        "spiffe://example.org/ns/prod/sa/release-bot",
+        "GET",
+        "/repos/org/docs-site/issues",
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code(), Code::PermissionDenied);
     running.stop.notify_one();
 }

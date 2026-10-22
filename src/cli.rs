@@ -127,6 +127,14 @@ pub enum Commands {
             value_delimiter = ','
         )]
         svid_trust_domains: Vec<String>,
+        /// A proxy (by SPIFFE ID) trusted to say who its downstream caller is. When any are given, the SVID listener also serves
+        /// Envoy's external authorization service, so the proxy can ask Risk Guard to allow or deny each request (repeatable).
+        #[arg(
+            long = "svid-proxy-id",
+            env = "RISK_GUARD_SVID_PROXY_IDS",
+            value_delimiter = ','
+        )]
+        svid_proxy_ids: Vec<String>,
     },
     /// Evaluate one request as the workload that owns an X.509-SVID, against a running SVID listener, and print the decision.
     SvidProbe {
@@ -527,6 +535,7 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             svid_listen,
             svid_bundle,
             svid_trust_domains,
+            svid_proxy_ids,
         } => {
             if public_key_pem.is_none() && !allow_insecure_local_test {
                 return Err(RiskGuardError::InvalidArgument(
@@ -653,13 +662,28 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                     ));
                 };
                 let policy = crate::spiffe::SvidPolicy::new(&svid_trust_domains)?;
-                let mut svid_service = middleware_service.clone();
-                svid_service.auth = Arc::new(crate::spiffe::SvidAuthVerifier::new(
-                    policy.clone(),
+                let enroller = Arc::new(crate::spiffe::SvidEnroller::new(
                     Arc::clone(&svid_store),
                     gateway_id.clone(),
                     default_task_profile.clone(),
                 ));
+                let mut svid_service = middleware_service.clone();
+                svid_service.auth = Arc::new(crate::spiffe::SvidAuthVerifier::with_enroller(
+                    policy.clone(),
+                    Arc::clone(&enroller),
+                ));
+                let ext_authz = if svid_proxy_ids.is_empty() {
+                    None
+                } else {
+                    Some(crate::ext_authz::ExtAuthzService::new(
+                        Arc::clone(&svid_store),
+                        Arc::clone(&middleware_service.normalizer),
+                        Arc::clone(&middleware_service.detector),
+                        enroller,
+                        policy.clone(),
+                        &svid_proxy_ids,
+                    )?)
+                };
                 tokio::spawn(async move {
                     if let Err(error) = crate::spiffe::serve_svid_listener(
                         svid_addr,
@@ -667,6 +691,7 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                         bundle,
                         policy,
                         svid_service,
+                        ext_authz,
                         shutdown_signal,
                     )
                     .await
@@ -674,7 +699,10 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                         tracing::error!(%error, "the SVID listener stopped");
                     }
                 });
-            } else if svid_bundle.is_some() || !svid_trust_domains.is_empty() {
+            } else if svid_bundle.is_some()
+                || !svid_trust_domains.is_empty()
+                || !svid_proxy_ids.is_empty()
+            {
                 return Err(RiskGuardError::InvalidArgument(
                     "--svid-bundle and --svid-trust-domain have no effect without --svid-listen"
                         .into(),

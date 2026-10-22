@@ -339,10 +339,7 @@ pub fn attach_peer_identity(
 /// the one sandbox its ID owns, which is enrolled (workload, epoch and run) the first time it appears.
 pub struct SvidAuthVerifier {
     policy: SvidPolicy,
-    store: Arc<dyn RiskStore>,
-    gateway_id: String,
-    default_task_profile: String,
-    enrolled: Mutex<HashSet<String>>,
+    enroller: Arc<SvidEnroller>,
 }
 
 impl SvidAuthVerifier {
@@ -352,8 +349,49 @@ impl SvidAuthVerifier {
         gateway_id: impl Into<String>,
         default_task_profile: impl Into<String>,
     ) -> Self {
-        Self {
+        Self::with_enroller(
             policy,
+            Arc::new(SvidEnroller::new(store, gateway_id, default_task_profile)),
+        )
+    }
+
+    pub fn with_enroller(policy: SvidPolicy, enroller: Arc<SvidEnroller>) -> Self {
+        Self { policy, enroller }
+    }
+
+    fn peer(&self, metadata: &MetadataMap) -> Result<SpiffeId> {
+        peer_from_metadata(&self.policy, metadata)
+    }
+}
+
+/// The SPIFFE ID the listener verified for this call, if it is in an accepted trust domain.
+pub fn peer_from_metadata(policy: &SvidPolicy, metadata: &MetadataMap) -> Result<SpiffeId> {
+    let value = metadata
+        .get(PEER_SPIFFE_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| {
+            RiskGuardError::Unauthenticated("no verified SPIFFE ID on the call".into())
+        })?;
+    let id = SpiffeId::parse(value)?;
+    policy.authorize(&id)?;
+    Ok(id)
+}
+
+/// Gives each SPIFFE ID its own sandbox: an active epoch bound to a workload derived from the ID, created the first time it is seen.
+pub struct SvidEnroller {
+    store: Arc<dyn RiskStore>,
+    gateway_id: String,
+    default_task_profile: String,
+    enrolled: Mutex<HashSet<String>>,
+}
+
+impl SvidEnroller {
+    pub fn new(
+        store: Arc<dyn RiskStore>,
+        gateway_id: impl Into<String>,
+        default_task_profile: impl Into<String>,
+    ) -> Self {
+        Self {
             store,
             gateway_id: gateway_id.into(),
             default_task_profile: default_task_profile.into(),
@@ -361,19 +399,23 @@ impl SvidAuthVerifier {
         }
     }
 
-    fn peer(&self, metadata: &MetadataMap) -> Result<SpiffeId> {
-        let value = metadata
-            .get(PEER_SPIFFE_HEADER)
-            .and_then(|value| value.to_str().ok())
-            .ok_or_else(|| {
-                RiskGuardError::Unauthenticated("no verified SPIFFE ID on the call".into())
-            })?;
-        let id = SpiffeId::parse(value)?;
-        self.policy.authorize(&id)?;
-        Ok(id)
+    #[must_use]
+    pub fn gateway_id(&self) -> &str {
+        &self.gateway_id
     }
 
-    /// Give a SPIFFE ID's sandbox an active epoch bound to a workload derived from the ID, once.
+    /// Enroll `id` (idempotent) and return the sandbox it owns.
+    pub fn ensure(&self, id: &SpiffeId) -> Result<String> {
+        let sandbox_id = id.sandbox_id();
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| {
+                i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
+            });
+        self.enroll(id, &sandbox_id, now_ms)?;
+        Ok(sandbox_id)
+    }
+
     fn enroll(&self, id: &SpiffeId, sandbox_id: &str, now_ms: i64) -> Result<()> {
         if self
             .enrolled
@@ -443,14 +485,9 @@ impl AuthVerifier for SvidAuthVerifier {
                 id.uri()
             )));
         }
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| {
-                i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
-            });
-        self.enroll(&id, &sandbox_id, now_ms)?;
+        self.enroller.ensure(&id)?;
         Ok(AuthenticatedCaller::Supervisor {
-            gateway_id: self.gateway_id.clone(),
+            gateway_id: self.enroller.gateway_id().to_string(),
             sandbox_id,
             jti: format!("svid:{}", id.uri()),
             exp: i64::MAX,
@@ -475,6 +512,7 @@ pub async fn serve_svid_listener<F>(
     bundle: std::path::PathBuf,
     policy: SvidPolicy,
     service: crate::middleware_service::RiskGuardMiddlewareService,
+    ext_authz: Option<crate::ext_authz::ExtAuthzService>,
     shutdown: impl Fn() -> F,
 ) -> Result<()>
 where
@@ -505,6 +543,13 @@ where
             service.clone().into_server(),
             move |request: Request<()>| attach_peer_identity(&for_calls, request),
         );
+        let for_authz = Arc::clone(&policy);
+        let authz = ext_authz.clone().map(|service| {
+            tonic::service::interceptor::InterceptedService::new(
+                service.into_server(),
+                move |request: Request<()>| attach_peer_identity(&for_authz, request),
+            )
+        });
         let watched = bundle.clone();
         let changed = async move {
             loop {
@@ -528,6 +573,7 @@ where
                 RiskGuardError::InvalidArgument(format!("invalid SVID listener TLS: {error}"))
             })?
             .add_service(guarded)
+            .add_optional_service(authz)
             .serve_with_shutdown(addr, wait)
             .await
             .map_err(|error| RiskGuardError::Internal(format!("SVID listener error: {error}")))?;
