@@ -249,3 +249,54 @@ spec:
     - name: tunnels
       port: 8444
       targetPort: tunnels
+---
+# The proxy resolves destination names itself (the gateway sends hostnames, so the tunnel gate can check the task's approved hosts), so a
+# name that points inside the cluster must not be reachable through it. This lets it reach the public internet, Risk Guard's SPIFFE
+# listener and DNS, and nothing else; and only OpenShell's supervisor pods may connect to it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-egress
+  namespace: openshell
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: sandbox-egress
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              openshell.ai/component: supervisor
+      ports:
+        - protocol: TCP
+          port: 8444
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10"]
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: risk-guard
+      ports:
+        - protocol: TCP
+          port: 50062
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
