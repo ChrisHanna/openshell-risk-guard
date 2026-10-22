@@ -6535,7 +6535,8 @@ function triggerSingleRequestPulse(reasonText, decisions = null) {
   replayTimer = setTimeout(() => {
     showParticles = false;
     pulseRequestIds = null;
-    $("live-traffic-state").textContent = "Idle (0 req/s)";
+    const lastAt = Math.max(0, ...(currentAgentData?.decisions || []).map(d => d.request?.timestamp_ms || 0));
+    $("live-traffic-state").textContent = lastAt ? `Idle · last request ${Math.max(0, Math.round((Date.now() - lastAt) / 60000))} min ago` : "Idle (0 req/s)";
     $("live-traffic-state").style.color = "var(--text-secondary)";
     $("live-traffic-dot").style.background = "var(--text-muted)";
     renderAllForCurrentAgent();
@@ -6575,6 +6576,13 @@ async function agentDetail(id, version) {
   }
   if (newDecisions.length) {
     triggerSingleRequestPulse(`New evidence (${newDecisions.length} requests)`, newDecisions);
+  } else if (!sameAgent && decisions.length) {
+    // Runs are minutes apart, so a page opened between them would show nothing moving. Play the most recent run's requests once.
+    const stamp = d => d.request?.timestamp_ms || 0;
+    const newest = Math.max(...decisions.map(stamp));
+    const latestRun = decisions.filter(d => newest - stamp(d) <= 120000);
+    const ageMin = Math.max(0, Math.round((Date.now() - newest) / 60000));
+    triggerSingleRequestPulse(`Replaying the latest run (${latestRun.length} requests, ${ageMin} min ago)`, latestRun);
   } else {
     renderAllForCurrentAgent();
   }

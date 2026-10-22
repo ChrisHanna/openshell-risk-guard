@@ -45,9 +45,8 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
-          # The fleet loop refreshes /tmp/fleet-heartbeat at the start and end of every run and before every wait (a run is
-          # stopped after RUN_TIMEOUT, 20 minutes, and a wait is at most 5), so the file goes stale only if the loop itself is stuck.
-          # The first heartbeat is written when the loop starts, after the entrypoint has waited for the gateway.
+          # Each agent loop refreshes its own /tmp/fleet-heartbeat-<agent> at the start and end of every run and before every wait (a run
+          # is stopped after RUN_TIMEOUT, 20 minutes, and a wait is at most 8), so a file goes stale only if that loop is stuck.
           livenessProbe:
             exec:
               command: ["sh", "-c", "set -- /tmp/fleet-heartbeat-*; [ -e \"$1\" ] || exit 1; for f; do [ $(( $(date +%s) - $(cat $f) )) -lt 1800 ] || exit 1; done"]

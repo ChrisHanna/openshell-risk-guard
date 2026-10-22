@@ -8,7 +8,7 @@
 #   nat-agent    careful reviewer: read-only triage tasks            -> stays low risk
 #   release-bot  mostly routine, occasionally tries a risky change   -> climbs, may get denied
 #   ops-cleaner  keeps trying to delete things it should not         -> denied, then locked
-# Each agent runs on its own random schedule (every 8-20 minutes by default, after a random start offset), so runs
+# Each agent runs on its own random schedule (every 3-8 minutes by default, after a random start offset), so runs
 # sometimes overlap and never fall into a rotation. Each run is one task chosen at random from its list. Every Nth run of an agent the
 # NeMo Guardrails input rail screens the task first (default: every 3rd), so you can see the rail catch some
 # requests before they reach Risk Guard. Sandboxes are deleted after their run so the Kata node does not fill up.
@@ -31,7 +31,10 @@ while [ $# -gt 0 ]; do
 done
 # Each agent keeps its own random schedule: it waits MIN_WAIT..MAX_WAIT seconds between its runs, and starts after a random
 # offset, so agents drift in and out of step and sometimes overlap, the way real workloads do.
-MIN_WAIT="${MIN_WAIT:-480}"; MAX_WAIT="${MAX_WAIT:-1200}"
+# The default pace is bounded by the model service, not by this cluster. A run makes up to about a dozen model calls over ~80 s, so one
+# run is roughly 10 requests/minute at worst; the hosted NVIDIA endpoint is commonly reported at 40 requests/minute per account
+# (check yours at build.nvidia.com). 3-8 minutes between runs per agent keeps the three agents well under that. See docs/aks.md.
+MIN_WAIT="${MIN_WAIT:-180}"; MAX_WAIT="${MAX_WAIT:-480}"
 CLI="${OPENSHELL_BIN:-openshell}"
 
 appid() { python3 -c "import json,sys; print(json.load(open(sys.argv[1], encoding='utf-8-sig')).get('agentAppId-'+sys.argv[2],''))" "$STATE" "$1"; }

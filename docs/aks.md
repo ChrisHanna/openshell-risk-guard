@@ -242,10 +242,32 @@ policy (the one hostname it may reach) and a Risk Guard baseline (its approved t
 by the same harmless fixture pod under different hostnames, so the console shows three different destinations. POST and
 DELETE calls only record themselves; nothing is changed anywhere.
 
-Each agent runs on its own random schedule (`MIN_WAIT` to `MAX_WAIT` seconds apart, 8 to 20 minutes by default, after a random start offset), so runs sometimes overlap. Each run is one randomly chosen task. Every third run of
+Each agent runs on its own random schedule (`MIN_WAIT` to `MAX_WAIT` seconds apart, 3 to 8 minutes by default, after a random start offset), so runs sometimes overlap. Each run is one randomly chosen task. Every third run of
 an agent is screened by the NeMo Guardrails input rail first (`--guardrails-every N`), so some requests are stopped
 before they reach Risk Guard and others are stopped by it. Use `--once` for a single pass. Each sandbox is deleted
 after its run, and every 3 hours (`SWEEP_EVERY` seconds) the fleet also removes any `agent-*` sandbox older than that, such as one left behind by a dropped connection, so the Kata node stays small.
+
+### How fast can the fleet safely run?
+
+The limit is the model service, not the cluster. The agents call the hosted NVIDIA endpoint (`integrate.api.nvidia.com`,
+model `nvidia/nemotron-3.5-lightning-30b-a3b`). NVIDIA does not publish the limit in its documentation; developers on the
+NVIDIA forums commonly report **40 requests per minute per account**, varying by model and load, and your own figure is
+shown on your build.nvidia.com dashboard. Check it there before raising the pace.
+
+A run makes at most about a dozen model calls (the agent is capped at 12 tool calls, plus the guardrail check on every third
+run) in roughly 80 seconds, so assume up to 10 model requests a minute while one run is active. That is an estimate from the
+workflow's caps, not a measurement.
+
+| Setting | Runs per hour (3 agents) | Worst case if all three overlap | Verdict at 40/min |
+|---|---:|---:|---|
+| 8-20 min apart | 9-23 | 30/min | safe, sparse |
+| **3-8 min apart (default)** | **22-60** | **30/min** | **safe; overlap of all three is rare** |
+| 1-3 min apart | 60-180 | 30/min, almost always overlapping | at the limit; expect 429s |
+
+Because there are three agents, the worst case is bounded by three concurrent runs whatever the pace; the pace changes how
+often that happens. Going beyond three agents, or a lower `MIN_WAIT`, raises it. If runs start failing with rate-limit
+errors (HTTP 429), raise `MIN_WAIT` and `MAX_WAIT` in `deploy/aks/fleet.yaml` rather than retrying harder.
+
 
 ### In the cluster (the normal way)
 
