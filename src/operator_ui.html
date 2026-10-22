@@ -2858,7 +2858,8 @@ function switchMainView(view, scrollToTop = false) {
     else $(id).removeAttribute("aria-current");
   }
   $("nav-agent-lbl").textContent = view === "fleet" || view === "directory" ? "Fleet overview"
-    : view === "how" ? "How it works" : currentAgentData?.agent?.agent_id || "Agent workspace";
+    : view === "how" ? "How it works"
+      : (currentAgentData?.agent ? agentName(currentAgentData.agent) || currentAgentData.agent.agent_id : "Agent workspace");
   // "directory" is the workloads section of the Fleet page, so it shows that page and scrolls to the section.
   $("fleet-view").classList.toggle("view-hidden", view !== "fleet" && view !== "directory");
   $("how-view").classList.toggle("view-hidden", view !== "how");
@@ -4283,19 +4284,22 @@ function renderAdaptive() {
   $("agent-tab-adaptive").setAttribute("aria-busy", String(busy));
   $("adp-refresh").disabled = !state || busy;
   $("adp-unlock").disabled = operatorVerifying || Boolean(state?.pending);
+  const publicView = Boolean(AUTH.offered && !AUTH.cfg);
+  $("adp-unlock").hidden = publicView || Boolean(AUTH.cfg);
   $("adp-unlock").textContent = adaptiveAuthorized() ? "Operator access in Enforcement" : "Unlock in Enforcement";
   adaptiveText("adp-access-badge", operatorVerifying ? "Verifying…" : adaptiveAuthorized() ? "Operator unlocked" : "Read-only");
   const authStatus = operatorCapability === "checking" ? "Checking operator capability; writes disabled."
-    : operatorCapability === "disabled" ? "Operator writes are disabled by the service."
+    : operatorCapability === "disabled" ? (publicView ? "This is the public, view-only dashboard. Administrators sign in at /admin to curate or change a model." : "Operator writes are disabled by the service.")
       : operatorCapability === "unavailable" ? "Operator capability is unavailable; writes disabled."
         : adaptiveAuthorized() ? "Operator authorization is shared with Enforcement for this tab only."
-          : "Read-only evidence. Unlock in Enforcement to curate or change a model.";
+          : AUTH.cfg ? `Signed in as ${AUTH.name} with read-only access. Only an administrator can curate or change a model.`
+            : "Read-only evidence. Unlock in Enforcement to curate or change a model.";
   adaptiveText("adp-status", !state ? "Select an agent to inspect adaptive evidence."
     : state.pending ? `${state.pending} Awaiting service confirmation; controls are disabled.`
       : state.loading ? `Refreshing adaptive evidence for ${state.agentId}; selections and review notes are preserved.`
         : !state.available ? `Adaptive evidence unavailable${state.view ? "; showing the last confirmed view, not current state" : ""}. Writes are disabled. ${authStatus}`
           : state.view.guardrails_revision !== adaptiveCurrentRevision(state) ? `Adaptive evidence r${state.view.guardrails_revision} is behind saved guardrails r${adaptiveCurrentRevision(state)}. Old models are incompatible; refresh before any action. ${authStatus}`
-          : `Agent ${state.agentId} · guardrails r${state.view.guardrails_revision} · network metadata only. ${authStatus}`);
+          : `Agent ${currentAgentData?.agent?.agent_id === state.agentId ? agentName(currentAgentData.agent) || state.agentId : state.agentId} · guardrails r${state.view.guardrails_revision} · network metadata only. ${authStatus}`);
   const errors = [...new Set([state?.loadError, state?.error, operatorStatusError, operatorAuthError].filter(Boolean))];
   adaptiveText("adp-error", errors.join(" "));
   $("adp-error").hidden = !errors.length;
@@ -6198,7 +6202,7 @@ function renderAllForCurrentAgent() {
   $("agent-title").title = data.agent.agent_id;
   $("agent-context-label").textContent = [
     nameText ? `${identityKind(data.agent.agent_id)} ${data.agent.agent_id}` : "",
-    `${ctx.task_profile || "Task profile not recorded"} · ${ctx.agent_revision || "Revision not recorded"}`
+    `${ctx.task_profile || "Task profile not recorded"}${baseline.version ? ` ${baseline.version}` : ""} · agent revision ${ctx.agent_revision || "not recorded"}`
   ].filter(Boolean).join("  ·  ");
   $("sidebar-agent-id").textContent = nameText || data.agent.agent_id;
   $("selected-agent-shortcut").hidden = false;
@@ -7536,7 +7540,7 @@ function renderEnforcement(data) {
   if (actionMode !== "enforce" && rows.some(r => r.kind === "shadow-allowed" || r.kind === "unapproved-allowed")) {
     notes.push(`The approved-action rule is ${actionMode === "shadow" ? "in shadow" : "off"}, so an action outside the approved list is allowed${actionMode === "shadow" ? " and recorded as a would-block" : " and only scored"}.`);
   }
-  if (rows.some(r => r.pattern)) notes.push("Rows marked \"Reachable, not approved\" are patterns the policy opens that this workload has never been approved to use and has not requested. Whether it would be blocked depends on the approved-action rule above.");
+  if (rows.some(r => r.pattern)) notes.push(`Rows marked "${actionMode === "enforce" ? "Reachable, would be blocked" : "Reachable, not approved"}" are patterns the policy opens that this workload has never been approved to use and has not requested. ${actionMode === "enforce" ? "The approved-action rule above is enforcing, so a request for one is denied." : "Whether one would be blocked depends on the approved-action rule above."}`);
   notes.push("A pattern in the policy can reach more routes than the ones listed.");
   if (olderCount > 0) notes.push(`${olderCount} earlier decision${olderCount === 1 ? "" : "s"} made under older task profiles ${olderCount === 1 ? "is" : "are"} left out here; they are in Detections.`);
   $("enf-table-note").textContent = notes.join(" ");
