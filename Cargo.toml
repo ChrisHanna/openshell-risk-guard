@@ -36,7 +36,7 @@ rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem
 regex = "1"
 reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls-native-roots-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yml = { package = "noyalib", version = "0.0.53", default-features = false, features = ["std", "compat-serde-yaml"] }
