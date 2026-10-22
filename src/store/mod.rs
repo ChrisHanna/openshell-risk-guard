@@ -468,6 +468,15 @@ impl SqliteRiskStore {
         }
     }
 
+    /// The baseline a sandbox's active epoch is pinned to.
+    pub fn sandbox_baseline(&self, sandbox_id: &str) -> Result<Option<BaselineProfile>> {
+        let conn = self.lock_read_conn()?;
+        let Some(epoch) = query_active_epoch(&conn, sandbox_id)? else {
+            return Ok(None);
+        };
+        query_baseline_by_name_or_hash(&conn, &epoch.task_profile, &epoch.baseline_hash)
+    }
+
     /// Show each sandbox's SPIFFE ID under this trust domain (see `sandbox_spiffe_trust_domain`).
     #[must_use]
     pub fn with_sandbox_spiffe_trust_domain(mut self, domain: impl Into<String>) -> Self {
@@ -960,6 +969,10 @@ impl RiskStore for SqliteRiskStore {
 
     fn sandbox_network_state(&self, sandbox_id: &str) -> Result<Option<NetworkState>> {
         SqliteRiskStore::sandbox_network_state(self, sandbox_id)
+    }
+
+    fn sandbox_baseline(&self, sandbox_id: &str) -> Result<Option<BaselineProfile>> {
+        SqliteRiskStore::sandbox_baseline(self, sandbox_id)
     }
 }
 
@@ -1775,6 +1788,7 @@ fn load_baseline_for_epoch(conn: &Connection, epoch: &EpochRecord) -> Result<Bas
         forbidden_action_classes: BTreeSet::new(),
         forbid_unfamiliar_high_impact: false,
         rule_modes: std::collections::BTreeMap::new(),
+        approved_egress_hosts: Default::default(),
         max_req_1m_p95: 0,
         max_req_1m_p99: 0,
         max_distinct_resources_15m_p95: 0,
@@ -2252,6 +2266,7 @@ mod tests {
             forbidden_action_classes: BTreeSet::new(),
             forbid_unfamiliar_high_impact: true,
             rule_modes: std::collections::BTreeMap::new(),
+            approved_egress_hosts: Default::default(),
             max_req_1m_p95: 10,
             max_req_1m_p99: 20,
             max_distinct_resources_15m_p95: 3,

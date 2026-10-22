@@ -28,8 +28,8 @@ use tonic::codegen::{Body, BoxFuture, StdError, http};
 use crate::pod_resolver::PodResolver;
 use crate::spiffe::{SpiffeId, SvidEnroller, SvidPolicy, peer_from_metadata};
 use crate::types::{
-    DecisionOutcome, NativeObservationSource, RawRequestInput, RequestNormalizer, RiskDetector,
-    RiskStore,
+    DecisionOutcome, NativeObservationSource, RULE_EGRESS_DESTINATION, RawRequestInput,
+    RequestNormalizer, RiskDetector, RiskStore, RuleMode,
 };
 
 #[derive(Clone, PartialEq, prost::Message)]
@@ -270,9 +270,39 @@ impl ExtAuthzService {
             .map_err(|_| tonic::Status::unavailable("risk state unavailable"))?
             .map_err(|_| tonic::Status::unavailable("risk state unavailable"))?;
         let enforcing = self.restriction_mode == TunnelMode::Enforce;
+
+        // The destination the task approves. The CONNECT names a host when OpenShell is set to send hostnames (`connectByHostname`);
+        // with an address instead, a non-empty list refuses it, because it cannot be matched to a name.
+        let baseline_store = Arc::clone(&self.store);
+        let id = sandbox_id.clone();
+        let baseline = tokio::task::spawn_blocking(move || baseline_store.sandbox_baseline(&id))
+            .await
+            .map_err(|_| tonic::Status::unavailable("risk state unavailable"))?
+            .map_err(|_| tonic::Status::unavailable("risk state unavailable"))?;
+        let host = host_and_port(destination, "https").0;
+        let egress = baseline.as_ref().map(|baseline| {
+            (
+                baseline.rule_mode(RULE_EGRESS_DESTINATION),
+                baseline.egress_host_allowed(&host),
+            )
+        });
+
         let (verdict, reason) = match state {
             None => ("deny", "Risk Guard has no record of this sandbox"),
             Some(state) if state.quarantined => ("deny", "the sandbox's workload is quarantined"),
+            Some(_) if egress == Some((RuleMode::Enforce, false)) => (
+                "deny",
+                "the destination is not approved for this sandbox's task",
+            ),
+            Some(state)
+                if egress == Some((RuleMode::Shadow, false))
+                    && !(state.restricted && enforcing) =>
+            {
+                (
+                    "allow",
+                    "shadow: the destination is not approved for this sandbox's task, which would block this tunnel in enforce mode",
+                )
+            }
             Some(state) if state.restricted && enforcing => {
                 ("deny", "the sandbox's workload holds a latched restriction")
             }

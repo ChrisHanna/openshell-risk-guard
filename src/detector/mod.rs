@@ -83,11 +83,16 @@ pub fn compute_baseline_hash(profile: &BaselineProfile) -> String {
 
 /// Load a [`BaselineProfile`] from a JSON or YAML string.
 pub fn parse_baseline_profile(raw: &str) -> Result<BaselineProfile> {
-    if let Ok(profile) = serde_json::from_str::<BaselineProfile>(raw) {
-        return Ok(profile);
-    }
-    serde_yml::from_str::<BaselineProfile>(raw)
-        .map_err(|err| RiskGuardError::InvalidArgument(format!("invalid baseline profile: {err}")))
+    let profile = match serde_json::from_str::<BaselineProfile>(raw) {
+        Ok(profile) => profile,
+        Err(_) => serde_yml::from_str::<BaselineProfile>(raw).map_err(|err| {
+            RiskGuardError::InvalidArgument(format!("invalid baseline profile: {err}"))
+        })?,
+    };
+    profile
+        .validate_egress_hosts()
+        .map_err(RiskGuardError::InvalidArgument)?;
+    Ok(profile)
 }
 
 /// Load a [`BaselineProfile`] from disk (JSON or YAML).
@@ -671,6 +676,7 @@ mod tests {
             forbidden_action_classes: BTreeSet::new(),
             forbid_unfamiliar_high_impact: false,
             rule_modes: std::collections::BTreeMap::new(),
+            approved_egress_hosts: Default::default(),
             max_req_1m_p95: 4,
             max_req_1m_p99: 8,
             max_distinct_resources_15m_p95: 2,

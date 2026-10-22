@@ -35,6 +35,9 @@ pub const RULE_UNFAMILIAR_HIGH_IMPACT: &str = "unfamiliar_high_impact";
 pub const RULE_UNAPPROVED_ACTION: &str = "unapproved_action";
 /// Rule for a resource the task's approved-resource list does not contain.
 pub const RULE_UNAPPROVED_RESOURCE: &str = "unapproved_resource";
+/// Rule for a tunnel to a destination the task's approved-egress list does not contain. Enforced at the network path, not in scoring; set it
+/// in the profile's `rule_modes` (it is not one of the console's configurable rules). Default: shadow.
+pub const RULE_EGRESS_DESTINATION: &str = "egress_destination";
 /// The rules an operator can run in shadow or enforce mode, in display order.
 pub const CONFIGURABLE_RULES: [&str; 3] = [
     RULE_UNFAMILIAR_HIGH_IMPACT,
@@ -209,6 +212,11 @@ pub struct BaselineProfile {
     /// the serialized profile so existing baselines keep their hash.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub rule_modes: BTreeMap<String, RuleMode>,
+    /// Hostnames this task may open an encrypted connection to, checked at the network-path tunnel gate (the `egress_destination` rule). An
+    /// entry is a hostname (`integrate.api.nvidia.com`) or a subdomain wildcard (`*.example.com`). Empty means not specified: nothing is
+    /// refused. Left out of the serialized profile when empty so existing baselines keep their hash.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub approved_egress_hosts: BTreeSet<String>,
     /// 95th-percentile 1-minute request rate envelope.
     pub max_req_1m_p95: u32,
     /// 99th-percentile 1-minute request rate envelope.
@@ -240,6 +248,53 @@ impl BaselineProfile {
                 .copied()
                 .unwrap_or(RuleMode::Shadow),
         }
+    }
+
+    /// Whether a tunnel to `host` is within the task's approved egress hosts. An empty list approves everything. A destination that is an IP
+    /// address never matches a non-empty list: the list names hosts, and an address could be anything.
+    #[must_use]
+    pub fn egress_host_allowed(&self, host: &str) -> bool {
+        if self.approved_egress_hosts.is_empty() {
+            return true;
+        }
+        let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+        if host.is_empty() || host.parse::<std::net::IpAddr>().is_ok() {
+            return false;
+        }
+        self.approved_egress_hosts
+            .iter()
+            .any(|entry| match entry.strip_prefix("*.") {
+                Some(suffix) => {
+                    host.len() > suffix.len() + 1 && host.ends_with(&format!(".{suffix}"))
+                }
+                None => entry == &host,
+            })
+    }
+
+    /// Check the approved-egress list is well formed: lowercase hostnames or `*.` wildcards, no scheme, port, path or address.
+    pub fn validate_egress_hosts(&self) -> std::result::Result<(), String> {
+        for entry in &self.approved_egress_hosts {
+            let name = entry.strip_prefix("*.").unwrap_or(entry);
+            let valid = !name.is_empty()
+                && name.len() <= 253
+                && name.contains('.')
+                && name.parse::<std::net::IpAddr>().is_err()
+                && name.split('.').all(|label| {
+                    !label.is_empty()
+                        && label.len() <= 63
+                        && !label.starts_with('-')
+                        && !label.ends_with('-')
+                        && label
+                            .bytes()
+                            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                });
+            if !valid {
+                return Err(format!(
+                    "approved_egress_hosts entry '{entry}' must be a lowercase hostname such as api.example.com or *.example.com"
+                ));
+            }
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -504,6 +559,10 @@ pub trait RiskStore: Send + Sync {
     fn auto_bind_sandbox_epoch(&self, _binding: &SandboxBinding) -> Result<()> {
         Ok(())
     }
+    /// The baseline profile a sandbox's active epoch is pinned to; `None` if it has no active epoch.
+    fn sandbox_baseline(&self, _sandbox_id: &str) -> Result<Option<BaselineProfile>> {
+        Ok(None)
+    }
     /// What the network path needs to know about a sandbox; `None` if Risk Guard has no active epoch for it.
     fn sandbox_network_state(&self, _sandbox_id: &str) -> Result<Option<NetworkState>> {
         Ok(None)
@@ -548,3 +607,82 @@ pub trait HardeningEngine: Send + Sync {
 }
 
 pub type MetadataBag = BTreeMap<String, String>;
+
+#[cfg(test)]
+mod egress_tests {
+    use super::*;
+
+    fn profile(hosts: &[&str]) -> BaselineProfile {
+        let mut profile = crate::fixture::build_standard_corpus().default_baseline;
+        profile.approved_egress_hosts = hosts.iter().map(|host| (*host).to_string()).collect();
+        profile
+    }
+
+    #[test]
+    fn an_empty_list_approves_everything_and_a_listed_name_only_itself_or_its_subdomains() {
+        assert!(profile(&[]).egress_host_allowed("anything.example.com"));
+        assert!(profile(&[]).egress_host_allowed("203.0.113.7"));
+
+        let p = profile(&["integrate.api.nvidia.com", "*.example.org"]);
+        assert!(p.egress_host_allowed("integrate.api.nvidia.com"));
+        assert!(
+            p.egress_host_allowed("INTEGRATE.API.NVIDIA.COM."),
+            "case and a trailing dot do not matter"
+        );
+        assert!(p.egress_host_allowed("api.example.org"));
+        assert!(p.egress_host_allowed("a.b.example.org"));
+        assert!(
+            !p.egress_host_allowed("example.org"),
+            "a wildcard does not match its apex"
+        );
+        assert!(
+            !p.egress_host_allowed("evil-example.org"),
+            "nor a name that merely ends the same way"
+        );
+        assert!(!p.egress_host_allowed("integrate.api.nvidia.com.evil.net"));
+        assert!(!p.egress_host_allowed("api.nvidia.com"));
+        assert!(
+            !p.egress_host_allowed("93.184.216.34"),
+            "an address cannot be matched to a name"
+        );
+        assert!(!p.egress_host_allowed(""));
+    }
+
+    #[test]
+    fn the_list_must_be_well_formed_and_an_empty_one_leaves_the_hash_alone() {
+        for bad in [
+            "https://api.example.com",
+            "api.example.com:443",
+            "api.example.com/path",
+            "Api.Example.com",
+            "localhost",
+            "10.0.0.1",
+            "*.",
+            "*",
+            "-a.example.com",
+            "a..example.com",
+        ] {
+            assert!(
+                profile(&[bad]).validate_egress_hosts().is_err(),
+                "{bad} must be refused"
+            );
+        }
+        assert!(
+            profile(&["a.example.com", "*.b.example.com"])
+                .validate_egress_hosts()
+                .is_ok()
+        );
+
+        let none = profile(&[]);
+        assert!(
+            !serde_json::to_string(&none)
+                .unwrap()
+                .contains("approved_egress_hosts")
+        );
+        let with = profile(&["a.example.com"]);
+        assert_ne!(
+            crate::detector::compute_baseline_hash(&none),
+            crate::detector::compute_baseline_hash(&with)
+        );
+    }
+}

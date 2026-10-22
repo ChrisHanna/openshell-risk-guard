@@ -614,6 +614,10 @@ async fn only_a_listed_proxy_may_ask_and_a_workload_cannot_vouch_for_itself() {
 }
 
 async fn tunnel_check(channel: Channel, source_ip: &str) -> CheckResponse {
+    tunnel_check_to(channel, source_ip, "93.184.216.34:443").await
+}
+
+async fn tunnel_check_to(channel: Channel, source_ip: &str, destination: &str) -> CheckResponse {
     let mut grpc = tonic::client::Grpc::new(channel);
     grpc.ready().await.unwrap();
     grpc.unary(
@@ -633,7 +637,7 @@ async fn tunnel_check(channel: Channel, source_ip: &str) -> CheckResponse {
                         id: String::new(),
                         method: "CONNECT".into(),
                         path: String::new(),
-                        host: "93.184.216.34:443".into(),
+                        host: destination.into(),
                         scheme: String::new(),
                     }),
                 }),
@@ -873,5 +877,98 @@ async fn tunnel_checks_are_refused_when_they_are_not_enabled() {
     let channel = connect(&running, Some((&cert, &key))).await.unwrap();
     let refused = tunnel_check(channel, "10.0.0.1").await;
     assert!(refused.denied_response.is_some());
+    running.stop.notify_one();
+}
+
+/// A sandbox whose epoch is pinned to a baseline that approves only some egress hosts, in the given rule mode.
+fn enrol_with_egress_list(
+    store: &SqliteRiskStore,
+    sandbox: &str,
+    mode: openshell_risk_guard::types::RuleMode,
+) {
+    use openshell_risk_guard::detector::compute_baseline_hash;
+    use openshell_risk_guard::types::{EnforcementMode, EpochRecord, RULE_EGRESS_DESTINATION};
+
+    let mut baseline = store
+        .get_baseline(&build_standard_corpus().default_baseline.task_profile)
+        .unwrap()
+        .unwrap();
+    baseline.task_profile = format!("egress-{sandbox}");
+    baseline.approved_egress_hosts = [
+        "integrate.api.nvidia.com".to_string(),
+        "*.example.org".to_string(),
+    ]
+    .into();
+    baseline
+        .rule_modes
+        .insert(RULE_EGRESS_DESTINATION.into(), mode);
+    store.store_baseline(&baseline).unwrap();
+    store
+        .upsert_epoch(&EpochRecord {
+            epoch_id: format!("ep-{sandbox}"),
+            gateway_id: "svid-gateway".into(),
+            sandbox_id: sandbox.into(),
+            task_profile: baseline.task_profile.clone(),
+            baseline_hash: compute_baseline_hash(&baseline),
+            mode: EnforcementMode::Enforce,
+            active: true,
+            next_sequence: 1,
+            created_at_ms: 0,
+            credentialed_endpoints: Default::default(),
+            active_policy_hash: None,
+        })
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_task_can_only_open_tunnels_to_the_hosts_it_approves_when_the_rule_enforces() {
+    use openshell_risk_guard::types::RuleMode;
+
+    let authority = Authority::new();
+    let proxy_id = "spiffe://example.org/ns/edge/sa/sandbox-egress";
+    let resolver: Arc<dyn PodResolver> = Arc::new(StaticPodResolver(
+        [
+            ("10.0.1.1".parse().unwrap(), "sbx-enforce".to_string()),
+            ("10.0.1.2".parse().unwrap(), "sbx-shadow".to_string()),
+        ]
+        .into(),
+    ));
+    let running = start_full(
+        &authority,
+        &[TRUST_DOMAIN],
+        &[proxy_id],
+        Some((resolver, TunnelMode::Enforce)),
+    )
+    .await;
+    enrol_with_egress_list(&running.store, "sbx-enforce", RuleMode::Enforce);
+    enrol_with_egress_list(&running.store, "sbx-shadow", RuleMode::Shadow);
+    let (cert, key) = authority.svid(&[proxy_id]);
+    let channel = connect(&running, Some((&cert, &key))).await.unwrap();
+
+    for (destination, allowed) in [
+        ("integrate.api.nvidia.com:443", true),
+        ("INTEGRATE.API.NVIDIA.COM:443", true),
+        ("api.example.org:443", true),
+        ("example.org:443", false),
+        ("evil.example.com:443", false),
+        ("integrate.api.nvidia.com.evil.net:443", false),
+        ("93.184.216.34:443", false),
+    ] {
+        let response = tunnel_check_to(channel.clone(), "10.0.1.1", destination).await;
+        assert_eq!(
+            response.ok_response.is_some(),
+            allowed,
+            "enforce: {destination} -> {response:?}"
+        );
+    }
+
+    // In shadow the same unapproved destinations are recorded, not refused.
+    for destination in ["evil.example.com:443", "93.184.216.34:443"] {
+        let response = tunnel_check_to(channel.clone(), "10.0.1.2", destination).await;
+        assert!(
+            response.ok_response.is_some(),
+            "shadow must not refuse {destination}: {response:?}"
+        );
+    }
     running.stop.notify_one();
 }

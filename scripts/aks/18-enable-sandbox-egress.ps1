@@ -26,6 +26,10 @@ param(
     # quarantine set by an operator is always enforced. Restrictions are scoped to one kind of request and stay latched until an
     # operator clears them, so enforcing them would cut off the demo fleet's agents: start in shadow.
     [ValidateSet('shadow', 'enforce')][string]$RestrictionMode = 'shadow',
+    # Send the destination's hostname in the CONNECT, not its address, so the tunnel gate can check the task's approved egress hosts
+    # (approved_egress_hosts in the task profile). OpenShell's documentation calls this a last resort: the proxy resolves the name itself,
+    # so here Risk Guard's approved list, not the sandbox's own address validation, is what decides where a tunnel may go.
+    [bool]$ConnectByHostname = $true,
     [string]$NoProxy = '.svc,.svc.cluster.local,10.0.0.0/8',
     [switch]$Remove
 )
@@ -42,11 +46,11 @@ $chart = Get-StateValue 'openshellChart'
 $chartVersion = Get-StateValue 'openshellChartVersion'
 if (-not $chart) { $chartInfo = Get-OpenShellChart $OpenShellPath; $chart = $chartInfo.Ref; $chartVersion = $chartInfo.Version }
 
-function Set-GatewayUpstreamProxy([string]$Url, [string]$Bypass) {
+function Set-GatewayUpstreamProxy([string]$Url, [string]$Bypass, [bool]$ByHostname = $false) {
     # A values file, not --set: the bypass list has commas, which --set would split.
     $values = Join-Path ([IO.Path]::GetTempPath()) ("upstream-proxy-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.yaml')
     try {
-        @{ upstreamProxy = @{ url = $Url; noProxy = $Bypass } } | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 $values
+        @{ upstreamProxy = @{ url = $Url; noProxy = $Bypass; connectByHostname = $ByHostname } } | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 $values
         $helmArgs = @('upgrade', $release, $chart, '-n', $ns, '--reuse-values', '-f', $values, '--wait', '--timeout', '10m')
         if ($chartVersion) { $helmArgs += @('--version', $chartVersion) }
         Invoke-Native helm $helmArgs -Retries 1 | Out-Null
@@ -81,7 +85,7 @@ catch {
 Invoke-Native kubectl @('rollout', 'status', 'deploy/risk-guard', '-n', $ns, '--timeout=300s') | Out-Null
 
 Write-Step 'Pointing the gateway at the proxy'
-Set-GatewayUpstreamProxy "http://sandbox-egress.$ns.svc:8444" $NoProxy
+Set-GatewayUpstreamProxy "http://sandbox-egress.$ns.svc:8444" $NoProxy $ConnectByHostname
 
 Write-Host ''
 Write-Host 'Sandbox TLS egress now goes through the proxy.' -ForegroundColor Green
