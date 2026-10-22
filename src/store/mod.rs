@@ -49,6 +49,8 @@ pub struct SqliteRiskStore {
     /// When set, each sandbox's SPIFFE ID (`spiffe://<domain>/openshell/sandbox/<id>`, the name SPIRE registers it under, see
     /// deploy/aks/sandbox-spiffe.yaml) is shown beside it. It is the name SPIRE assigned; Risk Guard does not receive the certificate.
     sandbox_spiffe_trust_domain: Option<String>,
+    /// Sandboxes created before this time (unix ms) were not given a SPIFFE ID by SPIRE, so none is shown for them.
+    sandbox_spiffe_since_ms: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -136,6 +138,10 @@ impl SqliteRiskStore {
             conn: Arc::new(Mutex::new(conn)),
             read_conn: Some(Arc::new(Mutex::new(read_conn))),
             sandbox_spiffe_trust_domain: sandbox_spiffe_trust_domain_from_env(),
+            sandbox_spiffe_since_ms: std::env::var("RISK_GUARD_SANDBOX_SPIFFE_SINCE_MS")
+                .ok()
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(0),
         })
     }
 
@@ -163,6 +169,7 @@ impl SqliteRiskStore {
             conn: Arc::new(Mutex::new(conn)),
             read_conn: None,
             sandbox_spiffe_trust_domain: None,
+            sandbox_spiffe_since_ms: 0,
         })
     }
 
@@ -216,6 +223,7 @@ impl SqliteRiskStore {
             "sandbox_lifecycle": lifecycle,
             "decision_latency": latency,
             "sandbox_spiffe_trust_domain": self.sandbox_spiffe_trust_domain,
+            "sandbox_spiffe_since_ms": self.sandbox_spiffe_since_ms,
             "coverage": "selected_inspected_http_requests_only",
             "transport_provenance": "per_decision_when_recorded_legacy_history_unknown",
             "total_sandboxes": total,
@@ -485,10 +493,17 @@ impl SqliteRiskStore {
         self
     }
 
+    /// Show no SPIFFE ID for sandboxes created before this time (unix ms): SPIRE had not been asked to name them.
+    #[must_use]
+    pub fn with_sandbox_spiffe_since_ms(mut self, since_ms: i64) -> Self {
+        self.sandbox_spiffe_since_ms = since_ms;
+        self
+    }
+
     /// The SPIFFE ID SPIRE assigns a sandbox, when a trust domain is configured. Sandboxes of the SVID listener already are SPIFFE IDs.
-    pub(crate) fn sandbox_spiffe_id(&self, sandbox_id: &str) -> Option<String> {
+    pub(crate) fn sandbox_spiffe_id(&self, sandbox_id: &str, created_at_ms: i64) -> Option<String> {
         let domain = self.sandbox_spiffe_trust_domain.as_deref()?;
-        if sandbox_id.starts_with("svid-") {
+        if sandbox_id.starts_with("svid-") || created_at_ms < self.sandbox_spiffe_since_ms {
             return None;
         }
         Some(format!("spiffe://{domain}/openshell/sandbox/{sandbox_id}"))

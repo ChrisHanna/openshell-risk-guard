@@ -272,10 +272,12 @@ fn a_sandbox_shows_the_spiffe_id_spire_assigned_it_only_when_a_trust_domain_is_c
     use openshell_risk_guard::fixture::build_standard_corpus;
     use openshell_risk_guard::types::{EnforcementMode, EpochRecord, RiskStore};
 
-    let spiffe_id = |configured: bool| {
+    let spiffe_id = |configured: bool, since_ms: i64| {
         let mut store = SqliteRiskStore::open_in_memory().unwrap();
         if configured {
-            store = store.with_sandbox_spiffe_trust_domain("example.org");
+            store = store
+                .with_sandbox_spiffe_trust_domain("example.org")
+                .with_sandbox_spiffe_since_ms(since_ms);
         }
         let mut baseline = build_standard_corpus().default_baseline;
         baseline.normalizer_version = "v1".into();
@@ -313,11 +315,15 @@ fn a_sandbox_shows_the_spiffe_id_spire_assigned_it_only_when_a_trust_domain_is_c
         detail["runs"][0]["sandboxes"][0]["spiffe_id"].clone()
     };
     assert_eq!(
-        spiffe_id(true),
+        spiffe_id(true, 0),
         "spiffe://example.org/openshell/sandbox/sbx-1"
     );
     assert!(
-        spiffe_id(false).is_null(),
+        spiffe_id(false, 0).is_null(),
         "no trust domain, no identity shown"
+    );
+    assert!(
+        spiffe_id(true, 1_800_000_000_001).is_null(),
+        "a sandbox created before SPIFFE was enabled was never named by SPIRE"
     );
 }

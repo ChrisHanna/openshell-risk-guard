@@ -132,7 +132,8 @@ if ($svidDomain) {
 # 19-enable-sandbox-spiffe.ps1 records that OpenShell's sandboxes have SPIFFE identities; the console then shows them beside each sandbox.
 $consoleEnv = ''
 if ($svidDomain -and (Get-StateValue 'sandboxSpiffe')) {
-    $consoleEnv = "          env:`n            - name: RISK_GUARD_SANDBOX_SPIFFE_TRUST_DOMAIN`n              value: $svidDomain"
+    $since = Get-StateValue 'sandboxSpiffeSinceMs' 0
+    $consoleEnv = "          env:`n            - name: RISK_GUARD_SANDBOX_SPIFFE_TRUST_DOMAIN`n              value: $svidDomain`n            - name: RISK_GUARD_SANDBOX_SPIFFE_SINCE_MS`n              value: `"$since`""
 }
 $manifest = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/risk-guard.yaml') -Raw).Replace('__IMAGE__', $image).Replace('__CONSOLE_SIGNIN_ARGS__', $signIn).Replace('__SVID_ARGS__', $svid.args).Replace('__SVID_SERVICE_PORT__', $svid.servicePort).Replace('__SVID_CONTAINER_PORT__', $svid.containerPort).Replace('__SVID_MOUNT__', $svid.mount).Replace('__SVID_VOLUME__', $svid.volume).Replace('__SVID_POD_SPEC__', $svid.podSpec).Replace('__CONSOLE_ENV__', $consoleEnv)
 Invoke-KubectlApply $manifest

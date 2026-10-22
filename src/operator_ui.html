@@ -6542,7 +6542,7 @@ function renderFleetDirectory() {
     if (data.sandbox_spiffe_trust_domain && kind === "agent" && Number(item.sandbox_count) > 0) {
       const ids = document.createElement("span");
       ids.className = "cell-secondary";
-      ids.textContent = `${item.sandbox_count} SPIFFE ID${Number(item.sandbox_count) === 1 ? "" : "s"}, one per sandbox`;
+      ids.textContent = "each sandbox since SPIFFE was enabled has its own SPIFFE ID";
       c5.append(ids);
     } else if (kind === "service") {
       const ids = document.createElement("span");

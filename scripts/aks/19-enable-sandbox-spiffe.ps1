@@ -54,6 +54,8 @@ Invoke-KubectlApply (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/sandbox
 
 Write-Step 'Mounting the SPIFFE Workload API socket into the gateway and supervisors'
 Set-GatewaySpiffe $true
+# Sandboxes created before now were not given an identity, and the console should not show one for them.
+if (-not (Get-StateValue 'sandboxSpiffeSinceMs')) { Save-State @{ sandboxSpiffeSinceMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() } }
 Save-State @{ sandboxSpiffe = $true }
 Invoke-Native kubectl @('rollout', 'status', "statefulset/$release", '-n', $ns, '--timeout=300s') | Out-Null
 

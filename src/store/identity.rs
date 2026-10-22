@@ -532,7 +532,7 @@ impl SqliteRiskStore {
                     "created_at_ms": row.get::<_, i64>(6)?, "active_policy_hash": row.get::<_, Option<String>>(7)?,
                     "last_activity_at_ms": row.get::<_, i64>(8)?,
                     // The name SPIRE assigned this sandbox. Assigned, not presented: Risk Guard does not receive the certificate.
-                    "spiffe_id": self.sandbox_spiffe_id(&row.get::<_, String>(0)?),
+                    "spiffe_id": self.sandbox_spiffe_id(&row.get::<_, String>(0)?, row.get::<_, i64>(6)?),
                     // closed: a delete event ended it. Otherwise how recently it was seen; "not_seen_recently" means presumed gone.
                     "lifecycle": if row.get::<_, bool>(3)? { super::lifecycle_state(row.get::<_, i64>(8)?, now_ms) } else { "closed" }
                 })))?.collect::<std::result::Result<Vec<_>, _>>()?;
