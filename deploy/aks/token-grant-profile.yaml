@@ -1,6 +1,6 @@
 # Provider profile: calls to alpha and beta carry a short-lived token the supervisor obtains with the sandbox's SPIFFE JWT-SVID, so the
 # sandbox holds no stored secret for them. Adapted from OpenShell's examples/spiffe-token-grant-demo/provider-profile.yaml (Apache-2.0)
-# to this cluster's namespace and service range.
+# to this cluster's namespace and service range. The `tls` field is omitted (automatic): the gateway this cluster runs rejects `tls: none`, which only newer OpenShell accepts.
 id: spiffe-token-demo
 display_name: SPIFFE token grant demo
 description: Dynamic token grant for the alpha and beta demo services, authenticated by the sandbox's SPIFFE JWT-SVID
@@ -31,7 +31,6 @@ endpoints:
   - host: alpha.openshell.svc.cluster.local
     port: 80
     protocol: rest
-    tls: none
     access: read-write
     enforcement: enforce
     allowed_ips:
@@ -39,7 +38,6 @@ endpoints:
   - host: beta.openshell.svc.cluster.local
     port: 80
     protocol: rest
-    tls: none
     access: read-write
     enforcement: enforce
     allowed_ips:

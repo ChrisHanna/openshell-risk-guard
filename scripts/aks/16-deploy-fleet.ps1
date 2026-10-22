@@ -80,7 +80,7 @@ $stage = Join-Path ([IO.Path]::GetTempPath()) ("rg-fleet-ctx-" + [guid]::NewGuid
 New-Item -ItemType Directory -Force (Join-Path $stage 'scripts/aks'), (Join-Path $stage 'deploy/aks/fleet') | Out-Null
 try {
     Write-Step 'Staging the build context'
-    foreach ($f in 'scripts/aks/agent-fleet.sh', 'scripts/aks/run-agent.sh', 'deploy/aks/agent-sandbox-policy.yaml', 'deploy/aks/agent-workflow.yml',
+    foreach ($f in 'scripts/aks/agent-fleet.sh', 'scripts/aks/run-agent.sh', 'scripts/aks/run-token-agent.sh', 'deploy/aks/agent-sandbox-policy.yaml', 'deploy/aks/agent-workflow.yml',
                    'deploy/aks/fleet/Dockerfile', 'deploy/aks/fleet/entrypoint.sh') {
         $text = (Get-Content (Join-Path $script:RepoRoot $f) -Raw) -replace "`r`n", "`n"
         [IO.File]::WriteAllText((Join-Path $stage $f), $text, (New-Object Text.UTF8Encoding($false)))
