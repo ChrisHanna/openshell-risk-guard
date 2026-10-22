@@ -170,7 +170,10 @@ fn keys_from_set(set: &JwkSet) -> HashMap<String, DecodingKey> {
         .filter_map(|jwk| {
             let kid = jwk.common.key_id.clone()?;
             // Only RSA signing keys. An encryption key or another type can never verify one of our tokens.
-            if !matches!(jwk.algorithm, jsonwebtoken::jwk::AlgorithmParameters::RSA(_)) {
+            if !matches!(
+                jwk.algorithm,
+                jsonwebtoken::jwk::AlgorithmParameters::RSA(_)
+            ) {
                 return None;
             }
             DecodingKey::from_jwk(jwk).ok().map(|key| (kid, key))
@@ -179,11 +182,7 @@ fn keys_from_set(set: &JwkSet) -> HashMap<String, DecodingKey> {
 }
 
 fn clean_display(raw: &str) -> String {
-    let cleaned: String = raw
-        .chars()
-        .filter(|c| !c.is_control())
-        .take(120)
-        .collect();
+    let cleaned: String = raw.chars().filter(|c| !c.is_control()).take(120).collect();
     cleaned.trim().to_string()
 }
 
@@ -229,9 +228,13 @@ impl EntraVerifier {
     }
 
     async fn refresh_keys(&self) {
-        let (Some(url), Some(http)) = (&self.jwks_url, &self.http) else { return };
+        let (Some(url), Some(http)) = (&self.jwks_url, &self.http) else {
+            return;
+        };
         {
-            let Ok(mut cache) = self.cache.write() else { return };
+            let Ok(mut cache) = self.cache.write() else {
+                return;
+            };
             if cache
                 .last_attempt
                 .is_some_and(|t| t.elapsed() < MIN_REFRESH_INTERVAL)
@@ -272,7 +275,9 @@ impl EntraVerifier {
         if header.alg != Algorithm::RS256 {
             return Err(AuthError::Invalid("unsupported algorithm"));
         }
-        let kid = header.kid.ok_or(AuthError::Invalid("token has no key id"))?;
+        let kid = header
+            .kid
+            .ok_or(AuthError::Invalid("token has no key id"))?;
         let key = match self.cached_key(&kid) {
             Some(key) => key,
             None => {
@@ -317,10 +322,7 @@ impl EntraVerifier {
             .and_then(|oid| Uuid::parse_str(oid).ok())
             .map(|id| id.hyphenated().to_string())
             .ok_or(AuthError::Invalid("token has no object ID"))?;
-        let role = self
-            .config
-            .role_of(&oid)
-            .ok_or(AuthError::NotAuthorized)?;
+        let role = self.config.role_of(&oid).ok_or(AuthError::NotAuthorized)?;
         let display = [&claims.preferred_username, &claims.email, &claims.name]
             .into_iter()
             .flatten()
@@ -394,7 +396,10 @@ pub(crate) mod tests {
     }
 
     fn now() -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
     }
 
     fn claims() -> serde_json::Value {
@@ -415,7 +420,8 @@ pub(crate) mod tests {
     fn verifier() -> EntraVerifier {
         crate::auth::install_crypto_provider();
         let config = EntraConfig::new(TENANT, CLIENT, &[ADMIN.into()], &[VIEWER.into()]).unwrap();
-        let set: JwkSet = serde_json::from_value(json!({ "keys": [keys().0.jwk.clone()] })).unwrap();
+        let set: JwkSet =
+            serde_json::from_value(json!({ "keys": [keys().0.jwk.clone()] })).unwrap();
         EntraVerifier::with_static_keys(config, &set)
     }
 
@@ -431,7 +437,10 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn the_admin_signs_in_and_is_recorded_by_object_id() {
-        let who = verifier().verify(&sign(&keys().0, "good", &claims())).await.unwrap();
+        let who = verifier()
+            .verify(&sign(&keys().0, "good", &claims()))
+            .await
+            .unwrap();
         assert_eq!(who.role, Role::Admin);
         assert_eq!(who.oid, ADMIN);
         assert_eq!(who.actor(), format!("admin@example.com [entra:{ADMIN}]"));
@@ -446,13 +455,20 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn a_real_tenant_user_who_is_not_listed_gets_nothing() {
         let token = sign(&keys().0, "good", &with(claims(), "oid", json!(STRANGER)));
-        assert_eq!(verifier().verify(&token).await, Err(AuthError::NotAuthorized));
+        assert_eq!(
+            verifier().verify(&token).await,
+            Err(AuthError::NotAuthorized)
+        );
     }
 
     #[tokio::test]
     async fn access_follows_the_object_id_not_the_email() {
         // Someone else claiming the admin's email address is still a stranger.
-        let forged = with(with(claims(), "oid", json!(STRANGER)), "preferred_username", json!("admin@example.com"));
+        let forged = with(
+            with(claims(), "oid", json!(STRANGER)),
+            "preferred_username",
+            json!("admin@example.com"),
+        );
         assert_eq!(
             verifier().verify(&sign(&keys().0, "good", &forged)).await,
             Err(AuthError::NotAuthorized)
@@ -464,16 +480,65 @@ pub(crate) mod tests {
         let v = verifier();
         let good = &keys().0;
         let cases: Vec<(&str, String)> = vec![
-            ("expired", sign(good, "good", &with(claims(), "exp", json!(now() - 3600)))),
-            ("not yet valid", sign(good, "good", &with(claims(), "nbf", json!(now() + 3600)))),
-            ("wrong audience", sign(good, "good", &with(claims(), "aud", json!("someone-else")))),
-            ("wrong issuer", sign(good, "good", &with(claims(), "iss", json!("https://evil.example/v2.0")))),
-            ("other tenant issuer", sign(good, "good", &with(claims(), "iss", json!("https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/v2.0")))),
-            ("wrong tenant claim", sign(good, "good", &with(claims(), "tid", json!("00000000-0000-0000-0000-000000000000")))),
-            ("v1 token", sign(good, "good", &with(claims(), "ver", json!("1.0")))),
+            (
+                "expired",
+                sign(good, "good", &with(claims(), "exp", json!(now() - 3600))),
+            ),
+            (
+                "not yet valid",
+                sign(good, "good", &with(claims(), "nbf", json!(now() + 3600))),
+            ),
+            (
+                "wrong audience",
+                sign(good, "good", &with(claims(), "aud", json!("someone-else"))),
+            ),
+            (
+                "wrong issuer",
+                sign(
+                    good,
+                    "good",
+                    &with(claims(), "iss", json!("https://evil.example/v2.0")),
+                ),
+            ),
+            (
+                "other tenant issuer",
+                sign(
+                    good,
+                    "good",
+                    &with(
+                        claims(),
+                        "iss",
+                        json!(
+                            "https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/v2.0"
+                        ),
+                    ),
+                ),
+            ),
+            (
+                "wrong tenant claim",
+                sign(
+                    good,
+                    "good",
+                    &with(
+                        claims(),
+                        "tid",
+                        json!("00000000-0000-0000-0000-000000000000"),
+                    ),
+                ),
+            ),
+            (
+                "v1 token",
+                sign(good, "good", &with(claims(), "ver", json!("1.0"))),
+            ),
             ("no scope", sign(good, "good", &without(claims(), "scp"))),
-            ("wrong scope", sign(good, "good", &with(claims(), "scp", json!("read")))),
-            ("no object id", sign(good, "good", &without(claims(), "oid"))),
+            (
+                "wrong scope",
+                sign(good, "good", &with(claims(), "scp", json!("read"))),
+            ),
+            (
+                "no object id",
+                sign(good, "good", &without(claims(), "oid")),
+            ),
             ("no expiry", sign(good, "good", &without(claims(), "exp"))),
             ("signed by another key", sign(&keys().1, "good", &claims())),
             ("unknown key id", sign(good, "nobody", &claims())),
@@ -485,7 +550,10 @@ pub(crate) mod tests {
             );
         }
         for junk in ["", "abc", "a.b.c", "Bearer x"] {
-            assert!(matches!(v.verify(junk).await, Err(AuthError::Invalid(_))), "junk {junk:?}");
+            assert!(
+                matches!(v.verify(junk).await, Err(AuthError::Invalid(_))),
+                "junk {junk:?}"
+            );
         }
     }
 
@@ -501,17 +569,27 @@ pub(crate) mod tests {
         let mut hs = Header::new(Algorithm::HS256);
         hs.kid = Some("good".into());
         let hmac = encode(&hs, &claims(), &EncodingKey::from_secret(b"anything")).unwrap();
-        assert!(matches!(verifier().verify(&hmac).await, Err(AuthError::Invalid(_))));
+        assert!(matches!(
+            verifier().verify(&hmac).await,
+            Err(AuthError::Invalid(_))
+        ));
     }
 
     #[test]
     fn configuration_is_checked_and_normalised() {
         assert!(EntraConfig::new("not-a-guid", CLIENT, &[ADMIN.into()], &[]).is_err());
         assert!(EntraConfig::new(TENANT, "x", &[ADMIN.into()], &[]).is_err());
-        assert!(EntraConfig::new(TENANT, CLIENT, &[], &[]).is_err(), "an admin is required");
+        assert!(
+            EntraConfig::new(TENANT, CLIENT, &[], &[]).is_err(),
+            "an admin is required"
+        );
         assert!(EntraConfig::new(TENANT, CLIENT, &["nope".into()], &[]).is_err());
-        let upper = EntraConfig::new(&TENANT.to_uppercase(), CLIENT, &[ADMIN.to_uppercase()], &[]).unwrap();
-        assert_eq!(upper.admins[0], ADMIN, "object IDs compare case-insensitively");
+        let upper =
+            EntraConfig::new(&TENANT.to_uppercase(), CLIENT, &[ADMIN.to_uppercase()], &[]).unwrap();
+        assert_eq!(
+            upper.admins[0], ADMIN,
+            "object IDs compare case-insensitively"
+        );
         assert_eq!(upper.scope(), format!("api://{CLIENT}/access"));
     }
 

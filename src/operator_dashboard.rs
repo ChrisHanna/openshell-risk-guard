@@ -64,11 +64,7 @@ async fn local_only(request: Request, next: Next) -> Response {
 fn response(result: Result<Option<Value>>, missing: &str) -> Response {
     match result {
         Ok(Some(value)) => Json(value).into_response(),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": missing})),
-        )
-            .into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": missing}))).into_response(),
         Err(error) => {
             tracing::error!(%error, "operator evidence query failed");
             (
@@ -114,18 +110,12 @@ pub(crate) fn router_with_controls(
                         .into_response(),
                     Ok(Err(error)) => {
                         tracing::error!(%error, "prometheus metrics query failed");
-                        (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "metrics query failed\n",
-                        )
+                        (StatusCode::INTERNAL_SERVER_ERROR, "metrics query failed\n")
                             .into_response()
                     }
                     Err(error) => {
                         tracing::error!(%error, "prometheus metrics worker failed");
-                        (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "metrics worker failed\n",
-                        )
+                        (StatusCode::INTERNAL_SERVER_ERROR, "metrics worker failed\n")
                             .into_response()
                     }
                 }
@@ -151,9 +141,7 @@ pub(crate) fn router_with_controls(
                         store.operator_agent_detail(&id, now_ms())
                     })
                     .await
-                    .map_err(|e| {
-                        RiskGuardError::Internal(format!("evidence worker failed: {e}"))
-                    })
+                    .map_err(|e| RiskGuardError::Internal(format!("evidence worker failed: {e}")))
                     .and_then(|result| result);
                     response(result, "workload not found")
                 },
@@ -303,11 +291,20 @@ mod tests {
         ] {
             assert!(page.contains(&format!("id=\"{id}\"")), "missing view: {id}");
         }
-        assert!(page.contains("class=\"scope-bar\""), "the scope statement must be on every page");
-        assert!(!page.contains("id=\"agents-view\""), "the directory is part of the Fleet page now");
+        assert!(
+            page.contains("class=\"scope-bar\""),
+            "the scope statement must be on every page"
+        );
+        assert!(
+            !page.contains("id=\"agents-view\""),
+            "the directory is part of the Fleet page now"
+        );
         // The settings tab is "Enforcement": "Guardrails" would be mistaken for NVIDIA NeMo Guardrails.
         assert!(page.contains(">Enforcement</button>"));
-        assert!(!page.contains(">Guardrails</button>"), "the tab must not be called Guardrails");
+        assert!(
+            !page.contains(">Guardrails</button>"),
+            "the tab must not be called Guardrails"
+        );
         assert!(!page.contains("<h2>Guardrails</h2>"));
         assert!(page.contains("aria-label=\"Agent workspace\""));
         assert!(page.contains("Agent evidence"));
@@ -360,7 +357,9 @@ mod tests {
         assert!(metrics.contains("openshell_risk_guard_agents_total 0"));
         assert!(metrics.contains("openshell_risk_guard_decisions_total{outcome=\"deny\"} 0"));
         assert!(
-            metrics.contains("openshell_risk_guard_active_restrictions_total{tier=\"strict_epoch\"} 0")
+            metrics.contains(
+                "openshell_risk_guard_active_restrictions_total{tier=\"strict_epoch\"} 0"
+            )
         );
         assert!(
             request(address, "POST", "/api/agents/unknown", &host)

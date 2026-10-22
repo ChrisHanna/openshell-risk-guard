@@ -115,7 +115,11 @@ fn slug(value: &str, max_len: usize) -> String {
         }
     }
     let trimmed = out.trim_matches('-');
-    if trimmed.is_empty() { "x".to_string() } else { trimmed.to_string() }
+    if trimmed.is_empty() {
+        "x".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -124,7 +128,9 @@ mod tests {
 
     fn id(workspace: &str, kind: &str, subject: &str) -> String {
         let provider = if kind == "operator" { "mtls" } else { "oidc" };
-        derive_workload(workspace, provider, kind, subject, false).unwrap().agent_id
+        derive_workload(workspace, provider, kind, subject, false)
+            .unwrap()
+            .agent_id
     }
 
     #[test]
@@ -135,21 +141,39 @@ mod tests {
     #[test]
     fn workspace_and_principal_both_separate_workloads() {
         let base = id("team-a", "user", "alice");
-        assert_ne!(base, id("team-b", "user", "alice"), "workspace must scope the workload");
+        assert_ne!(
+            base,
+            id("team-b", "user", "alice"),
+            "workspace must scope the workload"
+        );
         assert_ne!(base, id("team-a", "user", "bob"));
-        assert_ne!(base, id("team-a", "operator", "alice"), "kind must be part of the identity");
+        assert_ne!(
+            base,
+            id("team-a", "operator", "alice"),
+            "kind must be part of the identity"
+        );
     }
 
     #[test]
     fn the_identity_provider_is_part_of_the_identity() {
-        let oidc = derive_workload("w", "oidc", "user", "alice", false).unwrap().agent_id;
-        let cloudflare = derive_workload("w", "cloudflare_access", "user", "alice", false).unwrap().agent_id;
-        assert_ne!(oidc, cloudflare, "the same subject from two providers is two people");
+        let oidc = derive_workload("w", "oidc", "user", "alice", false)
+            .unwrap()
+            .agent_id;
+        let cloudflare = derive_workload("w", "cloudflare_access", "user", "alice", false)
+            .unwrap()
+            .agent_id;
+        assert_ne!(
+            oidc, cloudflare,
+            "the same subject from two providers is two people"
+        );
     }
 
     #[test]
     fn subjects_that_slug_alike_do_not_collide() {
-        assert_ne!(id("w", "user", "a.b@example.com"), id("w", "user", "a-b@example.com"));
+        assert_ne!(
+            id("w", "user", "a.b@example.com"),
+            id("w", "user", "a-b@example.com")
+        );
         assert_ne!(id("w", "user", "auth0|123"), id("w", "user", "auth0-123"));
     }
 
@@ -165,7 +189,9 @@ mod tests {
             assert!(
                 !derived.is_empty()
                     && derived.len() <= 128
-                    && derived.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)),
+                    && derived
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)),
                 "{derived}"
             );
         }
@@ -181,7 +207,10 @@ mod tests {
     #[test]
     fn callers_that_name_no_durable_actor_are_refused() {
         for kind in ["anonymous", "unknown", "peer", "sandbox", ""] {
-            assert!(derive_workload("default", "oidc", kind, "x", false).is_err(), "{kind}");
+            assert!(
+                derive_workload("default", "oidc", kind, "x", false).is_err(),
+                "{kind}"
+            );
         }
         assert!(derive_workload("default", "oidc", "user", "  ", false).is_err());
         assert!(derive_workload("default", "oidc", "user", "a\nb", false).is_err());
@@ -198,23 +227,43 @@ mod tests {
     fn a_client_certificate_user_and_operator_both_own_a_workload() {
         // Observed on a real gateway: whoami reports provider=mtls, role=openshell-user.
         let user = derive_workload("default", "mtls", "user", "openshell-client", false).unwrap();
-        let operator = derive_workload("default", "mtls", "operator", "openshell-client", false).unwrap();
+        let operator =
+            derive_workload("default", "mtls", "operator", "openshell-client", false).unwrap();
         assert_ne!(user.agent_id, operator.agent_id, "kind keeps them apart");
     }
 
     #[test]
     fn the_unauthenticated_local_dev_user_needs_an_explicit_opt_in() {
-        let refused = derive_workload("default", "local_dev", "user", "unauthenticated-local-dev", false)
-            .unwrap_err()
-            .to_string();
+        let refused = derive_workload(
+            "default",
+            "local_dev",
+            "user",
+            "unauthenticated-local-dev",
+            false,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(refused.contains("--allow-local-dev-principal"), "{refused}");
-        assert!(derive_workload("default", "local_dev", "user", "unauthenticated-local-dev", true).is_ok());
+        assert!(
+            derive_workload(
+                "default",
+                "local_dev",
+                "user",
+                "unauthenticated-local-dev",
+                true
+            )
+            .is_ok()
+        );
         assert!(derive_workload("default", "local_dev", "operator", "x", true).is_err());
     }
 
     #[test]
     fn display_name_is_readable() {
-        let derived = derive_workload("team-a", "oidc", "user", "alice@example.com", false).unwrap();
-        assert_eq!(derived.display_name, "team-a / user:alice@example.com (oidc)");
+        let derived =
+            derive_workload("team-a", "oidc", "user", "alice@example.com", false).unwrap();
+        assert_eq!(
+            derived.display_name,
+            "team-a / user:alice@example.com (oidc)"
+        );
     }
 }

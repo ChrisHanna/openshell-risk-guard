@@ -90,7 +90,8 @@ impl AgentBindingPolicy {
         }
         if auto_register_agents && allowed.is_empty() {
             return Err(RiskGuardError::InvalidArgument(
-                "auto-registering agents requires at least one allowlisted binding principal".into(),
+                "auto-registering agents requires at least one allowlisted binding principal"
+                    .into(),
             ));
         }
         Ok(Self {
@@ -287,10 +288,7 @@ impl RiskGuardInterceptorService {
         let policy_obj = extract_policy_object(operation);
 
         if policy_yaml.is_some() || policy_obj.is_some() {
-            let has_middleware = self.check_required_middleware(
-                policy_yaml.as_deref(),
-                policy_obj,
-            );
+            let has_middleware = self.check_required_middleware(policy_yaml.as_deref(), policy_obj);
             if !has_middleware {
                 return Ok(deny(
                     "governed sandbox policy must retain fail_closed risk-guard middleware binding",
@@ -334,10 +332,9 @@ impl RiskGuardInterceptorService {
                     result
                         .log_annotations
                         .insert("sandbox_id".to_string(), sandbox_id);
-                    result.log_annotations.insert(
-                        "two_step_verdict".to_string(),
-                        proof.step2_prover_verdict,
-                    );
+                    result
+                        .log_annotations
+                        .insert("two_step_verdict".to_string(), proof.step2_prover_verdict);
                     return Ok(result);
                 }
             }
@@ -362,10 +359,7 @@ impl RiskGuardInterceptorService {
         let policy_obj = extract_policy_object(operation);
 
         if policy_yaml.is_some() || policy_obj.is_some() {
-            let has_middleware = self.check_required_middleware(
-                policy_yaml.as_deref(),
-                policy_obj,
-            );
+            let has_middleware = self.check_required_middleware(policy_yaml.as_deref(), policy_obj);
             if !has_middleware {
                 return deny(
                     "governed sandbox policy must retain fail_closed risk-guard middleware binding",
@@ -515,7 +509,9 @@ impl RiskGuardInterceptorService {
         let mut active_policy_hash = explicit_policy_hash.clone();
 
         if let Some(ref yaml) = policy_yaml {
-            credentialed_endpoints = self.hardening.extract_credentialed_endpoints(yaml)
+            credentialed_endpoints = self
+                .hardening
+                .extract_credentialed_endpoints(yaml)
                 .map_err(risk_guard_error_to_status)?;
             if active_policy_hash.is_none() {
                 active_policy_hash = Some(sha256_hex(yaml.as_bytes()));
@@ -544,9 +540,11 @@ impl RiskGuardInterceptorService {
                     .store
                     .get_baseline(&task_profile)
                     .map_err(risk_guard_error_to_status)?
-                    .ok_or_else(|| Status::failed_precondition(format!(
-                        "baseline '{task_profile}' is not provisioned; use baseline-import"
-                    )))?;
+                    .ok_or_else(|| {
+                        Status::failed_precondition(format!(
+                            "baseline '{task_profile}' is not provisioned; use baseline-import"
+                        ))
+                    })?;
                 let baseline_hash = crate::detector::compute_baseline_hash(&baseline);
 
                 let epoch_id = format!("ep_{sandbox_id}_1");
@@ -566,7 +564,9 @@ impl RiskGuardInterceptorService {
                 self.store
                     .upsert_epoch(&epoch)
                     .map_err(risk_guard_error_to_status)?;
-                result.log_annotations.insert("epoch_id".to_string(), epoch_id);
+                result
+                    .log_annotations
+                    .insert("epoch_id".to_string(), epoch_id);
             } else if let Some(epoch) = existing_epoch {
                 result
                     .log_annotations
@@ -640,20 +640,36 @@ impl RiskGuardInterceptorService {
                 principal_provider: principal.get("provider").cloned().unwrap_or_default(),
                 principal_subject: principal.get("subject").cloned().unwrap_or_default(),
                 agent_id: None,
-                source: if labeled.is_some() { "label" } else { "principal" },
+                source: if labeled.is_some() {
+                    "label"
+                } else {
+                    "principal"
+                },
                 bound: false,
                 reason: None,
             };
-            self.refuse_binding(result, &mut audit, "refused", "the committed sandbox reports no workspace".into());
+            self.refuse_binding(
+                result,
+                &mut audit,
+                "refused",
+                "the committed sandbox reports no workspace".into(),
+            );
             return Ok(());
         };
-        let kind = principal.get("kind").map(String::as_str).unwrap_or("unknown");
+        let kind = principal
+            .get("kind")
+            .map(String::as_str)
+            .unwrap_or("unknown");
         let provider = principal.get("provider").map(String::as_str).unwrap_or("");
         let subject = principal
             .get("subject")
             .map(|subject| subject.trim())
             .unwrap_or("");
-        let source = if labeled.is_some() { "label" } else { "principal" };
+        let source = if labeled.is_some() {
+            "label"
+        } else {
+            "principal"
+        };
         let mut audit = BindingAudit {
             sandbox_id: sandbox_id.to_string(),
             workspace: workspace.clone(),
@@ -672,12 +688,27 @@ impl RiskGuardInterceptorService {
                 if !self.agent_binding.permits(principal) {
                     // The sandbox exists but stays unbound, so its traffic fails closed.
                     tracing::warn!(%sandbox_id, "workload binding refused: creating principal is not allowlisted");
-                    self.refuse_binding(result, &mut audit, "refused_principal", "creating principal is not allowlisted".into());
+                    self.refuse_binding(
+                        result,
+                        &mut audit,
+                        "refused_principal",
+                        "creating principal is not allowlisted".into(),
+                    );
                     return Ok(());
                 }
-                (agent_id, extract_agent_name(committed_response), self.agent_binding.auto_register_agents)
+                (
+                    agent_id,
+                    extract_agent_name(committed_response),
+                    self.agent_binding.auto_register_agents,
+                )
             }
-            None => match derive_workload(&workspace, provider, kind, subject, self.agent_binding.allow_local_dev_principal) {
+            None => match derive_workload(
+                &workspace,
+                provider,
+                kind,
+                subject,
+                self.agent_binding.allow_local_dev_principal,
+            ) {
                 Ok(derived) => (derived.agent_id, Some(derived.display_name), true),
                 Err(error) => {
                     tracing::warn!(%sandbox_id, %error, "workload derivation refused");
@@ -702,10 +733,16 @@ impl RiskGuardInterceptorService {
             claim_workspace: source == "principal",
         }) {
             Ok(()) => {
-                result.log_annotations.insert("agent_id".to_string(), agent_id);
+                result
+                    .log_annotations
+                    .insert("agent_id".to_string(), agent_id);
                 result.log_annotations.insert("run_id".to_string(), run_id);
-                result.log_annotations.insert("workspace".to_string(), workspace);
-                result.log_annotations.insert("agent_binding_source".to_string(), source.to_string());
+                result
+                    .log_annotations
+                    .insert("workspace".to_string(), workspace);
+                result
+                    .log_annotations
+                    .insert("agent_binding_source".to_string(), source.to_string());
                 audit.bound = true;
                 self.audit_binding(&audit);
                 Ok(())
@@ -782,12 +819,16 @@ impl RiskGuardInterceptorService {
             if let Ok(doc) = openshell_policy_schema::parse_policy(yaml)
                 && doc.network_middlewares.iter().any(|(key, mw)| {
                     (matches_middleware_identifier(key, &self.required_middleware_name)
-                        || matches_middleware_identifier(&mw.middleware, &self.required_middleware_name)
+                        || matches_middleware_identifier(
+                            &mw.middleware,
+                            &self.required_middleware_name,
+                        )
                         || matches_middleware_identifier(&mw.name, &self.required_middleware_name))
                         && is_fail_closed_str(&mw.on_error)
-                }) {
-                    return true;
-                }
+                })
+            {
+                return true;
+            }
             if let Ok(val) = serde_yml::from_str::<Value>(yaml)
                 && json_policy_has_required_middleware(&val, &self.required_middleware_name)
             {
@@ -979,9 +1020,9 @@ fn requests_auto_proposal_approval(operation: &Value) -> bool {
         && let Some(setting_value) = operation
             .get("setting_value")
             .or_else(|| operation.get("settingValue"))
-        {
-            return value_contains_auto(setting_value);
-        }
+    {
+        return value_contains_auto(setting_value);
+    }
 
     if let Some(mode_val) = operation.get("proposal_approval_mode").or_else(|| {
         operation
@@ -1013,7 +1054,8 @@ fn extract_policy_yaml(val: &Value) -> Option<String> {
         val.pointer("/sandbox/spec/policyYaml"),
         val.get("policy").filter(|v| v.is_string()),
         val.pointer("/spec/policy").filter(|v| v.is_string()),
-        val.pointer("/sandbox/spec/policy").filter(|v| v.is_string()),
+        val.pointer("/sandbox/spec/policy")
+            .filter(|v| v.is_string()),
     ];
     for candidate in direct_candidates.into_iter().flatten() {
         if let Some(s) = candidate.as_str()
@@ -1059,20 +1101,25 @@ fn extract_policy_object(val: &Value) -> Option<&Value> {
 fn extract_authored_policy_yaml(val: &Value) -> std::result::Result<Option<String>, Status> {
     match extract_policy_yaml(val) {
         Some(yaml) => Ok(Some(yaml)),
-        None => extract_policy_object(val).map(policy_object_to_yaml).transpose(),
+        None => extract_policy_object(val)
+            .map(policy_object_to_yaml)
+            .transpose(),
     }
 }
 
 fn policy_object_to_yaml(policy_obj: &Value) -> std::result::Result<String, Status> {
-    if let Ok(doc) = serde_json::from_value::<openshell_policy_schema::PolicyDocument>(policy_obj.clone())
+    if let Ok(doc) =
+        serde_json::from_value::<openshell_policy_schema::PolicyDocument>(policy_obj.clone())
     {
         return openshell_policy_schema::serialize_policy(&doc)
             .map_err(|err| Status::invalid_argument(format!("invalid authored policy: {err}")));
     }
     use prost::Message;
-    let codec = openshell_gateway_interceptors::ProtoJsonCodec::openshell()
-        .map_err(|err| Status::internal(format!("policy descriptor initialization failed: {err}")))?;
-    let bytes = codec.encode_json_to_message("openshell.sandbox.v1.SandboxPolicy", policy_obj)
+    let codec = openshell_gateway_interceptors::ProtoJsonCodec::openshell().map_err(|err| {
+        Status::internal(format!("policy descriptor initialization failed: {err}"))
+    })?;
+    let bytes = codec
+        .encode_json_to_message("openshell.sandbox.v1.SandboxPolicy", policy_obj)
         .map_err(|err| Status::invalid_argument(format!("invalid wire policy: {err}")))?;
     let policy = openshell_core::proto::sandbox::v1::SandboxPolicy::decode(bytes.as_slice())
         .map_err(|err| Status::invalid_argument(format!("invalid policy protobuf: {err}")))?;
@@ -1144,23 +1191,38 @@ fn policy_scoring_context(
     let policy = openshell_policy_schema::parse_policy(yaml)
         .map_err(|error| Status::invalid_argument(format!("invalid committed policy: {error}")))?;
     let mut context = None;
-    for binding in policy.network_middlewares.values()
+    for binding in policy
+        .network_middlewares
+        .values()
         .filter(|binding| binding.middleware == middleware_name)
     {
         let profile = match binding.config.get("task_profile") {
             Some(Value::String(value)) if !value.trim().is_empty() => Some(value.clone()),
             None => None,
-            _ => return Err(Status::invalid_argument("risk-guard task_profile must be a nonempty string")),
+            _ => {
+                return Err(Status::invalid_argument(
+                    "risk-guard task_profile must be a nonempty string",
+                ));
+            }
         };
         let mode = match binding.config.get("mode") {
             Some(Value::String(value)) if value == "observe" => EnforcementMode::Observe,
             Some(Value::String(value)) if value == "enforce" => EnforcementMode::Enforce,
             None => EnforcementMode::Enforce,
-            _ => return Err(Status::invalid_argument("risk-guard mode must be observe or enforce")),
+            _ => {
+                return Err(Status::invalid_argument(
+                    "risk-guard mode must be observe or enforce",
+                ));
+            }
         };
         let candidate = (profile, mode);
-        if context.as_ref().is_some_and(|existing| existing != &candidate) {
-            return Err(Status::invalid_argument("risk-guard bindings must use one scoring profile and mode"));
+        if context
+            .as_ref()
+            .is_some_and(|existing| existing != &candidate)
+        {
+            return Err(Status::invalid_argument(
+                "risk-guard bindings must use one scoring profile and mode",
+            ));
         }
         context = Some(candidate);
     }
@@ -1176,7 +1238,10 @@ mod guardrail_policy_context_tests {
         let yaml = "version: 1\nnetwork_middlewares:\n  risk:\n    middleware: risk-guard\n    on_error: fail_closed\n    config: {task_profile: approved-profile-hash, mode: observe}\n";
         assert_eq!(
             policy_scoring_context(yaml, "risk-guard").unwrap(),
-            (Some("approved-profile-hash".into()), EnforcementMode::Observe),
+            (
+                Some("approved-profile-hash".into()),
+                EnforcementMode::Observe
+            ),
         );
     }
 
@@ -1238,9 +1303,14 @@ fn extract_annotation(val: &Value, key: &str) -> Option<String> {
 }
 
 fn binding_annotations_present(val: &Value) -> bool {
-    [AGENT_ID_ANNOTATION, AGENT_NAME_ANNOTATION, AGENT_REVISION_ANNOTATION, RUN_ID_ANNOTATION]
-        .into_iter()
-        .any(|key| extract_annotation(val, key).is_some())
+    [
+        AGENT_ID_ANNOTATION,
+        AGENT_NAME_ANNOTATION,
+        AGENT_REVISION_ANNOTATION,
+        RUN_ID_ANNOTATION,
+    ]
+    .into_iter()
+    .any(|key| extract_annotation(val, key).is_some())
 }
 
 /// The workspace that owns a committed sandbox, as the gateway reports it. OpenShell
@@ -1372,11 +1442,7 @@ fn json_policy_has_required_middleware(policy_obj: &Value, required_name: &str) 
     }
 }
 
-fn middleware_entry_matches(
-    key: Option<&str>,
-    entry: &Value,
-    required_name: &str,
-) -> bool {
+fn middleware_entry_matches(key: Option<&str>, entry: &Value, required_name: &str) -> bool {
     let key_matches = key.is_some_and(|k| matches_middleware_identifier(k, required_name));
     let mw_field_matches = entry
         .get("middleware")
@@ -1553,8 +1619,8 @@ mod tests {
 
     fn authenticated_request<T>(inner: T, token: &str) -> Request<T> {
         let mut req = Request::new(inner);
-        let header_val = AsciiMetadataValue::try_from(format!("Bearer {token}"))
-            .expect("valid bearer header");
+        let header_val =
+            AsciiMetadataValue::try_from(format!("Bearer {token}")).expect("valid bearer header");
         req.metadata_mut().insert("authorization", header_val);
         req
     }
@@ -1567,37 +1633,101 @@ mod tests {
         baseline.normalizer_version = crate::normalizer::DEFAULT_NORMALIZER_VERSION.into();
         let hash = store.store_baseline(&baseline).unwrap();
         store.register_agent("mode-agent", "Mode test").unwrap();
-        store.create_agent_run(
-            "mode-agent", "mode-run", "revision-1", TEST_TASK_PROFILE, EnforcementMode::Observe,
-        ).unwrap();
-        store.upsert_epoch(&EpochRecord {
-            epoch_id: "mode-epoch".into(), gateway_id: TEST_GATEWAY_ID.into(),
-            sandbox_id: "mode-sandbox".into(), task_profile: TEST_TASK_PROFILE.into(),
-            baseline_hash: hash, mode: EnforcementMode::Observe, active: true,
-            next_sequence: 1, created_at_ms: 0, credentialed_endpoints: Default::default(),
-            active_policy_hash: None,
-        }).unwrap();
-        store.bind_agent_run("mode-run", "mode-sandbox", TEST_GATEWAY_ID).unwrap();
+        store
+            .create_agent_run(
+                "mode-agent",
+                "mode-run",
+                "revision-1",
+                TEST_TASK_PROFILE,
+                EnforcementMode::Observe,
+            )
+            .unwrap();
+        store
+            .upsert_epoch(&EpochRecord {
+                epoch_id: "mode-epoch".into(),
+                gateway_id: TEST_GATEWAY_ID.into(),
+                sandbox_id: "mode-sandbox".into(),
+                task_profile: TEST_TASK_PROFILE.into(),
+                baseline_hash: hash,
+                mode: EnforcementMode::Observe,
+                active: true,
+                next_sequence: 1,
+                created_at_ms: 0,
+                credentialed_endpoints: Default::default(),
+                active_policy_hash: None,
+            })
+            .unwrap();
+        store
+            .bind_agent_run("mode-run", "mode-sandbox", TEST_GATEWAY_ID)
+            .unwrap();
         let operation = json!({"sandbox_id":"mode-sandbox"});
         let proposal = json!({"sandbox_id":"mode-sandbox","proposed_chunks":[{"rule":"expand"}]});
         let principal = HashMap::new();
         // Observe mode stops request denials only; it must not reopen policy broadening.
-        assert!(!service.evaluate_validate("ApproveAllDraftChunks", &operation, None, &principal).unwrap().allowed);
-        assert!(!service.evaluate_validate("ApproveDraftChunk", &operation, None, &principal).unwrap().allowed);
-        assert!(!service.evaluate_validate("SubmitPolicyAnalysis", &proposal, None, &principal).unwrap().allowed);
-        let view = store.agent_guardrails("mode-agent", 60_000).unwrap().unwrap();
+        assert!(
+            !service
+                .evaluate_validate("ApproveAllDraftChunks", &operation, None, &principal)
+                .unwrap()
+                .allowed
+        );
+        assert!(
+            !service
+                .evaluate_validate("ApproveDraftChunk", &operation, None, &principal)
+                .unwrap()
+                .allowed
+        );
+        assert!(
+            !service
+                .evaluate_validate("SubmitPolicyAnalysis", &proposal, None, &principal)
+                .unwrap()
+                .allowed
+        );
+        let view = store
+            .agent_guardrails("mode-agent", 60_000)
+            .unwrap()
+            .unwrap();
         let mut settings: crate::guardrails::AgentGuardrails =
             serde_json::from_value(view["settings"].clone()).unwrap();
         settings.mode = EnforcementMode::Enforce;
-        store.save_agent_guardrails(
-            "mode-agent",
-            &crate::guardrails::GuardrailsUpdate { expected_revision: 0, settings },
-            "test-operator", 60_000,
-        ).unwrap();
-        assert!(!service.evaluate_validate("ApproveAllDraftChunks", &operation, None, &principal).unwrap().allowed);
-        assert!(!service.evaluate_validate("ApproveDraftChunk", &operation, None, &principal).unwrap().allowed);
-        assert_eq!(store.get_active_epoch("mode-sandbox").unwrap().unwrap().mode, EnforcementMode::Observe);
-        assert_eq!(store.get_effective_active_epoch("mode-sandbox").unwrap().unwrap().mode, EnforcementMode::Enforce);
+        store
+            .save_agent_guardrails(
+                "mode-agent",
+                &crate::guardrails::GuardrailsUpdate {
+                    expected_revision: 0,
+                    settings,
+                },
+                "test-operator",
+                60_000,
+            )
+            .unwrap();
+        assert!(
+            !service
+                .evaluate_validate("ApproveAllDraftChunks", &operation, None, &principal)
+                .unwrap()
+                .allowed
+        );
+        assert!(
+            !service
+                .evaluate_validate("ApproveDraftChunk", &operation, None, &principal)
+                .unwrap()
+                .allowed
+        );
+        assert_eq!(
+            store
+                .get_active_epoch("mode-sandbox")
+                .unwrap()
+                .unwrap()
+                .mode,
+            EnforcementMode::Observe
+        );
+        assert_eq!(
+            store
+                .get_effective_active_epoch("mode-sandbox")
+                .unwrap()
+                .unwrap()
+                .mode,
+            EnforcementMode::Enforce
+        );
     }
 
     #[tokio::test]
@@ -1672,10 +1802,12 @@ mod tests {
             service: OPENSHELL_SERVICE.to_string(),
             method: "UpdateConfig".to_string(),
             principal: HashMap::new(),
-            phase: Some(interceptor_evaluation::Phase::Validate(ValidateEvaluation {
-                proposed_operation: Some(proposed),
-                current_state: None,
-            })),
+            phase: Some(interceptor_evaluation::Phase::Validate(
+                ValidateEvaluation {
+                    proposed_operation: Some(proposed),
+                    current_state: None,
+                },
+            )),
         };
 
         let result = service
@@ -1693,7 +1825,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn validate_update_config_blocks_middleware_removal_and_policy_widening_but_allows_narrowing() {
+    async fn validate_update_config_blocks_middleware_removal_and_policy_widening_but_allows_narrowing()
+     {
         let (service, store, token) = setup_service_with_jwt();
         let sandbox_id = "sb-monotonic-01";
 
@@ -1812,10 +1945,12 @@ network_policies:
             service: OPENSHELL_SERVICE.to_string(),
             method: "UpdateConfig".to_string(),
             principal: HashMap::new(),
-            phase: Some(interceptor_evaluation::Phase::Validate(ValidateEvaluation {
-                proposed_operation: Some(narrow_op),
-                current_state: None,
-            })),
+            phase: Some(interceptor_evaluation::Phase::Validate(
+                ValidateEvaluation {
+                    proposed_operation: Some(narrow_op),
+                    current_state: None,
+                },
+            )),
         };
 
         let narrow_res = service
@@ -1842,10 +1977,12 @@ network_policies:
             service: OPENSHELL_SERVICE.to_string(),
             method: "UpdateConfig".to_string(),
             principal: HashMap::new(),
-            phase: Some(interceptor_evaluation::Phase::Validate(ValidateEvaluation {
-                proposed_operation: Some(remove_mw_op),
-                current_state: None,
-            })),
+            phase: Some(interceptor_evaluation::Phase::Validate(
+                ValidateEvaluation {
+                    proposed_operation: Some(remove_mw_op),
+                    current_state: None,
+                },
+            )),
         };
 
         let remove_mw_res = service
@@ -1884,10 +2021,12 @@ network_policies:
             service: OPENSHELL_SERVICE.to_string(),
             method: "UpdateConfig".to_string(),
             principal: HashMap::new(),
-            phase: Some(interceptor_evaluation::Phase::Validate(ValidateEvaluation {
-                proposed_operation: Some(widen_op),
-                current_state: None,
-            })),
+            phase: Some(interceptor_evaluation::Phase::Validate(
+                ValidateEvaluation {
+                    proposed_operation: Some(widen_op),
+                    current_state: None,
+                },
+            )),
         };
 
         let widen_res = service
@@ -1914,39 +2053,52 @@ network_policies:
         store.store_baseline(&baseline).unwrap();
         let policy = openshell_policy::parse_sandbox_policy(
             "version: 1\nfilesystem_policy:\n  include_workdir: false\n  read_only: [/usr]\n",
-        ).unwrap();
+        )
+        .unwrap();
         let codec = openshell_gateway_interceptors::ProtoJsonCodec::openshell().unwrap();
-        let wire_policy = codec.decode_message_to_json(
-            "openshell.sandbox.v1.SandboxPolicy", &policy,
-        ).unwrap();
-        service.post_commit_sandbox_mutation(
-            "CreateSandbox",
-            &json!({"sandbox": {"id": "native-policy", "spec": {"policy": wire_policy}}}),
-            &HashMap::new(),
-        ).expect("native ProtoJSON must become canonical authored policy");
+        let wire_policy = codec
+            .decode_message_to_json("openshell.sandbox.v1.SandboxPolicy", &policy)
+            .unwrap();
+        service
+            .post_commit_sandbox_mutation(
+                "CreateSandbox",
+                &json!({"sandbox": {"id": "native-policy", "spec": {"policy": wire_policy}}}),
+                &HashMap::new(),
+            )
+            .expect("native ProtoJSON must become canonical authored policy");
         assert!(store.get_active_epoch("native-policy").unwrap().is_some());
-        assert!(store.latest_policy_snapshot("native-policy").unwrap().is_some());
+        assert!(
+            store
+                .latest_policy_snapshot("native-policy")
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[tokio::test]
     async fn post_commit_missing_baseline_does_not_fabricate_an_epoch() {
         let (mut service, store, _token) = setup_service_with_jwt();
         service.default_task_profile = "not-provisioned".to_string();
-        let error = service.post_commit_sandbox_mutation(
-            "CreateSandbox",
-            &json!({"sandbox": {"metadata": {"id": "unprovisioned"}}}),
-            &HashMap::new(),
-        ).expect_err("missing baseline must be explicit");
+        let error = service
+            .post_commit_sandbox_mutation(
+                "CreateSandbox",
+                &json!({"sandbox": {"metadata": {"id": "unprovisioned"}}}),
+                &HashMap::new(),
+            )
+            .expect_err("missing baseline must be explicit");
         assert_eq!(error.code(), tonic::Code::FailedPrecondition);
         assert!(store.get_active_epoch("unprovisioned").unwrap().is_none());
     }
 
     #[tokio::test]
-    async fn post_commit_create_sandbox_registers_epoch_and_records_snapshot_and_credentialed_endpoints() {
+    async fn post_commit_create_sandbox_registers_epoch_and_records_snapshot_and_credentialed_endpoints()
+     {
         let (service, store, token) = setup_service_with_jwt();
         let mut baseline = crate::fixture::build_standard_corpus().default_baseline;
         baseline.task_profile = TEST_TASK_PROFILE.to_string();
-        store.store_baseline(&baseline).expect("provision test baseline");
+        store
+            .store_baseline(&baseline)
+            .expect("provision test baseline");
         let sandbox_id = "sb-postcommit-01";
 
         let policy_yaml = r#"
@@ -2039,10 +2191,12 @@ network_policies:
             service: OPENSHELL_SERVICE.to_string(),
             method: "ApproveAllDraftChunks".to_string(),
             principal: HashMap::new(),
-            phase: Some(interceptor_evaluation::Phase::Validate(ValidateEvaluation {
-                proposed_operation: Some(approve_all_op),
-                current_state: None,
-            })),
+            phase: Some(interceptor_evaluation::Phase::Validate(
+                ValidateEvaluation {
+                    proposed_operation: Some(approve_all_op),
+                    current_state: None,
+                },
+            )),
         };
         let approve_all_res = service
             .evaluate(authenticated_request(approve_all_eval, &token))
@@ -2091,10 +2245,12 @@ network_policies:
             service: OPENSHELL_SERVICE.to_string(),
             method: "CreateSandbox".to_string(),
             principal: HashMap::new(),
-            phase: Some(interceptor_evaluation::Phase::Validate(ValidateEvaluation {
-                proposed_operation: Some(Struct::default()),
-                current_state: None,
-            })),
+            phase: Some(interceptor_evaluation::Phase::Validate(
+                ValidateEvaluation {
+                    proposed_operation: Some(Struct::default()),
+                    current_state: None,
+                },
+            )),
         };
         let unauth_err = service
             .evaluate(Request::new(unauth_eval))
@@ -2123,10 +2279,12 @@ network_policies:
             service: OPENSHELL_SERVICE.to_string(),
             method: "CreateSandbox".to_string(),
             principal: HashMap::new(),
-            phase: Some(interceptor_evaluation::Phase::Validate(ValidateEvaluation {
-                proposed_operation: Some(bad_create_op),
-                current_state: None,
-            })),
+            phase: Some(interceptor_evaluation::Phase::Validate(
+                ValidateEvaluation {
+                    proposed_operation: Some(bad_create_op),
+                    current_state: None,
+                },
+            )),
         };
         let bad_create_res = service
             .evaluate(authenticated_request(bad_create_eval, &token))
@@ -2160,10 +2318,12 @@ network_policies:
             service: OPENSHELL_SERVICE.to_string(),
             method: "CreateSandbox".to_string(),
             principal: HashMap::new(),
-            phase: Some(interceptor_evaluation::Phase::Validate(ValidateEvaluation {
-                proposed_operation: Some(good_create_op),
-                current_state: None,
-            })),
+            phase: Some(interceptor_evaluation::Phase::Validate(
+                ValidateEvaluation {
+                    proposed_operation: Some(good_create_op),
+                    current_state: None,
+                },
+            )),
         };
         let good_create_res = service
             .evaluate(authenticated_request(good_create_eval, &token))
@@ -2237,7 +2397,10 @@ network_policies:
     }
 
     fn binding_outcome(result: &InterceptorResult) -> Option<&str> {
-        result.log_annotations.get("agent_binding").map(String::as_str)
+        result
+            .log_annotations
+            .get("agent_binding")
+            .map(String::as_str)
     }
 
     #[test]
@@ -2264,7 +2427,10 @@ network_policies:
         );
         let policy = AgentBindingPolicy::new(["operator:alice"], false).unwrap();
         assert!(policy.permits(&principal_of("operator", "alice")));
-        assert!(!policy.permits(&principal_of("user", "alice")), "kind must match");
+        assert!(
+            !policy.permits(&principal_of("user", "alice")),
+            "kind must match"
+        );
         assert!(!policy.permits(&principal_of("sandbox", "alice")));
         assert!(!policy.permits(&principal_of("anonymous", "")));
         assert!(!policy.permits(&principal_of("operator", "")));
@@ -2276,8 +2442,8 @@ network_policies:
     async fn agent_binding_refuses_creating_principals_that_are_not_allowlisted() {
         let (service, store, token) = setup_service_with_jwt();
         provision_baseline(&store);
-        let service = service
-            .with_agent_binding(AgentBindingPolicy::new(["operator:alice"], true).unwrap());
+        let service =
+            service.with_agent_binding(AgentBindingPolicy::new(["operator:alice"], true).unwrap());
         let annotations = json!({ AGENT_ID_ANNOTATION: "prod-agent" });
 
         for (index, caller) in [
@@ -2301,19 +2467,39 @@ network_policies:
             )
             .await;
             assert!(result.allowed, "POST_COMMIT never blocks a created sandbox");
-            assert_eq!(binding_outcome(&result), Some("refused_principal"), "{caller:?}");
+            assert_eq!(
+                binding_outcome(&result),
+                Some("refused_principal"),
+                "{caller:?}"
+            );
             assert!(!result.log_annotations.contains_key("agent_id"));
         }
         assert!(
-            store.operator_agent_detail("prod-agent", 1).unwrap().is_none(),
+            store
+                .operator_agent_detail("prod-agent", 1)
+                .unwrap()
+                .is_none(),
             "a refused creator must not even register the agent"
         );
 
-        let allowed =
-            create_with_annotations(&service, &token, principal_of("operator", "alice"), "sb-ok", annotations)
-                .await;
-        assert_eq!(allowed.log_annotations.get("agent_id").map(String::as_str), Some("prod-agent"));
-        assert!(store.operator_agent_detail("prod-agent", 1).unwrap().is_some());
+        let allowed = create_with_annotations(
+            &service,
+            &token,
+            principal_of("operator", "alice"),
+            "sb-ok",
+            annotations,
+        )
+        .await;
+        assert_eq!(
+            allowed.log_annotations.get("agent_id").map(String::as_str),
+            Some("prod-agent")
+        );
+        assert!(
+            store
+                .operator_agent_detail("prod-agent", 1)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[tokio::test]
@@ -2329,14 +2515,19 @@ network_policies:
         )
         .await;
         assert_eq!(binding_outcome(&result), Some("refused_principal"));
-        assert!(store.operator_agent_detail("prod-agent", 1).unwrap().is_none());
+        assert!(
+            store
+                .operator_agent_detail("prod-agent", 1)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
     fn validate_rejects_binding_annotations_from_principals_that_are_not_allowlisted() {
         let (service, _store, _token) = setup_service_with_jwt();
-        let service = service
-            .with_agent_binding(AgentBindingPolicy::new(["operator:alice"], false).unwrap());
+        let service =
+            service.with_agent_binding(AgentBindingPolicy::new(["operator:alice"], false).unwrap());
         let with_annotation = json!({
             "name": "sb-x",
             "metadata": { "annotations": { AGENT_ID_ANNOTATION: "prod-agent" } }
@@ -2347,13 +2538,23 @@ network_policies:
         for operation in [&with_annotation, &only_run] {
             assert!(
                 !service
-                    .evaluate_validate("CreateSandbox", operation, None, &principal_of("user", "bob"))
+                    .evaluate_validate(
+                        "CreateSandbox",
+                        operation,
+                        None,
+                        &principal_of("user", "bob")
+                    )
                     .unwrap()
                     .allowed
             );
             assert!(
                 service
-                    .evaluate_validate("CreateSandbox", operation, None, &principal_of("operator", "alice"))
+                    .evaluate_validate(
+                        "CreateSandbox",
+                        operation,
+                        None,
+                        &principal_of("operator", "alice")
+                    )
                     .unwrap()
                     .allowed
             );
@@ -2377,7 +2578,11 @@ network_policies:
         let annotations = json!({ AGENT_ID_ANNOTATION: "new-agent" });
 
         let refused = create_with_annotations(
-            &strict, &token, principal_of("operator", "alice"), "sb-unknown-1", annotations.clone(),
+            &strict,
+            &token,
+            principal_of("operator", "alice"),
+            "sb-unknown-1",
+            annotations.clone(),
         )
         .await;
         assert_eq!(binding_outcome(&refused), Some("refused"));
@@ -2386,17 +2591,31 @@ network_policies:
             "{:?}",
             refused.log_annotations
         );
-        assert!(store.operator_agent_detail("new-agent", 1).unwrap().is_none());
+        assert!(
+            store
+                .operator_agent_detail("new-agent", 1)
+                .unwrap()
+                .is_none()
+        );
 
-        store.register_agent("new-agent", "Registered by an operator").unwrap();
+        store
+            .register_agent("new-agent", "Registered by an operator")
+            .unwrap();
         let bound = create_with_annotations(
-            &strict, &token, principal_of("operator", "alice"), "sb-unknown-2", annotations,
+            &strict,
+            &token,
+            principal_of("operator", "alice"),
+            "sb-unknown-2",
+            annotations,
         )
         .await;
-        assert_eq!(bound.log_annotations.get("agent_id").map(String::as_str), Some("new-agent"));
+        assert_eq!(
+            bound.log_annotations.get("agent_id").map(String::as_str),
+            Some("new-agent")
+        );
 
-        let lenient = service
-            .with_agent_binding(AgentBindingPolicy::new(["operator:alice"], true).unwrap());
+        let lenient =
+            service.with_agent_binding(AgentBindingPolicy::new(["operator:alice"], true).unwrap());
         let created = create_with_annotations(
             &lenient,
             &token,
@@ -2405,20 +2624,34 @@ network_policies:
             json!({ AGENT_ID_ANNOTATION: "brand-new-agent" }),
         )
         .await;
-        assert_eq!(created.log_annotations.get("agent_id").map(String::as_str), Some("brand-new-agent"));
-        assert!(store.operator_agent_detail("brand-new-agent", 1).unwrap().is_some());
+        assert_eq!(
+            created.log_annotations.get("agent_id").map(String::as_str),
+            Some("brand-new-agent")
+        );
+        assert!(
+            store
+                .operator_agent_detail("brand-new-agent", 1)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[tokio::test]
     async fn agent_binding_cannot_attach_a_sandbox_to_another_agents_run() {
         let (service, store, token) = setup_service_with_jwt();
         provision_baseline(&store);
-        let service = service
-            .with_agent_binding(AgentBindingPolicy::new(["operator:alice"], true).unwrap());
+        let service =
+            service.with_agent_binding(AgentBindingPolicy::new(["operator:alice"], true).unwrap());
         store.register_agent("agent-a", "A").unwrap();
         store.register_agent("agent-b", "B").unwrap();
         store
-            .create_agent_run("agent-b", "run-b", "rev-1", TEST_TASK_PROFILE, EnforcementMode::Enforce)
+            .create_agent_run(
+                "agent-b",
+                "run-b",
+                "rev-1",
+                TEST_TASK_PROFILE,
+                EnforcementMode::Enforce,
+            )
             .unwrap();
         let bound_sandboxes = |agent: &str| -> usize {
             store.operator_agent_detail(agent, 1).unwrap().unwrap()["runs"]
@@ -2459,7 +2692,10 @@ network_policies:
             json!({ AGENT_ID_ANNOTATION: "agent-b", AGENT_REVISION_ANNOTATION: "rev-1", RUN_ID_ANNOTATION: "run-b" }),
         )
         .await;
-        assert_eq!(owner.log_annotations.get("run_id").map(String::as_str), Some("run-b"));
+        assert_eq!(
+            owner.log_annotations.get("run_id").map(String::as_str),
+            Some("run-b")
+        );
         assert_eq!(bound_sandboxes("agent-b"), 1);
     }
 
@@ -2467,8 +2703,8 @@ network_policies:
     async fn agent_binding_ignores_keys_outside_the_openshell_namespace() {
         let (service, store, token) = setup_service_with_jwt();
         provision_baseline(&store);
-        let service = service
-            .with_agent_binding(AgentBindingPolicy::new(["operator:alice"], true).unwrap());
+        let service =
+            service.with_agent_binding(AgentBindingPolicy::new(["operator:alice"], true).unwrap());
         let result = create_with_annotations(
             &service,
             &token,
@@ -2477,26 +2713,40 @@ network_policies:
             json!({ "agent_id": "prod-agent", "agent-id": "prod-agent", "agentId": "prod-agent", "run_id": "run-x" }),
         )
         .await;
-        assert!(binding_outcome(&result).is_none(), "no binding was attempted");
+        assert!(
+            binding_outcome(&result).is_none(),
+            "no binding was attempted"
+        );
         assert!(!result.log_annotations.contains_key("agent_id"));
-        assert!(store.operator_agent_detail("prod-agent", 1).unwrap().is_none());
+        assert!(
+            store
+                .operator_agent_detail("prod-agent", 1)
+                .unwrap()
+                .is_none()
+        );
 
-        assert!(extract_agent_id(&json!({
-            "agent_id": "x", "sandbox": { "agent_id": "y" }, "spec": { "agent-id": "z" }
-        }))
-        .is_none());
+        assert!(
+            extract_agent_id(&json!({
+                "agent_id": "x", "sandbox": { "agent_id": "y" }, "spec": { "agent-id": "z" }
+            }))
+            .is_none()
+        );
         assert_eq!(
-            extract_agent_id(&json!({ "metadata": { "labels": { AGENT_ID_ANNOTATION: " ok " } } })).as_deref(),
+            extract_agent_id(&json!({ "metadata": { "labels": { AGENT_ID_ANNOTATION: " ok " } } }))
+                .as_deref(),
             Some("ok")
         );
-        assert!(!binding_annotations_present(&json!({ "annotations": { "agent_id": "x" } })));
+        assert!(!binding_annotations_present(
+            &json!({ "annotations": { "agent_id": "x" } })
+        ));
     }
 
     #[tokio::test]
-    async fn post_commit_create_sandbox_with_agent_annotation_auto_binds_and_stop_delete_closes_lifecycle() {
+    async fn post_commit_create_sandbox_with_agent_annotation_auto_binds_and_stop_delete_closes_lifecycle()
+     {
         let (service, store, token) = setup_service_with_jwt();
-        let service = service
-            .with_agent_binding(AgentBindingPolicy::new(["operator:alice"], true).unwrap());
+        let service =
+            service.with_agent_binding(AgentBindingPolicy::new(["operator:alice"], true).unwrap());
         let mut baseline = crate::fixture::build_standard_corpus().default_baseline;
         baseline.task_profile = TEST_TASK_PROFILE.to_string();
         store
@@ -2538,7 +2788,10 @@ network_policies:
             .into_inner();
         assert!(create_res.allowed);
         assert_eq!(
-            create_res.log_annotations.get("agent_id").map(String::as_str),
+            create_res
+                .log_annotations
+                .get("agent_id")
+                .map(String::as_str),
             Some("prod-agent")
         );
         let expected_run_id = format!("run-{sandbox_id}");
@@ -2585,7 +2838,10 @@ network_policies:
             .into_inner();
         assert!(stop_res.allowed);
         assert_eq!(
-            stop_res.log_annotations.get("sandbox_id").map(String::as_str),
+            stop_res
+                .log_annotations
+                .get("sandbox_id")
+                .map(String::as_str),
             Some(sandbox_id)
         );
         assert_eq!(
@@ -2633,7 +2889,11 @@ network_policies:
         assert!(store.get_active_epoch(sandbox_id_2).unwrap().is_some());
 
         let delete_res = service
-            .evaluate_post_commit("DeleteSandbox", &json!({"name": sandbox_id_2}), &HashMap::new())
+            .evaluate_post_commit(
+                "DeleteSandbox",
+                &json!({"name": sandbox_id_2}),
+                &HashMap::new(),
+            )
             .expect("DeleteSandbox post_commit");
         assert!(delete_res.allowed);
         assert_eq!(
@@ -2689,13 +2949,34 @@ network_policies:
         let service = derive_service(&service);
 
         let created = create_in_workspace(
-            &service, principal_of("user", "alice@example.com"), "sb-derive-1", "team-a", json!({}),
+            &service,
+            principal_of("user", "alice@example.com"),
+            "sb-derive-1",
+            "team-a",
+            json!({}),
         );
-        let workload = bound_workload(&created).expect("bound to a derived workload").to_string();
-        assert!(workload.starts_with("team-a.user.alice-example-com-"), "{workload}");
-        assert_eq!(created.log_annotations.get("agent_binding_source").map(String::as_str), Some("principal"));
-        assert_eq!(created.log_annotations.get("workspace").map(String::as_str), Some("team-a"));
-        assert!(store.operator_agent_detail(&workload, 1).unwrap().is_some(), "auto-registered");
+        let workload = bound_workload(&created)
+            .expect("bound to a derived workload")
+            .to_string();
+        assert!(
+            workload.starts_with("team-a.user.alice-example-com-"),
+            "{workload}"
+        );
+        assert_eq!(
+            created
+                .log_annotations
+                .get("agent_binding_source")
+                .map(String::as_str),
+            Some("principal")
+        );
+        assert_eq!(
+            created.log_annotations.get("workspace").map(String::as_str),
+            Some("team-a")
+        );
+        assert!(
+            store.operator_agent_detail(&workload, 1).unwrap().is_some(),
+            "auto-registered"
+        );
 
         let audit = store.list_binding_audit("sb-derive-1").unwrap();
         assert_eq!(audit.len(), 1);
@@ -2719,13 +3000,30 @@ network_policies:
         provision_baseline(&store);
         store.register_agent("explicit-agent", "Explicit").unwrap();
         // No derivation and no label: the sandbox is bound later with run-bind semantics.
-        let created = create_in_workspace(&service, principal_of("user", "alice"), "sb-explicit-1", "default", json!({}));
+        let created = create_in_workspace(
+            &service,
+            principal_of("user", "alice"),
+            "sb-explicit-1",
+            "default",
+            json!({}),
+        );
         assert!(bound_workload(&created).is_none());
         store
-            .create_agent_run("explicit-agent", "run-explicit", "v1", TEST_TASK_PROFILE, EnforcementMode::Enforce)
+            .create_agent_run(
+                "explicit-agent",
+                "run-explicit",
+                "v1",
+                TEST_TASK_PROFILE,
+                EnforcementMode::Enforce,
+            )
             .unwrap();
-        store.bind_agent_run("run-explicit", "sb-explicit-1", TEST_GATEWAY_ID).unwrap();
-        let detail = store.operator_agent_detail("explicit-agent", 1).unwrap().unwrap();
+        store
+            .bind_agent_run("run-explicit", "sb-explicit-1", TEST_GATEWAY_ID)
+            .unwrap();
+        let detail = store
+            .operator_agent_detail("explicit-agent", 1)
+            .unwrap()
+            .unwrap();
         assert!(detail["runs"][0]["sandboxes"][0]["binding"].is_null());
     }
 
@@ -2748,11 +3046,33 @@ network_policies:
         provision_baseline(&store);
         let service = derive_service(&service);
 
-        let base = create_in_workspace(&service, principal_of("user", "alice"), "sb-diff-1", "team-a", json!({}));
-        let other_principal = create_in_workspace(&service, principal_of("user", "bob"), "sb-diff-2", "team-a", json!({}));
-        let other_workspace = create_in_workspace(&service, principal_of("user", "alice"), "sb-diff-3", "team-b", json!({}));
+        let base = create_in_workspace(
+            &service,
+            principal_of("user", "alice"),
+            "sb-diff-1",
+            "team-a",
+            json!({}),
+        );
+        let other_principal = create_in_workspace(
+            &service,
+            principal_of("user", "bob"),
+            "sb-diff-2",
+            "team-a",
+            json!({}),
+        );
+        let other_workspace = create_in_workspace(
+            &service,
+            principal_of("user", "alice"),
+            "sb-diff-3",
+            "team-b",
+            json!({}),
+        );
         assert_ne!(bound_workload(&base), bound_workload(&other_principal));
-        assert_ne!(bound_workload(&base), bound_workload(&other_workspace), "workspace must scope the workload");
+        assert_ne!(
+            bound_workload(&base),
+            bound_workload(&other_workspace),
+            "workspace must scope the workload"
+        );
     }
 
     #[test]
@@ -2761,7 +3081,13 @@ network_policies:
         provision_baseline(&store);
         let service = derive_service(&service);
 
-        let created = create_in_workspace(&service, principal_of("user", "alice"), "sb-ws-1", "", json!({}));
+        let created = create_in_workspace(
+            &service,
+            principal_of("user", "alice"),
+            "sb-ws-1",
+            "",
+            json!({}),
+        );
         assert_eq!(binding_outcome(&created), Some("refused"));
         assert!(created.log_annotations["agent_binding_reason"].contains("no workspace"));
         assert!(bound_workload(&created).is_none());
@@ -2776,13 +3102,22 @@ network_policies:
         provision_baseline(&store);
         let service = derive_service(&service);
 
-        for (i, principal) in [principal_of("anonymous", ""), principal_of("sandbox", "sb-x"), HashMap::new()]
-            .into_iter()
-            .enumerate()
+        for (i, principal) in [
+            principal_of("anonymous", ""),
+            principal_of("sandbox", "sb-x"),
+            HashMap::new(),
+        ]
+        .into_iter()
+        .enumerate()
         {
             let sandbox = format!("sb-anon-{i}");
             let created = create_in_workspace(&service, principal, &sandbox, "default", json!({}));
-            assert_eq!(binding_outcome(&created), Some("refused"), "{:?}", created.log_annotations);
+            assert_eq!(
+                binding_outcome(&created),
+                Some("refused"),
+                "{:?}",
+                created.log_annotations
+            );
             assert!(bound_workload(&created).is_none());
             let audit = store.list_binding_audit(&sandbox).unwrap();
             assert_eq!(audit.len(), 1);
@@ -2795,7 +3130,13 @@ network_policies:
     fn derivation_is_off_unless_enabled() {
         let (service, store, _token) = setup_service_with_jwt();
         provision_baseline(&store);
-        let created = create_in_workspace(&service, principal_of("user", "alice"), "sb-off-1", "default", json!({}));
+        let created = create_in_workspace(
+            &service,
+            principal_of("user", "alice"),
+            "sb-off-1",
+            "default",
+            json!({}),
+        );
         assert!(bound_workload(&created).is_none());
         assert!(binding_outcome(&created).is_none());
         assert!(store.list_binding_audit("sb-off-1").unwrap().is_empty());
@@ -2808,11 +3149,17 @@ network_policies:
         let service = derive_service(&service);
 
         let refused = create_in_workspace(
-            &service, principal_of("user", "mallory"), "sb-label-1", "team-a",
+            &service,
+            principal_of("user", "mallory"),
+            "sb-label-1",
+            "team-a",
             json!({ AGENT_ID_ANNOTATION: "someone-elses-agent" }),
         );
         assert_eq!(binding_outcome(&refused), Some("refused_principal"));
-        assert!(bound_workload(&refused).is_none(), "derivation must not rescue a refused label");
+        assert!(
+            bound_workload(&refused).is_none(),
+            "derivation must not rescue a refused label"
+        );
         let audit = store.list_binding_audit("sb-label-1").unwrap();
         assert_eq!(audit[0].source, "label");
         assert!(!audit[0].bound);
@@ -2825,19 +3172,28 @@ network_policies:
         let service = derive_service(&service);
 
         let alice = create_in_workspace(
-            &service, principal_of("user", "alice"), "sb-run-1", "team-a",
+            &service,
+            principal_of("user", "alice"),
+            "sb-run-1",
+            "team-a",
             json!({ RUN_ID_ANNOTATION: "shared-run" }),
         );
         assert!(bound_workload(&alice).is_some());
         let bob = create_in_workspace(
-            &service, principal_of("user", "bob"), "sb-run-2", "team-a",
+            &service,
+            principal_of("user", "bob"),
+            "sb-run-2",
+            "team-a",
             json!({ RUN_ID_ANNOTATION: "shared-run" }),
         );
         assert_eq!(binding_outcome(&bob), Some("refused"));
         assert!(bob.log_annotations["agent_binding_reason"].contains("different workload"));
     }
 
-    fn label_service(base: &RiskGuardInterceptorService, auto_register: bool) -> RiskGuardInterceptorService {
+    fn label_service(
+        base: &RiskGuardInterceptorService,
+        auto_register: bool,
+    ) -> RiskGuardInterceptorService {
         base.clone().with_agent_binding(
             AgentBindingPolicy::new(["operator:alice"], auto_register)
                 .unwrap()
@@ -2856,10 +3212,12 @@ network_policies:
         let label = json!({ AGENT_ID_ANNOTATION: "team-a-agent" });
         let alice = || principal_of("operator", "alice");
 
-        let elsewhere = create_in_workspace(&service, alice(), "sb-scope-1", "team-b", label.clone());
+        let elsewhere =
+            create_in_workspace(&service, alice(), "sb-scope-1", "team-b", label.clone());
         assert_eq!(binding_outcome(&elsewhere), Some("refused"));
         assert!(
-            elsewhere.log_annotations["agent_binding_reason"].contains("belongs to workspace 'team-a'"),
+            elsewhere.log_annotations["agent_binding_reason"]
+                .contains("belongs to workspace 'team-a'"),
             "{:?}",
             elsewhere.log_annotations
         );
@@ -2880,9 +3238,17 @@ network_policies:
 
         for (i, workspace) in ["team-a", "team-b"].into_iter().enumerate() {
             let created = create_in_workspace(
-                &service, principal_of("operator", "alice"), &format!("sb-unscoped-{i}"), workspace, label.clone(),
+                &service,
+                principal_of("operator", "alice"),
+                &format!("sb-unscoped-{i}"),
+                workspace,
+                label.clone(),
             );
-            assert_eq!(bound_workload(&created), Some("shared-agent"), "{workspace}");
+            assert_eq!(
+                bound_workload(&created),
+                Some("shared-agent"),
+                "{workspace}"
+            );
         }
     }
 
@@ -2906,13 +3272,20 @@ network_policies:
         provision_baseline(&store);
         let service = label_service(&service, false);
         let derived = create_in_workspace(
-            &service, principal_of("user", "carol"), "sb-capture-1", "team-a", json!({}),
+            &service,
+            principal_of("user", "carol"),
+            "sb-capture-1",
+            "team-a",
+            json!({}),
         );
         let workload = bound_workload(&derived).expect("derived").to_string();
 
         // An allowlisted operator in another workspace names carol's derived workload as a label.
         let capture = create_in_workspace(
-            &service, principal_of("operator", "alice"), "sb-capture-2", "team-b",
+            &service,
+            principal_of("operator", "alice"),
+            "sb-capture-2",
+            "team-b",
             json!({ AGENT_ID_ANNOTATION: workload }),
         );
         assert_eq!(binding_outcome(&capture), Some("refused"));
@@ -2924,13 +3297,26 @@ network_policies:
         let (service, store, _token) = setup_service_with_jwt();
         provision_baseline(&store);
         let service = label_service(&service, false);
-        let legacy = crate::workload_identity::derive_workload("team-a", "oidc", "user", "carol", false).unwrap();
-        store.register_agent(&legacy.agent_id, &legacy.display_name).unwrap();
+        let legacy =
+            crate::workload_identity::derive_workload("team-a", "oidc", "user", "carol", false)
+                .unwrap();
+        store
+            .register_agent(&legacy.agent_id, &legacy.display_name)
+            .unwrap();
 
-        let first = create_in_workspace(&service, principal_of("user", "carol"), "sb-legacy-1", "team-a", json!({}));
+        let first = create_in_workspace(
+            &service,
+            principal_of("user", "carol"),
+            "sb-legacy-1",
+            "team-a",
+            json!({}),
+        );
         assert_eq!(bound_workload(&first), Some(legacy.agent_id.as_str()));
         let capture = create_in_workspace(
-            &service, principal_of("operator", "alice"), "sb-legacy-2", "team-b",
+            &service,
+            principal_of("operator", "alice"),
+            "sb-legacy-2",
+            "team-b",
             json!({ AGENT_ID_ANNOTATION: legacy.agent_id }),
         );
         assert_eq!(binding_outcome(&capture), Some("refused"));
@@ -2941,18 +3327,45 @@ network_policies:
         let (service, store, _token) = setup_service_with_jwt();
         provision_baseline(&store);
         let service = label_service(&service, false);
-        create_in_workspace(&service, principal_of("user", "carol"), "sb-metric-1", "team-a", json!({}));
-        create_in_workspace(&service, principal_of("anonymous", ""), "sb-metric-2", "team-a", json!({}));
         create_in_workspace(
-            &service, principal_of("user", "mallory"), "sb-metric-3", "team-a",
+            &service,
+            principal_of("user", "carol"),
+            "sb-metric-1",
+            "team-a",
+            json!({}),
+        );
+        create_in_workspace(
+            &service,
+            principal_of("anonymous", ""),
+            "sb-metric-2",
+            "team-a",
+            json!({}),
+        );
+        create_in_workspace(
+            &service,
+            principal_of("user", "mallory"),
+            "sb-metric-3",
+            "team-a",
             json!({ AGENT_ID_ANNOTATION: "x" }),
         );
 
         let metrics = store.prometheus_metrics(0).unwrap();
-        assert!(metrics.contains(r#"workload_bindings_total{source="principal",outcome="bound"} 1"#), "{metrics}");
-        assert!(metrics.contains(r#"workload_bindings_total{source="principal",outcome="refused"} 1"#), "{metrics}");
-        assert!(metrics.contains(r#"workload_bindings_total{source="label",outcome="refused"} 1"#), "{metrics}");
-        assert!(metrics.contains(r#"workload_bindings_total{source="label",outcome="bound"} 0"#), "{metrics}");
+        assert!(
+            metrics.contains(r#"workload_bindings_total{source="principal",outcome="bound"} 1"#),
+            "{metrics}"
+        );
+        assert!(
+            metrics.contains(r#"workload_bindings_total{source="principal",outcome="refused"} 1"#),
+            "{metrics}"
+        );
+        assert!(
+            metrics.contains(r#"workload_bindings_total{source="label",outcome="refused"} 1"#),
+            "{metrics}"
+        );
+        assert!(
+            metrics.contains(r#"workload_bindings_total{source="label",outcome="bound"} 0"#),
+            "{metrics}"
+        );
     }
 
     fn principal_from(provider: &str, kind: &str, subject: &str) -> HashMap<String, String> {
@@ -2967,13 +3380,26 @@ network_policies:
         provision_baseline(&store);
         let service = derive_service(&service);
 
-        let oidc = create_in_workspace(&service, principal_from("oidc", "user", "alice"), "sb-prov-1", "team-a", json!({}));
+        let oidc = create_in_workspace(
+            &service,
+            principal_from("oidc", "user", "alice"),
+            "sb-prov-1",
+            "team-a",
+            json!({}),
+        );
         let cloudflare = create_in_workspace(
-            &service, principal_from("cloudflare_access", "user", "alice"), "sb-prov-2", "team-a", json!({}),
+            &service,
+            principal_from("cloudflare_access", "user", "alice"),
+            "sb-prov-2",
+            "team-a",
+            json!({}),
         );
         assert!(bound_workload(&oidc).is_some());
         assert_ne!(bound_workload(&oidc), bound_workload(&cloudflare));
-        assert_eq!(store.list_binding_audit("sb-prov-2").unwrap()[0].principal_provider, "cloudflare_access");
+        assert_eq!(
+            store.list_binding_audit("sb-prov-2").unwrap()[0].principal_provider,
+            "cloudflare_access"
+        );
     }
 
     #[test]
@@ -2985,7 +3411,9 @@ network_policies:
         let strict = derive_service(&service);
         let refused = create_in_workspace(&strict, local(), "sb-dev-1", "default", json!({}));
         assert_eq!(binding_outcome(&refused), Some("refused"));
-        assert!(refused.log_annotations["agent_binding_reason"].contains("--allow-local-dev-principal"));
+        assert!(
+            refused.log_annotations["agent_binding_reason"].contains("--allow-local-dev-principal")
+        );
 
         let lenient = service.clone().with_agent_binding(
             AgentBindingPolicy::new(Vec::<String>::new(), false)
@@ -3004,17 +3432,28 @@ network_policies:
         let service = derive_service(&service);
         let mut no_provider = principal_of("user", "alice");
         no_provider.remove("provider");
-        let created = create_in_workspace(&service, no_provider, "sb-noprov-1", "default", json!({}));
+        let created =
+            create_in_workspace(&service, no_provider, "sb-noprov-1", "default", json!({}));
         assert_eq!(binding_outcome(&created), Some("refused"));
     }
 
     #[test]
     fn the_label_allowlist_does_not_trust_the_unauthenticated_local_dev_user() {
         let policy = AgentBindingPolicy::new(["user:unauthenticated-local-dev"], false).unwrap();
-        assert!(!policy.permits(&principal_from("local_dev", "user", "unauthenticated-local-dev")));
-        assert!(policy
-            .with_local_dev_principals(true)
-            .permits(&principal_from("local_dev", "user", "unauthenticated-local-dev")));
+        assert!(!policy.permits(&principal_from(
+            "local_dev",
+            "user",
+            "unauthenticated-local-dev"
+        )));
+        assert!(
+            policy
+                .with_local_dev_principals(true)
+                .permits(&principal_from(
+                    "local_dev",
+                    "user",
+                    "unauthenticated-local-dev"
+                ))
+        );
     }
 
     #[test]
@@ -3023,7 +3462,13 @@ network_policies:
         provision_baseline(&store);
         let service = derive_service(&service);
         for _ in 0..2 {
-            create_in_workspace(&service, principal_of("user", "alice"), "sb-replay-1", "team-a", json!({}));
+            create_in_workspace(
+                &service,
+                principal_of("user", "alice"),
+                "sb-replay-1",
+                "team-a",
+                json!({}),
+            );
         }
         assert_eq!(store.list_binding_audit("sb-replay-1").unwrap().len(), 1);
     }
@@ -3043,19 +3488,31 @@ network_policies:
         };
 
         // First sight without a name: the ID is the name.
-        create_in_workspace(&service, alice(), "sb-name-1", "default", json!({ AGENT_ID_ANNOTATION: id }));
+        create_in_workspace(
+            &service,
+            alice(),
+            "sb-name-1",
+            "default",
+            json!({ AGENT_ID_ANNOTATION: id }),
+        );
         assert_eq!(display(&store), id);
 
         // A later sandbox supplies the readable name, which replaces the auto-generated one.
         create_in_workspace(
-            &service, alice(), "sb-name-2", "default",
+            &service,
+            alice(),
+            "sb-name-2",
+            "default",
             json!({ AGENT_ID_ANNOTATION: id, AGENT_NAME_ANNOTATION: "openshell-agent-nat-agent" }),
         );
         assert_eq!(display(&store), "openshell-agent-nat-agent");
 
         // Once named, a different name from a later sandbox does not overwrite it.
         create_in_workspace(
-            &service, alice(), "sb-name-3", "default",
+            &service,
+            alice(),
+            "sb-name-3",
+            "default",
             json!({ AGENT_ID_ANNOTATION: id, AGENT_NAME_ANNOTATION: "something-else" }),
         );
         assert_eq!(display(&store), "openshell-agent-nat-agent");
@@ -3067,11 +3524,17 @@ network_policies:
         provision_baseline(&store);
         let service = label_service(&service, true);
         let created = create_in_workspace(
-            &service, principal_of("operator", "alice"), "sb-badname-1", "default",
+            &service,
+            principal_of("operator", "alice"),
+            "sb-badname-1",
+            "default",
             json!({ AGENT_ID_ANNOTATION: "named-agent", AGENT_NAME_ANNOTATION: "x".repeat(300) }),
         );
         assert_eq!(bound_workload(&created), Some("named-agent"));
-        let detail = store.operator_agent_detail("named-agent", 1).unwrap().unwrap();
+        let detail = store
+            .operator_agent_detail("named-agent", 1)
+            .unwrap()
+            .unwrap();
         assert_eq!(detail["agent"]["display_name"], "named-agent");
     }
 
@@ -3082,6 +3545,9 @@ network_policies:
             .with_principal_derivation(true);
         assert!(policy.is_enabled());
         assert!(policy.derives_from_principal());
-        assert!(!policy.permits(&principal_of("user", "alice")), "labels still need the allowlist");
+        assert!(
+            !policy.permits(&principal_of("user", "alice")),
+            "labels still need the allowlist"
+        );
     }
 }

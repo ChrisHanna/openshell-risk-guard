@@ -39,9 +39,8 @@ async fn main() {
     let temp_db = NamedTempFile::new_in("/dev/shm")
         .or_else(|_| NamedTempFile::new())
         .expect("create on-disk NamedTempFile for SQLite");
-    let store = Arc::new(
-        SqliteRiskStore::open(temp_db.path()).expect("open on-disk SqliteRiskStore"),
-    );
+    let store =
+        Arc::new(SqliteRiskStore::open(temp_db.path()).expect("open on-disk SqliteRiskStore"));
 
     let corpus = build_standard_corpus();
     let baseline = corpus.default_baseline.clone();
@@ -86,15 +85,10 @@ async fn main() {
         worker_tokens.push((sandbox_id, token));
     }
 
-    let service = RiskGuardMiddlewareService::new(
-        verifier,
-        normalizer,
-        detector,
-        store,
-        BENCH_AUDIENCE,
-    )
-    .with_max_in_flight(128)
-    .with_eval_timeout(Duration::from_secs(5));
+    let service =
+        RiskGuardMiddlewareService::new(verifier, normalizer, detector, store, BENCH_AUDIENCE)
+            .with_max_in_flight(128)
+            .with_eval_timeout(Duration::from_secs(5));
 
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -188,5 +182,7 @@ async fn main() {
     let p50 = percentile_ms(&all_latencies_ms, 50.0);
     let p95 = percentile_ms(&all_latencies_ms, 95.0);
     let p99 = percentile_ms(&all_latencies_ms, 99.0);
-    println!("Gate G-06 Benchmark (n={total_requests}): p50={p50:.2}ms p95={p95:.2}ms p99={p99:.2}ms");
+    println!(
+        "Gate G-06 Benchmark (n={total_requests}): p50={p50:.2}ms p95={p95:.2}ms p99={p99:.2}ms"
+    );
 }

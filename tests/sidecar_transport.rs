@@ -144,10 +144,15 @@ fn evaluation(token: Option<&str>, request_id: &str) -> Request<HttpRequestEvalu
 async fn tls_plus_gateway_jwt_is_required_on_every_supervisor_call() {
     let dir = tempfile::tempdir().unwrap();
     let running = start(&dir.path().join("secrets")).await;
-    let channel = tls_channel(running.addr, &running.ca_pem).await.expect("TLS handshake");
+    let channel = tls_channel(running.addr, &running.ca_pem)
+        .await
+        .expect("TLS handshake");
     let mut client = SupervisorMiddlewareClient::new(channel.clone());
 
-    let token = running.issuer.mint_supervisor_token(AUDIENCE, SANDBOX, 300).unwrap();
+    let token = running
+        .issuer
+        .mint_supervisor_token(AUDIENCE, SANDBOX, 300)
+        .unwrap();
     let allowed = client
         .evaluate_http_request(evaluation(Some(&token), "tls-authenticated"))
         .await
@@ -161,25 +166,38 @@ async fn tls_plus_gateway_jwt_is_required_on_every_supervisor_call() {
         .unwrap_err();
     assert_eq!(anonymous.code(), Code::Unauthenticated);
 
-    let other_sandbox = running.issuer.mint_supervisor_token(AUDIENCE, "other-sandbox", 300).unwrap();
+    let other_sandbox = running
+        .issuer
+        .mint_supervisor_token(AUDIENCE, "other-sandbox", 300)
+        .unwrap();
     let cross = client
         .evaluate_http_request(evaluation(Some(&other_sandbox), "tls-cross-sandbox"))
         .await
         .unwrap_err();
-    assert_eq!(cross.code(), Code::PermissionDenied, "a sandbox cannot speak for another");
+    assert_eq!(
+        cross.code(),
+        Code::PermissionDenied,
+        "a sandbox cannot speak for another"
+    );
 
     let gateway_token = running.issuer.mint_gateway_token(AUDIENCE, 300).unwrap();
     let wrong_kind = client
         .evaluate_http_request(evaluation(Some(&gateway_token), "tls-wrong-caller"))
         .await
         .unwrap_err();
-    assert_eq!(wrong_kind.code(), Code::PermissionDenied, "caller kind is enforced per RPC");
+    assert_eq!(
+        wrong_kind.code(),
+        Code::PermissionDenied,
+        "caller kind is enforced per RPC"
+    );
 
     let mut grpc = tonic::client::Grpc::new(channel);
     grpc.ready().await.unwrap();
     let health: tonic::Response<HealthCheckResponse> = grpc
         .unary(
-            tonic::Request::new(HealthCheckRequest { service: String::new() }),
+            tonic::Request::new(HealthCheckRequest {
+                service: String::new(),
+            }),
             http::uri::PathAndQuery::from_static("/grpc.health.v1.Health/Check"),
             tonic_prost::ProstCodec::default(),
         )
@@ -201,7 +219,10 @@ async fn clients_refuse_an_untrusted_certificate_and_plaintext_is_not_served() {
         "a client trusting a different CA must not connect"
     );
 
-    let token = running.issuer.mint_supervisor_token(AUDIENCE, SANDBOX, 300).unwrap();
+    let token = running
+        .issuer
+        .mint_supervisor_token(AUDIENCE, SANDBOX, 300)
+        .unwrap();
     let plaintext = match Endpoint::from_shared(format!("http://{}", running.addr))
         .unwrap()
         .connect()
@@ -224,22 +245,37 @@ async fn the_health_probe_serves_over_tls_and_refuses_an_untrusted_ca() {
     let endpoint = format!("https://{}", server.addr);
     let timeout = Duration::from_secs(5);
 
-    sidecar::probe_health(&endpoint, Some(&dir.path().join("ca.crt")), Some("localhost"), timeout)
-        .await
-        .expect("a trusted CA must see SERVING");
+    sidecar::probe_health(
+        &endpoint,
+        Some(&dir.path().join("ca.crt")),
+        Some("localhost"),
+        timeout,
+    )
+    .await
+    .expect("a trusted CA must see SERVING");
 
     let impostor = tempfile::tempdir().unwrap();
     sidecar::generate_local_secrets(impostor.path(), &["127.0.0.1".into()]).unwrap();
     assert!(
-        sidecar::probe_health(&endpoint, Some(&impostor.path().join("ca.crt")), Some("localhost"), timeout)
-            .await
-            .is_err(),
+        sidecar::probe_health(
+            &endpoint,
+            Some(&impostor.path().join("ca.crt")),
+            Some("localhost"),
+            timeout
+        )
+        .await
+        .is_err(),
         "an untrusted CA must fail the probe"
     );
     assert!(
-        sidecar::probe_health("https://127.0.0.1:1", Some(&dir.path().join("ca.crt")), Some("localhost"), Duration::from_secs(1))
-            .await
-            .is_err(),
+        sidecar::probe_health(
+            "https://127.0.0.1:1",
+            Some(&dir.path().join("ca.crt")),
+            Some("localhost"),
+            Duration::from_secs(1)
+        )
+        .await
+        .is_err(),
         "nothing listening must fail the probe"
     );
 }
@@ -255,11 +291,18 @@ fn local_secrets_are_private_and_never_overwritten() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(out.join("tls.key").metadata().unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            out.join("tls.key").metadata().unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         assert_eq!(out.metadata().unwrap().permissions().mode() & 0o777, 0o700);
     }
     let key = std::fs::read(out.join("tls.key")).unwrap();
     assert!(sidecar::generate_local_secrets(&out, &["127.0.0.1".into()]).is_err());
-    assert_eq!(std::fs::read(out.join("tls.key")).unwrap(), key, "existing key untouched");
+    assert_eq!(
+        std::fs::read(out.join("tls.key")).unwrap(),
+        key,
+        "existing key untouched"
+    );
     assert!(sidecar::resource_hmac_key(Some(&out.join("hmac.key")), false).is_ok());
 }

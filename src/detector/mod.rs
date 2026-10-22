@@ -11,9 +11,10 @@ use sha2::{Digest, Sha256};
 use crate::error::{Result, RiskGuardError};
 use crate::types::{
     BaselineMaturity, BaselineProfile, DecisionOutcome, DetectorContext, EnforcementMode,
-    NormalizedRequest, REASON_BEHAVIORAL_RISK_DENIED, REASON_TASK_CONSTRAINT_DENIED, RULE_FORBIDDEN_ACTION,
-    RULE_UNAPPROVED_ACTION, RULE_UNAPPROVED_RESOURCE, RULE_UNFAMILIAR_HIGH_IMPACT, RatchetAction, RiskDetector,
-    RiskEvaluation, RuleMode, SignalContribution,
+    NormalizedRequest, REASON_BEHAVIORAL_RISK_DENIED, REASON_TASK_CONSTRAINT_DENIED,
+    RULE_FORBIDDEN_ACTION, RULE_UNAPPROVED_ACTION, RULE_UNAPPROVED_RESOURCE,
+    RULE_UNFAMILIAR_HIGH_IMPACT, RatchetAction, RiskDetector, RiskEvaluation, RuleMode,
+    SignalContribution,
 };
 
 /// A task rule that a request tripped, and the mode it was running in.
@@ -199,21 +200,29 @@ impl InteractionRiskDetector {
             }
         };
 
-        let forbidden_action = baseline.forbidden_action_classes.contains(&req.action_class)
+        let forbidden_action = baseline
+            .forbidden_action_classes
+            .contains(&req.action_class)
             || baseline.forbidden_action_classes.iter().any(|pattern| {
                 pattern
                     .strip_suffix('*')
                     .is_some_and(|prefix| req.action_class.starts_with(prefix))
             });
         if forbidden_action {
-            hit(RULE_FORBIDDEN_ACTION, format!("{} is on the forbidden list", req.action_class));
+            hit(
+                RULE_FORBIDDEN_ACTION,
+                format!("{} is on the forbidden list", req.action_class),
+            );
         }
 
         let resource_approved = baseline.approved_resources.contains(&req.resource_id);
         if !resource_approved && req.high_impact {
             hit(
                 RULE_UNFAMILIAR_HIGH_IMPACT,
-                format!("{} is high-impact on {}, which the task does not approve", req.action_class, req.resource_id),
+                format!(
+                    "{} is high-impact on {}, which the task does not approve",
+                    req.action_class, req.resource_id
+                ),
             );
         }
         if !baseline.allowed_action_classes.is_empty()
@@ -221,13 +230,21 @@ impl InteractionRiskDetector {
         {
             hit(
                 RULE_UNAPPROVED_ACTION,
-                format!("{} is not in the task's {} approved actions", req.action_class, baseline.allowed_action_classes.len()),
+                format!(
+                    "{} is not in the task's {} approved actions",
+                    req.action_class,
+                    baseline.allowed_action_classes.len()
+                ),
             );
         }
         if !baseline.approved_resources.is_empty() && !resource_approved {
             hit(
                 RULE_UNAPPROVED_RESOURCE,
-                format!("{} is not among the task's {} approved resources", req.resource_id, baseline.approved_resources.len()),
+                format!(
+                    "{} is not among the task's {} approved resources",
+                    req.resource_id,
+                    baseline.approved_resources.len()
+                ),
             );
         }
         hits
@@ -238,8 +255,11 @@ impl RiskDetector for InteractionRiskDetector {
     fn configuration_id(&self) -> String {
         let configuration = format!(
             "{}:{}:{}:{}:{}",
-            self.detector_version(), self.observe_threshold, self.enforce_threshold,
-            self.cooldown_duration_ms, self.variant.as_str()
+            self.detector_version(),
+            self.observe_threshold,
+            self.enforce_threshold,
+            self.cooldown_duration_ms,
+            self.variant.as_str()
         );
         hex::encode(Sha256::digest(configuration.as_bytes()))
     }
@@ -283,9 +303,8 @@ impl RiskDetector for InteractionRiskDetector {
         };
 
         let i: u32 = u32::from(req.high_impact);
-        let j_nr_i: u32 = u32::from(
-            matches!(self.variant, ScoringVariant::FullContextual) && n_r == 1 && i == 1,
-        );
+        let j_nr_i: u32 =
+            u32::from(matches!(self.variant, ScoringVariant::FullContextual) && n_r == 1 && i == 1);
         let c: u32 = u32::from(ctx.credentialed_endpoint);
 
         let (v_tier, next_1m) = {
@@ -332,31 +351,39 @@ impl RiskDetector for InteractionRiskDetector {
         };
 
         // Per-feature contributions under the active ScoringVariant
-        let (contrib_nr, contrib_na, contrib_t, contrib_i, contrib_j, contrib_c, contrib_v, contrib_f) =
-            match self.variant {
-                ScoringVariant::FullContextual => (
-                    15 * n_r,
-                    15 * n_a,
-                    20 * t,
-                    30 * i,
-                    15 * j_nr_i,
-                    10 * c,
-                    15 * v_tier,
-                    15 * f_tier,
-                ),
-                ScoringVariant::WithoutInteractionTerm => (
-                    15 * n_r,
-                    15 * n_a,
-                    20 * t,
-                    30 * i,
-                    0,
-                    10 * c,
-                    15 * v_tier,
-                    15 * f_tier,
-                ),
-                ScoringVariant::NoveltyOnly => (15 * n_r, 15 * n_a, 0, 0, 0, 0, 0, 0),
-                ScoringVariant::TaskConstraintOnly => (0, 0, 0, 0, 0, 0, 0, 0),
-            };
+        let (
+            contrib_nr,
+            contrib_na,
+            contrib_t,
+            contrib_i,
+            contrib_j,
+            contrib_c,
+            contrib_v,
+            contrib_f,
+        ) = match self.variant {
+            ScoringVariant::FullContextual => (
+                15 * n_r,
+                15 * n_a,
+                20 * t,
+                30 * i,
+                15 * j_nr_i,
+                10 * c,
+                15 * v_tier,
+                15 * f_tier,
+            ),
+            ScoringVariant::WithoutInteractionTerm => (
+                15 * n_r,
+                15 * n_a,
+                20 * t,
+                30 * i,
+                0,
+                10 * c,
+                15 * v_tier,
+                15 * f_tier,
+            ),
+            ScoringVariant::NoveltyOnly => (15 * n_r, 15 * n_a, 0, 0, 0, 0, 0, 0),
+            ScoringVariant::TaskConstraintOnly => (0, 0, 0, 0, 0, 0, 0, 0),
+        };
 
         let raw_sum = contrib_nr
             + contrib_na
@@ -377,7 +404,10 @@ impl RiskDetector for InteractionRiskDetector {
             SignalContribution {
                 feature: "N_r".to_string(),
                 observed_summary: req.resource_id.clone(),
-                baseline_summary: format!("approved_resources({})", baseline.approved_resources.len()),
+                baseline_summary: format!(
+                    "approved_resources({})",
+                    baseline.approved_resources.len()
+                ),
                 contribution: contrib_nr,
                 support: support_summary.clone(),
             },
@@ -397,7 +427,10 @@ impl RiskDetector for InteractionRiskDetector {
                     .binary_path
                     .clone()
                     .unwrap_or_else(|| "unknown".to_string()),
-                baseline_summary: format!("expected_binaries({})", baseline.expected_binaries.len()),
+                baseline_summary: format!(
+                    "expected_binaries({})",
+                    baseline.expected_binaries.len()
+                ),
                 contribution: contrib_t,
                 support: support_summary.clone(),
             },
@@ -460,7 +493,10 @@ impl RiskDetector for InteractionRiskDetector {
                 support: "would_block".to_string(),
             });
         }
-        let enforced: Vec<&RuleHit> = hits.iter().filter(|h| h.mode == RuleMode::Enforce).collect();
+        let enforced: Vec<&RuleHit> = hits
+            .iter()
+            .filter(|h| h.mode == RuleMode::Enforce)
+            .collect();
         let task_constraint_triggered = !enforced.is_empty();
         // The deny list and the high-impact rule are hard constraints. The approved-list rules are softer: they
         // latch the strict lock only for a high-impact request, and otherwise just deny the request.
@@ -469,13 +505,21 @@ impl RiskDetector for InteractionRiskDetector {
             .any(|h| matches!(h.rule, RULE_FORBIDDEN_ACTION | RULE_UNFAMILIAR_HIGH_IMPACT));
 
         let (risk_score, outcome, reason_code, ratchet_action) = if task_constraint_triggered {
-            let final_score = score.max(if hard_constraint { 85 } else { self.enforce_threshold });
+            let final_score = score.max(if hard_constraint {
+                85
+            } else {
+                self.enforce_threshold
+            });
             signals.push(SignalContribution {
                 feature: "task_constraint".to_string(),
                 observed_summary: format!("{} on {}", req.action_class, req.resource_id),
                 baseline_summary: format!(
                     "rules={}; forbidden_actions={},forbid_unfamiliar_high_impact={}",
-                    enforced.iter().map(|h| h.rule).collect::<Vec<_>>().join(","),
+                    enforced
+                        .iter()
+                        .map(|h| h.rule)
+                        .collect::<Vec<_>>()
+                        .join(","),
                     baseline.forbidden_action_classes.len(),
                     baseline.forbid_unfamiliar_high_impact
                 ),
@@ -658,9 +702,8 @@ mod tests {
         binary_path: Option<&str>,
     ) -> NormalizedRequest {
         let action_class = format!("{method} {route_template}");
-        let restriction_scope = format!(
-            "https://api.github.local:18443 {method} {route_template} {resource_id}"
-        );
+        let restriction_scope =
+            format!("https://api.github.local:18443 {method} {route_template} {resource_id}");
         NormalizedRequest {
             request_id: "req_01".to_string(),
             sandbox_id: "sbx_01".to_string(),
@@ -1063,7 +1106,9 @@ mod tests {
             window: &window_default,
             credentialed_endpoint: true,
         };
-        let eval_obs = detector.evaluate(&req_forbidden, &ctx_obs).expect("observe");
+        let eval_obs = detector
+            .evaluate(&req_forbidden, &ctx_obs)
+            .expect("observe");
         assert_eq!(eval_obs.risk_score, 85);
         assert_eq!(eval_obs.outcome, DecisionOutcome::AllowWithObservation);
         assert_eq!(eval_obs.reason_code, REASON_TASK_CONSTRAINT_DENIED);
@@ -1092,7 +1137,9 @@ mod tests {
             credentialed_endpoint: false,
         };
         // N_r=1 (15) + V=1 (15) + F=1 (15) = 45
-        let eval_t1 = detector.evaluate(&req_read, &ctx_t1).expect("tier 1 rate/fanout");
+        let eval_t1 = detector
+            .evaluate(&req_read, &ctx_t1)
+            .expect("tier 1 rate/fanout");
         assert_eq!(eval_t1.risk_score, 45);
         assert_eq!(eval_t1.outcome, DecisionOutcome::AllowWithObservation);
         assert_eq!(eval_t1.reason_code, REASON_BEHAVIORAL_RISK_OBSERVED);
@@ -1184,28 +1231,62 @@ mod tests {
     #[test]
     fn an_unapproved_action_is_only_recorded_while_its_rule_is_in_shadow() {
         let baseline = mature_triage_baseline();
-        let eval = evaluate_rule(&baseline, EnforcementMode::Enforce, &off_list_action_on_approved_resource(false));
-        assert_ne!(eval.outcome, DecisionOutcome::Deny, "a shadow rule must never block");
-        assert_eq!(shadow_rules(&eval), vec!["rule=unapproved_action; mode=shadow"]);
-        let signal = eval.signals.iter().find(|s| s.feature == "shadow_rule").unwrap();
+        let eval = evaluate_rule(
+            &baseline,
+            EnforcementMode::Enforce,
+            &off_list_action_on_approved_resource(false),
+        );
+        assert_ne!(
+            eval.outcome,
+            DecisionOutcome::Deny,
+            "a shadow rule must never block"
+        );
+        assert_eq!(
+            shadow_rules(&eval),
+            vec!["rule=unapproved_action; mode=shadow"]
+        );
+        let signal = eval
+            .signals
+            .iter()
+            .find(|s| s.feature == "shadow_rule")
+            .unwrap();
         assert_eq!(signal.support, "would_block");
-        assert_eq!(signal.contribution, 0, "a shadow rule adds nothing to the score");
+        assert_eq!(
+            signal.contribution, 0,
+            "a shadow rule adds nothing to the score"
+        );
         assert!(eval.signals.iter().all(|s| s.feature != "task_constraint"));
     }
 
     #[test]
     fn promoting_the_approved_action_rule_blocks_it_and_only_locks_for_high_impact() {
         let mut baseline = mature_triage_baseline();
-        baseline.rule_modes.insert(RULE_UNAPPROVED_ACTION.to_string(), RuleMode::Enforce);
+        baseline
+            .rule_modes
+            .insert(RULE_UNAPPROVED_ACTION.to_string(), RuleMode::Enforce);
 
         let low = off_list_action_on_approved_resource(false);
         let eval = evaluate_rule(&baseline, EnforcementMode::Enforce, &low);
         assert_eq!(eval.outcome, DecisionOutcome::Deny);
         assert_eq!(eval.reason_code, REASON_TASK_CONSTRAINT_DENIED);
-        assert!(eval.risk_score >= DEFAULT_ENFORCE_THRESHOLD, "a block always shows a score at the block line");
-        assert!(shadow_rules(&eval).is_empty(), "an enforced rule is not also reported as shadow");
-        let why = eval.signals.iter().find(|s| s.feature == "task_constraint").unwrap();
-        assert!(why.baseline_summary.starts_with("rules=unapproved_action;"), "{}", why.baseline_summary);
+        assert!(
+            eval.risk_score >= DEFAULT_ENFORCE_THRESHOLD,
+            "a block always shows a score at the block line"
+        );
+        assert!(
+            shadow_rules(&eval).is_empty(),
+            "an enforced rule is not also reported as shadow"
+        );
+        let why = eval
+            .signals
+            .iter()
+            .find(|s| s.feature == "task_constraint")
+            .unwrap();
+        assert!(
+            why.baseline_summary.starts_with("rules=unapproved_action;"),
+            "{}",
+            why.baseline_summary
+        );
         assert_eq!(
             eval.ratchet_action,
             RatchetAction::None,
@@ -1217,7 +1298,9 @@ mod tests {
         assert_eq!(eval.outcome, DecisionOutcome::Deny);
         assert_eq!(
             eval.ratchet_action,
-            RatchetAction::LatchTier1StrictEpoch { scope: high.restriction_scope.clone() },
+            RatchetAction::LatchTier1StrictEpoch {
+                scope: high.restriction_scope.clone()
+            },
             "a high-impact miss latches the strict lock"
         );
     }
@@ -1225,12 +1308,23 @@ mod tests {
     #[test]
     fn the_approved_resource_rule_is_shadow_until_promoted() {
         let mut baseline = mature_triage_baseline();
-        let req = make_request("GET", "/repos/{owner}/{repo}", "org/new-docs", false, Some("/usr/bin/curl"));
+        let req = make_request(
+            "GET",
+            "/repos/{owner}/{repo}",
+            "org/new-docs",
+            false,
+            Some("/usr/bin/curl"),
+        );
         let eval = evaluate_rule(&baseline, EnforcementMode::Enforce, &req);
         assert_ne!(eval.outcome, DecisionOutcome::Deny);
-        assert_eq!(shadow_rules(&eval), vec!["rule=unapproved_resource; mode=shadow"]);
+        assert_eq!(
+            shadow_rules(&eval),
+            vec!["rule=unapproved_resource; mode=shadow"]
+        );
 
-        baseline.rule_modes.insert(RULE_UNAPPROVED_RESOURCE.to_string(), RuleMode::Enforce);
+        baseline
+            .rule_modes
+            .insert(RULE_UNAPPROVED_RESOURCE.to_string(), RuleMode::Enforce);
         let eval = evaluate_rule(&baseline, EnforcementMode::Enforce, &req);
         assert_eq!(eval.outcome, DecisionOutcome::Deny);
         assert!(shadow_rules(&eval).is_empty());
@@ -1239,8 +1333,14 @@ mod tests {
     #[test]
     fn an_observe_epoch_reports_an_enforced_rule_without_blocking() {
         let mut baseline = mature_triage_baseline();
-        baseline.rule_modes.insert(RULE_UNAPPROVED_ACTION.to_string(), RuleMode::Enforce);
-        let eval = evaluate_rule(&baseline, EnforcementMode::Observe, &off_list_action_on_approved_resource(false));
+        baseline
+            .rule_modes
+            .insert(RULE_UNAPPROVED_ACTION.to_string(), RuleMode::Enforce);
+        let eval = evaluate_rule(
+            &baseline,
+            EnforcementMode::Observe,
+            &off_list_action_on_approved_resource(false),
+        );
         assert_eq!(eval.outcome, DecisionOutcome::AllowWithObservation);
         assert_eq!(eval.reason_code, REASON_TASK_CONSTRAINT_DENIED);
         assert_eq!(eval.ratchet_action, RatchetAction::None);
@@ -1251,9 +1351,17 @@ mod tests {
         let mut baseline = mature_triage_baseline();
         baseline.allowed_action_classes.clear();
         baseline.approved_resources.clear();
-        baseline.rule_modes.insert(RULE_UNAPPROVED_ACTION.to_string(), RuleMode::Enforce);
-        baseline.rule_modes.insert(RULE_UNAPPROVED_RESOURCE.to_string(), RuleMode::Enforce);
-        let eval = evaluate_rule(&baseline, EnforcementMode::Enforce, &off_list_action_on_approved_resource(false));
+        baseline
+            .rule_modes
+            .insert(RULE_UNAPPROVED_ACTION.to_string(), RuleMode::Enforce);
+        baseline
+            .rule_modes
+            .insert(RULE_UNAPPROVED_RESOURCE.to_string(), RuleMode::Enforce);
+        let eval = evaluate_rule(
+            &baseline,
+            EnforcementMode::Enforce,
+            &off_list_action_on_approved_resource(false),
+        );
         assert_ne!(eval.outcome, DecisionOutcome::Deny);
         assert!(shadow_rules(&eval).is_empty());
         assert!(eval.signals.iter().all(|s| s.feature != "task_constraint"));
@@ -1262,9 +1370,17 @@ mod tests {
     #[test]
     fn a_rule_set_to_off_leaves_no_trace() {
         let mut baseline = mature_triage_baseline();
-        baseline.rule_modes.insert(RULE_UNAPPROVED_ACTION.to_string(), RuleMode::Off);
-        baseline.rule_modes.insert(RULE_UNAPPROVED_RESOURCE.to_string(), RuleMode::Off);
-        let eval = evaluate_rule(&baseline, EnforcementMode::Enforce, &off_list_action_on_approved_resource(false));
+        baseline
+            .rule_modes
+            .insert(RULE_UNAPPROVED_ACTION.to_string(), RuleMode::Off);
+        baseline
+            .rule_modes
+            .insert(RULE_UNAPPROVED_RESOURCE.to_string(), RuleMode::Off);
+        let eval = evaluate_rule(
+            &baseline,
+            EnforcementMode::Enforce,
+            &off_list_action_on_approved_resource(false),
+        );
         assert!(shadow_rules(&eval).is_empty());
         assert_ne!(eval.outcome, DecisionOutcome::Deny);
     }
@@ -1273,29 +1389,57 @@ mod tests {
     fn the_high_impact_rule_can_be_softened_to_shadow_but_the_deny_list_always_enforces() {
         let mut baseline = mature_triage_baseline();
         baseline.forbid_unfamiliar_high_impact = true;
-        let delete = make_request("DELETE", "/repos/{owner}/{repo}", "org/payments-prod", true, Some("/usr/bin/curl"));
-        assert_eq!(baseline.rule_mode(RULE_UNFAMILIAR_HIGH_IMPACT), RuleMode::Enforce);
+        let delete = make_request(
+            "DELETE",
+            "/repos/{owner}/{repo}",
+            "org/payments-prod",
+            true,
+            Some("/usr/bin/curl"),
+        );
+        assert_eq!(
+            baseline.rule_mode(RULE_UNFAMILIAR_HIGH_IMPACT),
+            RuleMode::Enforce
+        );
         assert_eq!(
             evaluate_rule(&baseline, EnforcementMode::Enforce, &delete).reason_code,
             REASON_TASK_CONSTRAINT_DENIED
         );
 
-        baseline.rule_modes.insert(RULE_UNFAMILIAR_HIGH_IMPACT.to_string(), RuleMode::Shadow);
+        baseline
+            .rule_modes
+            .insert(RULE_UNFAMILIAR_HIGH_IMPACT.to_string(), RuleMode::Shadow);
         let soft = evaluate_rule(&baseline, EnforcementMode::Enforce, &delete);
-        assert!(shadow_rules(&soft).contains(&"rule=unfamiliar_high_impact; mode=shadow".to_string()));
+        assert!(
+            shadow_rules(&soft).contains(&"rule=unfamiliar_high_impact; mode=shadow".to_string())
+        );
         assert!(soft.signals.iter().all(|s| s.feature != "task_constraint"));
 
         // The checkbox still turns the rule off, and an override cannot turn it on.
         baseline.forbid_unfamiliar_high_impact = false;
-        baseline.rule_modes.insert(RULE_UNFAMILIAR_HIGH_IMPACT.to_string(), RuleMode::Enforce);
-        assert_eq!(baseline.rule_mode(RULE_UNFAMILIAR_HIGH_IMPACT), RuleMode::Off);
+        baseline
+            .rule_modes
+            .insert(RULE_UNFAMILIAR_HIGH_IMPACT.to_string(), RuleMode::Enforce);
+        assert_eq!(
+            baseline.rule_mode(RULE_UNFAMILIAR_HIGH_IMPACT),
+            RuleMode::Off
+        );
 
         // The deny list ignores any override.
         let mut deny_list = mature_triage_baseline();
-        deny_list.forbidden_action_classes.insert("DELETE /repos/{owner}/{repo}".to_string());
-        deny_list.rule_modes.insert(RULE_FORBIDDEN_ACTION.to_string(), RuleMode::Off);
-        assert_eq!(deny_list.rule_mode(RULE_FORBIDDEN_ACTION), RuleMode::Enforce);
-        assert_eq!(evaluate_rule(&deny_list, EnforcementMode::Enforce, &delete).outcome, DecisionOutcome::Deny);
+        deny_list
+            .forbidden_action_classes
+            .insert("DELETE /repos/{owner}/{repo}".to_string());
+        deny_list
+            .rule_modes
+            .insert(RULE_FORBIDDEN_ACTION.to_string(), RuleMode::Off);
+        assert_eq!(
+            deny_list.rule_mode(RULE_FORBIDDEN_ACTION),
+            RuleMode::Enforce
+        );
+        assert_eq!(
+            evaluate_rule(&deny_list, EnforcementMode::Enforce, &delete).outcome,
+            DecisionOutcome::Deny
+        );
     }
 
     #[test]
@@ -1303,14 +1447,30 @@ mod tests {
         // Existing baselines, and the contexts and restrictions keyed by their hash, must not be orphaned.
         let baseline = mature_triage_baseline();
         let json = serde_json::to_string(&baseline).unwrap();
-        assert!(!json.contains("rule_modes"), "an empty map is not serialized");
+        assert!(
+            !json.contains("rule_modes"),
+            "an empty map is not serialized"
+        );
         let parsed: BaselineProfile = serde_json::from_str(&json).unwrap();
-        assert_eq!(compute_baseline_hash(&parsed), compute_baseline_hash(&baseline));
+        assert_eq!(
+            compute_baseline_hash(&parsed),
+            compute_baseline_hash(&baseline)
+        );
 
         let mut promoted = baseline.clone();
-        promoted.rule_modes.insert(RULE_UNAPPROVED_ACTION.to_string(), RuleMode::Enforce);
-        assert_ne!(compute_baseline_hash(&promoted), compute_baseline_hash(&baseline), "a promotion is a new profile");
-        let round_trip: BaselineProfile = serde_json::from_str(&serde_json::to_string(&promoted).unwrap()).unwrap();
-        assert_eq!(round_trip.rule_mode(RULE_UNAPPROVED_ACTION), RuleMode::Enforce);
+        promoted
+            .rule_modes
+            .insert(RULE_UNAPPROVED_ACTION.to_string(), RuleMode::Enforce);
+        assert_ne!(
+            compute_baseline_hash(&promoted),
+            compute_baseline_hash(&baseline),
+            "a promotion is a new profile"
+        );
+        let round_trip: BaselineProfile =
+            serde_json::from_str(&serde_json::to_string(&promoted).unwrap()).unwrap();
+        assert_eq!(
+            round_trip.rule_mode(RULE_UNAPPROVED_ACTION),
+            RuleMode::Enforce
+        );
     }
 }

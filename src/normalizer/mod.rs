@@ -112,7 +112,11 @@ impl CompiledRouteRule {
         }
     }
 
-    fn extract_resource_id(&self, canonical_path: &str, captures: &BTreeMap<String, &str>) -> String {
+    fn extract_resource_id(
+        &self,
+        canonical_path: &str,
+        captures: &BTreeMap<String, &str>,
+    ) -> String {
         if let Some(ref tpl) = self.resource_template {
             return interpolate_resource_template(tpl, captures);
         }
@@ -283,7 +287,9 @@ impl RequestNormalizer for CanonicalNormalizer {
 fn normalize_scheme(raw: &str) -> Result<String> {
     if raw.is_empty()
         || !raw.is_ascii()
-        || raw.chars().any(|c| c.is_ascii_control() || c.is_ascii_whitespace())
+        || raw
+            .chars()
+            .any(|c| c.is_ascii_control() || c.is_ascii_whitespace())
     {
         return Err(RiskGuardError::InvalidArgument(format!(
             "invalid scheme '{raw}'"
@@ -336,7 +342,9 @@ fn validate_port(port: u16) -> Result<u16> {
 fn normalize_method(raw: &str) -> Result<String> {
     if raw.is_empty()
         || !raw.is_ascii()
-        || raw.chars().any(|c| c.is_ascii_control() || c.is_ascii_whitespace())
+        || raw
+            .chars()
+            .any(|c| c.is_ascii_control() || c.is_ascii_whitespace())
     {
         return Err(RiskGuardError::InvalidArgument(format!(
             "invalid HTTP method '{raw}'"
@@ -389,11 +397,7 @@ fn normalize_request_path(raw: &str) -> Result<String> {
     // Trim trailing slash except on `/`
     let canonical = if path_only.len() > 1 {
         let trimmed = path_only.trim_end_matches('/');
-        if trimmed.is_empty() {
-            "/"
-        } else {
-            trimmed
-        }
+        if trimmed.is_empty() { "/" } else { trimmed }
     } else {
         "/"
     };
@@ -406,10 +410,8 @@ fn is_dot_traversal_segment(seg: &str) -> bool {
         return true;
     }
     let lower = seg.to_ascii_lowercase();
-    matches!(
-        lower.as_str(),
-        "%2e" | "%2e%2e" | ".%2e" | "%2e."
-    ) || lower.contains("..%2f")
+    matches!(lower.as_str(), "%2e" | "%2e%2e" | ".%2e" | "%2e.")
+        || lower.contains("..%2f")
         || lower.contains("%2f..")
         || lower.contains("%2e%2e%2f")
         || lower.contains("%2f%2e%2e")
@@ -454,7 +456,10 @@ fn normalize_template_path(raw: &str) -> Result<String> {
             "invalid route_template '{raw}'"
         )));
     }
-    if raw.chars().any(|c| c.is_ascii_control() || c.is_ascii_whitespace()) {
+    if raw
+        .chars()
+        .any(|c| c.is_ascii_control() || c.is_ascii_whitespace())
+    {
         return Err(RiskGuardError::InvalidArgument(format!(
             "route_template contains invalid whitespace or control chars: '{raw}'"
         )));
@@ -643,14 +648,19 @@ routes:
     high_impact: true
 "#;
         let normalizer = CanonicalNormalizer::from_yaml_str(yaml, TEST_KEY).unwrap();
-        let github = normalizer.normalize(&sample_input("DELETE", "/repos/org/app")).unwrap();
+        let github = normalizer
+            .normalize(&sample_input("DELETE", "/repos/org/app"))
+            .unwrap();
         assert!(github.high_impact, "host-specific rule takes precedence");
         assert_eq!(github.semantic_category, "destructive_admin");
 
         let mut other = sample_input("DELETE", "/repos/org/app");
         other.host = "billing.internal".into();
         let other = normalizer.normalize(&other).unwrap();
-        assert_eq!(other.semantic_category, "read_only", "GitHub semantics stay on GitHub");
+        assert_eq!(
+            other.semantic_category, "read_only",
+            "GitHub semantics stay on GitHub"
+        );
     }
 
     #[test]
@@ -673,7 +683,10 @@ routes:
         let normalizer = CanonicalNormalizer::from_file(&good, TEST_KEY).unwrap();
         let mut refund = sample_input("POST", "/v1/refunds");
         refund.host = "billing.internal".into();
-        assert_eq!(normalizer.normalize(&refund).unwrap().route_template, "/v1/refunds");
+        assert_eq!(
+            normalizer.normalize(&refund).unwrap().route_template,
+            "/v1/refunds"
+        );
     }
 
     fn sample_input(method: &str, path: &str) -> RawRequestInput {
@@ -776,13 +789,23 @@ routes:
         assert_eq!(graphql.semantic_category, "opaque_rpc");
 
         // Unknown routes fail safe: only state-preserving methods are low-impact.
-        for (method, expected) in [("GET", false), ("HEAD", false), ("OPTIONS", false),
-            ("POST", true), ("PUT", true), ("PATCH", true), ("DELETE", true)] {
+        for (method, expected) in [
+            ("GET", false),
+            ("HEAD", false),
+            ("OPTIONS", false),
+            ("POST", true),
+            ("PUT", true),
+            ("PATCH", true),
+            ("DELETE", true),
+        ] {
             let unknown = normalizer
                 .normalize(&sample_input(method, "/v1/unmapped/endpoint"))
                 .expect("should normalize unknown route");
             assert_eq!(unknown.route_template, "unknown");
-            assert_eq!(unknown.high_impact, expected, "{method} on an unknown route");
+            assert_eq!(
+                unknown.high_impact, expected,
+                "{method} on an unknown route"
+            );
         }
 
         // POST /repos/org/docs-site/issues is write_mutation with high_impact == false
@@ -879,7 +902,12 @@ routes:
         }
 
         // Empty host or non-ASCII / control host
-        for bad_host in ["", "api.github.com/evil", "api.github.com\r\n", "exämple.com"] {
+        for bad_host in [
+            "",
+            "api.github.com/evil",
+            "api.github.com\r\n",
+            "exämple.com",
+        ] {
             let mut input = sample_input("GET", "/clean");
             input.host = bad_host.to_string();
             let err = normalizer
@@ -957,7 +985,9 @@ routes:
             input.scheme = "http".to_string();
             input.host = host.to_string();
             input.port = 18081;
-            normalizer.normalize(&input).expect("demo service route should normalize")
+            normalizer
+                .normalize(&input)
+                .expect("demo service route should normalize")
         };
         let support = "support-api.openshell.svc.cluster.local";
         let deploy = "deploy-api.openshell.svc.cluster.local";
@@ -967,7 +997,10 @@ routes:
         assert_eq!(call(support, "GET", "/tickets/101").resource_id, "tickets");
         assert_eq!(call(support, "GET", "/tickets").resource_id, "tickets");
         assert!(!call(support, "GET", "/customers/c-1").high_impact);
-        assert_eq!(call(deploy, "GET", "/services/web/deployments").resource_id, "web");
+        assert_eq!(
+            call(deploy, "GET", "/services/web/deployments").resource_id,
+            "web"
+        );
         assert!(!call(deploy, "POST", "/services/web/restart").high_impact);
         assert_eq!(call(cloud, "GET", "/costs").resource_id, "costs");
 
@@ -987,6 +1020,9 @@ routes:
         assert_eq!(delete_bucket.semantic_category, "destructive_admin");
 
         // Rules are scoped to their host: the same path on another host is not classified by them.
-        assert_eq!(call("other.example", "GET", "/exports/customers").semantic_category, "unknown");
+        assert_eq!(
+            call("other.example", "GET", "/exports/customers").semantic_category,
+            "unknown"
+        );
     }
 }

@@ -11,11 +11,11 @@ use std::process::Command;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use axum::Router;
 use axum::extract::{Query, Request, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Json};
 use axum::routing::{any, get, post};
-use axum::Router;
 use openshell_core::config::{
     GatewayInterceptorBindingPolicy, GatewayInterceptorConfig, GatewayInterceptorFailurePolicy,
 };
@@ -138,7 +138,10 @@ struct LiveGrpcSidecar {
 }
 
 impl LiveGrpcSidecar {
-    async fn start(db_path: &PathBuf, issuer: &JwtTestIssuer) -> Result<(Self, Arc<SqliteRiskStore>)> {
+    async fn start(
+        db_path: &PathBuf,
+        issuer: &JwtTestIssuer,
+    ) -> Result<(Self, Arc<SqliteRiskStore>)> {
         let store = Arc::new(open_and_seed_store(db_path)?);
         let auth: Arc<dyn AuthVerifier> = Arc::new(issuer.verifier(DEMO_AUDIENCE)?);
         let normalizer = Arc::new(CanonicalNormalizer::new_default(DEMO_HMAC_KEY));
@@ -434,15 +437,17 @@ async fn handle_proxied_sandbox_request(
     let _ = stream.read_to_end(&mut buf).await;
     let raw_str = String::from_utf8_lossy(&buf);
     let body_part = raw_str.split_once("\r\n\r\n").map_or("{}", |(_, b)| b);
-    let parsed_json: Value = serde_json::from_str(body_part).unwrap_or_else(|_| json!({"raw": body_part}));
+    let parsed_json: Value =
+        serde_json::from_str(body_part).unwrap_or_else(|_| json!({"raw": body_part}));
     (StatusCode::OK, Json(parsed_json))
 }
 
 fn docker_bin() -> String {
     if let Ok(configured) = std::env::var("DOCKER_BIN")
-        && !configured.is_empty() {
-            return configured;
-        }
+        && !configured.is_empty()
+    {
+        return configured;
+    }
     if let Ok(home) = std::env::var("HOME") {
         let candidate = std::path::Path::new(&home).join("bin/docker");
         if candidate.exists() {
@@ -595,12 +600,9 @@ impl DashboardMutableState {
         let issuer = JwtTestIssuer::new(DEMO_GATEWAY_ID);
         let upstream = UpstreamFixtureServer::start().await?;
         let (sidecar, store) = LiveGrpcSidecar::start(&db_path, &issuer).await?;
-        let proxy = LiveSupervisorProxy::start(
-            sidecar.endpoint_url(),
-            upstream.addr(),
-            issuer.clone(),
-        )
-        .await?;
+        let proxy =
+            LiveSupervisorProxy::start(sidecar.endpoint_url(), upstream.addr(), issuer.clone())
+                .await?;
         store.clear_runtime_tables()?;
         Ok(Self {
             db_path,
@@ -761,10 +763,12 @@ impl DashboardMutableState {
                     service: "openshell.v1.OpenShell".to_string(),
                     method: "CreateSandbox".to_string(),
                     principal: HashMap::new(),
-                    phase: Some(interceptor_evaluation::Phase::Validate(ValidateEvaluation {
-                        proposed_operation: Some(json_to_struct(&create_op)),
-                        current_state: None,
-                    })),
+                    phase: Some(interceptor_evaluation::Phase::Validate(
+                        ValidateEvaluation {
+                            proposed_operation: Some(json_to_struct(&create_op)),
+                            current_state: None,
+                        },
+                    )),
                 });
                 val_req
                     .metadata_mut()
@@ -953,9 +957,9 @@ impl DashboardMutableState {
                     .insert("authorization", bearer_header(&gw_token));
                 let _ = ic_client.evaluate(pc_req).await;
 
-                let token = self
-                    .issuer
-                    .mint_supervisor_token(DEMO_AUDIENCE, "sbx_enum_burst", 600)?;
+                let token =
+                    self.issuer
+                        .mint_supervisor_token(DEMO_AUDIENCE, "sbx_enum_burst", 600)?;
                 let mut mw_client = self.sidecar.connect_middleware_client().await?;
                 let mut cfg_fields = BTreeMap::new();
                 cfg_fields.insert(
@@ -1026,9 +1030,9 @@ impl DashboardMutableState {
             }
             8 => {
                 // Connect OpenShell's REAL MiddlewareRegistry + ChainRunner and GatewayInterceptorRuntime over TCP!
-                let sup_jwt = self
-                    .issuer
-                    .mint_supervisor_token(DEMO_AUDIENCE, DEMO_SANDBOX_ID, 600)?;
+                let sup_jwt =
+                    self.issuer
+                        .mint_supervisor_token(DEMO_AUDIENCE, DEMO_SANDBOX_ID, 600)?;
                 let sup_slot = BearerTokenSlot::new(&sup_jwt, i64::MAX / 2)
                     .map_err(|e| RiskGuardError::Internal(e.to_string()))?;
                 let mut mw_creds = HashMap::new();
@@ -1191,13 +1195,15 @@ impl DashboardMutableState {
                     service: "openshell.v1.OpenShell".to_string(),
                     method: "UpdateConfig".to_string(),
                     principal: HashMap::new(),
-                    phase: Some(interceptor_evaluation::Phase::Validate(ValidateEvaluation {
-                        proposed_operation: Some(json_to_struct(&json!({
-                            "sandbox": DEMO_SANDBOX_ID,
-                            "policy_yaml": STRIPPED_MIDDLEWARE_POLICY_YAML
-                        }))),
-                        current_state: None,
-                    })),
+                    phase: Some(interceptor_evaluation::Phase::Validate(
+                        ValidateEvaluation {
+                            proposed_operation: Some(json_to_struct(&json!({
+                                "sandbox": DEMO_SANDBOX_ID,
+                                "policy_yaml": STRIPPED_MIDDLEWARE_POLICY_YAML
+                            }))),
+                            current_state: None,
+                        },
+                    )),
                 });
                 req_strip
                     .metadata_mut()
@@ -1214,13 +1220,15 @@ impl DashboardMutableState {
                     service: "openshell.v1.OpenShell".to_string(),
                     method: "UpdateConfig".to_string(),
                     principal: HashMap::new(),
-                    phase: Some(interceptor_evaluation::Phase::Validate(ValidateEvaluation {
-                        proposed_operation: Some(json_to_struct(&json!({
-                            "sandbox": DEMO_SANDBOX_ID,
-                            "policy_yaml": EXPANDED_HOST_POLICY_YAML
-                        }))),
-                        current_state: None,
-                    })),
+                    phase: Some(interceptor_evaluation::Phase::Validate(
+                        ValidateEvaluation {
+                            proposed_operation: Some(json_to_struct(&json!({
+                                "sandbox": DEMO_SANDBOX_ID,
+                                "policy_yaml": EXPANDED_HOST_POLICY_YAML
+                            }))),
+                            current_state: None,
+                        },
+                    )),
                 });
                 req_expand
                     .metadata_mut()

@@ -234,7 +234,11 @@ impl BaselineProfile {
                 Some(RuleMode::Shadow) => RuleMode::Shadow,
                 _ => RuleMode::Enforce,
             },
-            _ => self.rule_modes.get(rule).copied().unwrap_or(RuleMode::Shadow),
+            _ => self
+                .rule_modes
+                .get(rule)
+                .copied()
+                .unwrap_or(RuleMode::Shadow),
         }
     }
 

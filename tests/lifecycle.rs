@@ -18,9 +18,11 @@ const HOUR: i64 = 3_600_000;
 const NOW: i64 = 1_800_000_000_000;
 
 fn store() -> SqliteRiskStore {
-    let store = seed_fixture_store(tempfile::tempdir().unwrap().keep().join("lifecycle.db")).unwrap();
+    let store =
+        seed_fixture_store(tempfile::tempdir().unwrap().keep().join("lifecycle.db")).unwrap();
     let mut baseline = build_standard_corpus().default_baseline;
-    baseline.normalizer_version = openshell_risk_guard::normalizer::DEFAULT_NORMALIZER_VERSION.into();
+    baseline.normalizer_version =
+        openshell_risk_guard::normalizer::DEFAULT_NORMALIZER_VERSION.into();
     store.store_baseline(&baseline).unwrap();
     store
 }
@@ -30,7 +32,13 @@ fn sandbox(store: &SqliteRiskStore, agent: &str, name: &str, last_request_age: O
     let baseline = store.get_baseline("repo-triage-readonly").unwrap().unwrap();
     let run = format!("run-{name}");
     store
-        .create_agent_run(agent, &run, "revision-1", &baseline.task_profile, EnforcementMode::Enforce)
+        .create_agent_run(
+            agent,
+            &run,
+            "revision-1",
+            &baseline.task_profile,
+            EnforcementMode::Enforce,
+        )
         .unwrap();
     store
         .upsert_epoch(&EpochRecord {
@@ -67,7 +75,12 @@ fn sandbox(store: &SqliteRiskStore, agent: &str, name: &str, last_request_age: O
             })
             .unwrap();
         store
-            .evaluate_authenticated(&request, &InteractionRiskDetector::new_default(), "gateway", true)
+            .evaluate_authenticated(
+                &request,
+                &InteractionRiskDetector::new_default(),
+                "gateway",
+                true,
+            )
             .unwrap();
     }
 }
@@ -95,9 +108,18 @@ fn open_and_presumed_gone_are_derived_from_activity_and_never_written() {
     let inventory = store.operator_inventory(NOW).unwrap();
     let a = workload(&inventory, "a");
     assert_eq!(a["sandbox_count"], 4, "everything ever bound");
-    assert_eq!(a["active_sandbox_count"], 3, "epochs no delete event has closed");
-    assert_eq!(a["open_sandbox_count"], 2, "of those, the ones seen within six hours");
-    assert_eq!(a["presumed_gone_sandbox_count"], 1, "the one nobody has heard from for a day");
+    assert_eq!(
+        a["active_sandbox_count"], 3,
+        "epochs no delete event has closed"
+    );
+    assert_eq!(
+        a["open_sandbox_count"], 2,
+        "of those, the ones seen within six hours"
+    );
+    assert_eq!(
+        a["presumed_gone_sandbox_count"], 1,
+        "the one nobody has heard from for a day"
+    );
 
     let life = &inventory["sandbox_lifecycle"];
     assert_eq!(life["open"], 2);
@@ -107,9 +129,15 @@ fn open_and_presumed_gone_are_derived_from_activity_and_never_written() {
     // Nothing was written: a day later the same data reads differently, and a sandbox that speaks again is open again.
     let later = store.operator_inventory(NOW + 8 * HOUR).unwrap();
     let a_later = workload(&later, "a");
-    assert_eq!(a_later["open_sandbox_count"], 0, "eight hours on, all three have gone quiet");
+    assert_eq!(
+        a_later["open_sandbox_count"], 0,
+        "eight hours on, all three have gone quiet"
+    );
     assert_eq!(a_later["presumed_gone_sandbox_count"], 3);
-    assert_eq!(a_later["active_sandbox_count"], 3, "no epoch was closed by guessing");
+    assert_eq!(
+        a_later["active_sandbox_count"], 3,
+        "no epoch was closed by guessing"
+    );
 }
 
 #[test]
@@ -123,13 +151,25 @@ fn each_run_and_sandbox_reports_its_own_lifecycle() {
 
     let detail = store.operator_agent_detail("a", NOW).unwrap().unwrap();
     let runs = detail["runs"].as_array().unwrap();
-    let state = |run: &str| runs.iter().find(|r| r["run_id"] == run).unwrap()["lifecycle"].as_str().unwrap().to_string();
+    let state = |run: &str| {
+        runs.iter().find(|r| r["run_id"] == run).unwrap()["lifecycle"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
     assert_eq!(state("run-sbx-busy"), "open");
     assert_eq!(state("run-sbx-ghost"), "presumed_gone");
-    assert_eq!(state("run-sbx-deleted"), "ended", "a delete event ended the run");
+    assert_eq!(
+        state("run-sbx-deleted"),
+        "ended",
+        "a delete event ended the run"
+    );
 
     let sandbox_state = |run: &str| {
-        runs.iter().find(|r| r["run_id"] == run).unwrap()["sandboxes"][0]["lifecycle"].as_str().unwrap().to_string()
+        runs.iter().find(|r| r["run_id"] == run).unwrap()["sandboxes"][0]["lifecycle"]
+            .as_str()
+            .unwrap()
+            .to_string()
     };
     assert_eq!(sandbox_state("run-sbx-busy"), "recently_active");
     assert_eq!(sandbox_state("run-sbx-ghost"), "not_seen_recently");
@@ -149,16 +189,31 @@ fn decision_time_is_summarized_over_the_last_hour_and_exported() {
     slow.record(900_000); // past OpenShell's 500 ms timeout
     let mut stale = LatencyInterval::default();
     stale.record(400_000); // an hour and a half ago: outside the window
-    store.record_latency_interval(NOW - 90 * 60_000, &stale).unwrap();
-    store.record_latency_interval(NOW - 20 * 60_000, &fast).unwrap();
-    store.record_latency_interval(NOW - 5 * 60_000, &slow).unwrap();
+    store
+        .record_latency_interval(NOW - 90 * 60_000, &stale)
+        .unwrap();
+    store
+        .record_latency_interval(NOW - 20 * 60_000, &fast)
+        .unwrap();
+    store
+        .record_latency_interval(NOW - 5 * 60_000, &slow)
+        .unwrap();
 
     let summary = &store.operator_inventory(NOW).unwrap()["decision_latency"];
-    assert_eq!(summary["samples"], 101, "the stale interval is outside the window");
+    assert_eq!(
+        summary["samples"], 101,
+        "the stale interval is outside the window"
+    );
     assert_eq!(summary["over_timeout"], 1);
     assert_eq!(summary["max_us"], 900_000);
-    assert_eq!(summary["p50_us"], 1_000, "98 of 101 samples are within 1 ms");
-    assert!(summary["p99_us"].as_u64().unwrap() >= 40_000, "the slow tail is not hidden by the median");
+    assert_eq!(
+        summary["p50_us"], 1_000,
+        "98 of 101 samples are within 1 ms"
+    );
+    assert!(
+        summary["p99_us"].as_u64().unwrap() >= 40_000,
+        "the slow tail is not hidden by the median"
+    );
     assert_eq!(summary["timeout_us"], 500_000);
 
     let metrics = store.prometheus_metrics(NOW).unwrap();
@@ -169,7 +224,10 @@ fn decision_time_is_summarized_over_the_last_hour_and_exported() {
         "openshell_risk_guard_decision_latency_max_seconds 0.9",
         "openshell_risk_guard_sandboxes{state=\"open\"} 0",
     ] {
-        assert!(metrics.contains(expected), "metrics must contain `{expected}`:\n{metrics}");
+        assert!(
+            metrics.contains(expected),
+            "metrics must contain `{expected}`:\n{metrics}"
+        );
     }
 }
 
@@ -180,9 +238,15 @@ fn with_no_samples_nothing_is_invented() {
     assert_eq!(summary["samples"], 0);
     assert!(summary["p99_us"].is_null() && summary["max_us"].is_null());
     let metrics = store.prometheus_metrics(NOW).unwrap();
-    assert!(!metrics.contains("decision_latency_seconds{"), "no percentile line without samples");
+    assert!(
+        !metrics.contains("decision_latency_seconds{"),
+        "no percentile line without samples"
+    );
     assert!(metrics.contains("openshell_risk_guard_decision_latency_samples 0"));
-    assert!(!metrics.contains("seconds_since_last_decision"), "no decision yet, so no staleness figure");
+    assert!(
+        !metrics.contains("seconds_since_last_decision"),
+        "no decision yet, so no staleness figure"
+    );
 }
 
 #[test]
@@ -196,5 +260,8 @@ fn staleness_is_exported_once_a_decision_exists() {
         .find(|l| l.starts_with("openshell_risk_guard_seconds_since_last_decision "))
         .unwrap_or_else(|| panic!("staleness gauge missing:\n{metrics}"));
     let seconds: f64 = line.split_whitespace().nth(1).unwrap().parse().unwrap();
-    assert!((599.0..=601.0).contains(&seconds), "about ten minutes: {seconds}");
+    assert!(
+        (599.0..=601.0).contains(&seconds),
+        "about ten minutes: {seconds}"
+    );
 }

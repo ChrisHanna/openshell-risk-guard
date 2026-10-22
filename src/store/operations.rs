@@ -41,14 +41,19 @@ fn operator_text(value: &str, name: &str, max: usize) -> Result<()> {
 
 fn owners(tx: &Transaction<'_>, target: RestrictionTarget<'_>) -> Result<Vec<Owner>> {
     match target {
-        RestrictionTarget::Agent { agent_id, context_id } => {
+        RestrictionTarget::Agent {
+            agent_id,
+            context_id,
+        } => {
             let exists: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM agents WHERE agent_id = ?1)",
                 params![agent_id],
                 |row| row.get(0),
             )?;
             if !exists {
-                return Err(RiskGuardError::InvalidArgument(format!("workload '{agent_id}' not found")));
+                return Err(RiskGuardError::InvalidArgument(format!(
+                    "workload '{agent_id}' not found"
+                )));
             }
             let mut stmt = tx.prepare(
                 "SELECT context_id FROM scoring_contexts
@@ -64,14 +69,24 @@ fn owners(tx: &Transaction<'_>, target: RestrictionTarget<'_>) -> Result<Vec<Own
             }
             Ok(ids
                 .into_iter()
-                .map(|id| Owner { kind: "agent_context", table: "agent_restrictions", id })
+                .map(|id| Owner {
+                    kind: "agent_context",
+                    table: "agent_restrictions",
+                    id,
+                })
                 .collect())
         }
         RestrictionTarget::Sandbox { sandbox_id } => {
             let epoch = query_active_epoch(tx, sandbox_id)?.ok_or_else(|| {
-                RiskGuardError::InvalidArgument(format!("no active epoch for sandbox '{sandbox_id}'"))
+                RiskGuardError::InvalidArgument(format!(
+                    "no active epoch for sandbox '{sandbox_id}'"
+                ))
             })?;
-            Ok(vec![Owner { kind: "epoch", table: "restrictions", id: epoch.epoch_id }])
+            Ok(vec![Owner {
+                kind: "epoch",
+                table: "restrictions",
+                id: epoch.epoch_id,
+            }])
         }
     }
 }
@@ -187,7 +202,8 @@ impl SqliteRiskStore {
             1 => matches.remove(0),
             _ => {
                 return Err(RiskGuardError::InvalidArgument(
-                    "that scope is restricted in several scoring contexts; pass --context-id".into(),
+                    "that scope is restricted in several scoring contexts; pass --context-id"
+                        .into(),
                 ));
             }
         };
@@ -214,14 +230,25 @@ impl SqliteRiskStore {
               origin_epoch_id, origin_request_id, cleared_by, reason, cleared_at_ms)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
-                owner.kind, owner.id, scope, tier, strikes, trigger,
-                origin.as_ref().map(|o| o.0.as_str()), origin.as_ref().map(|o| o.1.as_str()),
-                operator, reason, now_ms
+                owner.kind,
+                owner.id,
+                scope,
+                tier,
+                strikes,
+                trigger,
+                origin.as_ref().map(|o| o.0.as_str()),
+                origin.as_ref().map(|o| o.1.as_str()),
+                operator,
+                reason,
+                now_ms
             ],
         )?;
         let clearance_id = tx.last_insert_rowid();
         tx.execute(
-            &format!("DELETE FROM {} WHERE epoch_id = ?1 AND scope = ?2", owner.table),
+            &format!(
+                "DELETE FROM {} WHERE epoch_id = ?1 AND scope = ?2",
+                owner.table
+            ),
             params![owner.id, scope],
         )?;
         tx.commit()?;
@@ -235,7 +262,11 @@ impl SqliteRiskStore {
     }
 
     /// Persist one interval of server-side decision times. Rows older than a week are dropped.
-    pub fn record_latency_interval(&self, at_ms: i64, interval: &crate::latency::LatencyInterval) -> Result<()> {
+    pub fn record_latency_interval(
+        &self,
+        at_ms: i64,
+        interval: &crate::latency::LatencyInterval,
+    ) -> Result<()> {
         let conn = self.lock_conn()?;
         conn.execute(
             "INSERT OR REPLACE INTO latency_intervals (at_ms, count, sum_us, max_us, buckets_json)
@@ -262,11 +293,10 @@ impl SqliteRiskStore {
 
         let agents_total: i64 =
             tx.query_row("SELECT COUNT(*) FROM agents", [], |row| row.get(0))?;
-        let active_epochs_total: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM epochs WHERE active != 0",
-            [],
-            |row| row.get(0),
-        )?;
+        let active_epochs_total: i64 =
+            tx.query_row("SELECT COUNT(*) FROM epochs WHERE active != 0", [], |row| {
+                row.get(0)
+            })?;
 
         let (mut allow, mut allow_with_observation, mut deny) = (0_i64, 0_i64, 0_i64);
         {
@@ -308,11 +338,10 @@ impl SqliteRiskStore {
             }
         }
 
-        let restriction_clearances_total: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM restriction_clearances",
-            [],
-            |row| row.get(0),
-        )?;
+        let restriction_clearances_total: i64 =
+            tx.query_row("SELECT COUNT(*) FROM restriction_clearances", [], |row| {
+                row.get(0)
+            })?;
         let adaptive_models_total: i64 = tx.query_row(
             "SELECT COUNT(*) FROM adaptive_models WHERE revoked_at_ms IS NULL",
             [],
@@ -325,7 +354,11 @@ impl SqliteRiskStore {
                 "SELECT source, outcome, COUNT(*) FROM workload_binding_audit GROUP BY source, outcome",
             )?;
             let rows = stmt.query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
             })?;
             for row in rows {
                 let (source, outcome, count) = row?;
@@ -334,7 +367,10 @@ impl SqliteRiskStore {
         }
 
         let latency = merged_latency(&tx, now_ms, LATENCY_WINDOW_MS)?;
-        let last_decision_ms: Option<i64> = tx.query_row("SELECT MAX(created_at_ms) FROM decisions", [], |row| row.get(0))?;
+        let last_decision_ms: Option<i64> =
+            tx.query_row("SELECT MAX(created_at_ms) FROM decisions", [], |row| {
+                row.get(0)
+            })?;
         let (lifecycle, _) = super::lifecycle_overview(&tx, now_ms)?;
         tx.commit()?;
 
@@ -351,31 +387,54 @@ impl SqliteRiskStore {
         }
         out.push_str("# HELP openshell_risk_guard_decision_latency_samples Decisions timed in the last hour.\n");
         out.push_str("# TYPE openshell_risk_guard_decision_latency_samples gauge\n");
-        out.push_str(&format!("openshell_risk_guard_decision_latency_samples {}\n", latency.count));
+        out.push_str(&format!(
+            "openshell_risk_guard_decision_latency_samples {}\n",
+            latency.count
+        ));
         out.push_str("# HELP openshell_risk_guard_decision_latency_over_timeout Decisions in the last hour slower than OpenShell's 500 ms middleware timeout.\n");
         out.push_str("# TYPE openshell_risk_guard_decision_latency_over_timeout gauge\n");
-        out.push_str(&format!("openshell_risk_guard_decision_latency_over_timeout {}\n", latency.over_timeout()));
+        out.push_str(&format!(
+            "openshell_risk_guard_decision_latency_over_timeout {}\n",
+            latency.over_timeout()
+        ));
         if latency.count > 0 {
             out.push_str("# HELP openshell_risk_guard_decision_latency_max_seconds Slowest decision in the last hour.\n");
             out.push_str("# TYPE openshell_risk_guard_decision_latency_max_seconds gauge\n");
-            out.push_str(&format!("openshell_risk_guard_decision_latency_max_seconds {}\n", latency.max_us as f64 / 1_000_000.0));
+            out.push_str(&format!(
+                "openshell_risk_guard_decision_latency_max_seconds {}\n",
+                latency.max_us as f64 / 1_000_000.0
+            ));
         }
         if let Some(last) = last_decision_ms {
             out.push_str("# HELP openshell_risk_guard_seconds_since_last_decision Seconds since the newest recorded decision. Alert on this to notice agents or the sidecar going quiet.\n");
             out.push_str("# TYPE openshell_risk_guard_seconds_since_last_decision gauge\n");
-            out.push_str(&format!("openshell_risk_guard_seconds_since_last_decision {}\n", now_ms.saturating_sub(last) as f64 / 1000.0));
+            out.push_str(&format!(
+                "openshell_risk_guard_seconds_since_last_decision {}\n",
+                now_ms.saturating_sub(last) as f64 / 1000.0
+            ));
         }
         out.push_str("# HELP openshell_risk_guard_sandboxes Sandboxes by lifecycle, derived from activity: open were seen within six hours, presumed_gone were not, closed had a delete event.\n");
         out.push_str("# TYPE openshell_risk_guard_sandboxes gauge\n");
-        out.push_str(&format!("openshell_risk_guard_sandboxes{{state=\"open\"}} {}\n", lifecycle["open"].as_i64().unwrap_or(0)));
-        out.push_str(&format!("openshell_risk_guard_sandboxes{{state=\"presumed_gone\"}} {}\n", lifecycle["presumed_gone"].as_i64().unwrap_or(0)));
-        out.push_str(&format!("openshell_risk_guard_sandboxes{{state=\"closed\"}} {}\n", lifecycle["sandboxes_closed"].as_i64().unwrap_or(0)));
+        out.push_str(&format!(
+            "openshell_risk_guard_sandboxes{{state=\"open\"}} {}\n",
+            lifecycle["open"].as_i64().unwrap_or(0)
+        ));
+        out.push_str(&format!(
+            "openshell_risk_guard_sandboxes{{state=\"presumed_gone\"}} {}\n",
+            lifecycle["presumed_gone"].as_i64().unwrap_or(0)
+        ));
+        out.push_str(&format!(
+            "openshell_risk_guard_sandboxes{{state=\"closed\"}} {}\n",
+            lifecycle["sandboxes_closed"].as_i64().unwrap_or(0)
+        ));
         out.push_str("# HELP openshell_risk_guard_store_healthy Whether the SQLite risk store is reachable.\n");
         out.push_str("# TYPE openshell_risk_guard_store_healthy gauge\n");
         out.push_str("openshell_risk_guard_store_healthy 1\n");
         out.push_str("# HELP openshell_risk_guard_agents_total Total registered agents.\n");
         out.push_str("# TYPE openshell_risk_guard_agents_total gauge\n");
-        out.push_str(&format!("openshell_risk_guard_agents_total {agents_total}\n"));
+        out.push_str(&format!(
+            "openshell_risk_guard_agents_total {agents_total}\n"
+        ));
         out.push_str("# HELP openshell_risk_guard_active_epochs_total Active sandbox epochs.\n");
         out.push_str("# TYPE openshell_risk_guard_active_epochs_total gauge\n");
         out.push_str(&format!(
@@ -418,7 +477,9 @@ impl SqliteRiskStore {
         out.push_str(&format!(
             "openshell_risk_guard_restriction_clearances_total {restriction_clearances_total}\n"
         ));
-        out.push_str("# HELP openshell_risk_guard_adaptive_models_total Non-revoked adaptive models.\n");
+        out.push_str(
+            "# HELP openshell_risk_guard_adaptive_models_total Non-revoked adaptive models.\n",
+        );
         out.push_str("# TYPE openshell_risk_guard_adaptive_models_total gauge\n");
         out.push_str(&format!(
             "openshell_risk_guard_adaptive_models_total {adaptive_models_total}\n"
@@ -431,17 +492,28 @@ impl SqliteRiskStore {
 pub(super) const LATENCY_WINDOW_MS: i64 = 3_600_000;
 
 /// Merge the flushed intervals in the window into one histogram.
-pub(super) fn merged_latency(conn: &Connection, now_ms: i64, window_ms: i64) -> Result<crate::latency::LatencyInterval> {
+pub(super) fn merged_latency(
+    conn: &Connection,
+    now_ms: i64,
+    window_ms: i64,
+) -> Result<crate::latency::LatencyInterval> {
     let mut merged = crate::latency::LatencyInterval::default();
     let mut stmt = conn.prepare(
         "SELECT count, sum_us, max_us, buckets_json FROM latency_intervals WHERE at_ms > ?1 AND at_ms <= ?2",
     )?;
     let rows = stmt.query_map(params![now_ms.saturating_sub(window_ms), now_ms], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, String>(3)?))
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, String>(3)?,
+        ))
     })?;
     for row in rows {
         let (count, sum_us, max_us, buckets_json) = row?;
-        let Ok(buckets) = serde_json::from_str::<Vec<u64>>(&buckets_json) else { continue };
+        let Ok(buckets) = serde_json::from_str::<Vec<u64>>(&buckets_json) else {
+            continue;
+        };
         merged.merge(&crate::latency::LatencyInterval {
             count: u64::try_from(count).unwrap_or(0),
             sum_us: u64::try_from(sum_us).unwrap_or(0),
@@ -466,6 +538,6 @@ pub(super) fn latency_summary(conn: &Connection, now_ms: i64, window_ms: i64) ->
         "over_timeout": merged.over_timeout(),
         "timeout_us": 500_000,
         "basis": "Risk Guard's own processing time for each middleware request, from after validation until the result is \
-ready, including the SQLite commit. It excludes network transit and the supervisor. Percentiles are histogram bucket upper bounds.",
+    ready, including the SQLite commit. It excludes network transit and the supervisor. Percentiles are histogram bucket upper bounds.",
     }))
 }

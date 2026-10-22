@@ -242,37 +242,64 @@ mod tests {
     fn rule_modes_are_validated_and_default_to_the_baseline() {
         let mut value = valid();
         assert!(value.rule_modes.is_empty());
-        value.rule_modes.insert("unapproved_action".into(), RuleMode::Enforce);
-        value.rule_modes.insert("unapproved_resource".into(), RuleMode::Shadow);
-        value.rule_modes.insert("unfamiliar_high_impact".into(), RuleMode::Shadow);
+        value
+            .rule_modes
+            .insert("unapproved_action".into(), RuleMode::Enforce);
+        value
+            .rule_modes
+            .insert("unapproved_resource".into(), RuleMode::Shadow);
+        value
+            .rule_modes
+            .insert("unfamiliar_high_impact".into(), RuleMode::Shadow);
         assert!(value.validate().is_ok());
 
         let mut unknown = valid();
-        unknown.rule_modes.insert("made_up_rule".into(), RuleMode::Enforce);
-        assert!(unknown.validate().is_err(), "an unknown rule name must be refused, not silently ignored");
+        unknown
+            .rule_modes
+            .insert("made_up_rule".into(), RuleMode::Enforce);
+        assert!(
+            unknown.validate().is_err(),
+            "an unknown rule name must be refused, not silently ignored"
+        );
 
         let mut off = valid();
-        off.rule_modes.insert("unfamiliar_high_impact".into(), RuleMode::Off);
-        assert!(off.validate().is_err(), "the high-impact rule is switched off with its own setting");
+        off.rule_modes
+            .insert("unfamiliar_high_impact".into(), RuleMode::Off);
+        assert!(
+            off.validate().is_err(),
+            "the high-impact rule is switched off with its own setting"
+        );
 
         let mut forbidden = valid();
-        forbidden.rule_modes.insert("forbidden_action".into(), RuleMode::Off);
-        assert!(forbidden.validate().is_err(), "the deny list is not configurable");
+        forbidden
+            .rule_modes
+            .insert("forbidden_action".into(), RuleMode::Off);
+        assert!(
+            forbidden.validate().is_err(),
+            "the deny list is not configurable"
+        );
     }
 
     #[test]
     fn settings_saved_before_rule_modes_existed_still_load_and_keep_their_form() {
         let value = valid();
         let json = serde_json::to_value(&value).unwrap();
-        assert!(json.get("rule_modes").is_none(), "an empty map is not serialized");
+        assert!(
+            json.get("rule_modes").is_none(),
+            "an empty map is not serialized"
+        );
         let loaded: AgentGuardrails = serde_json::from_value(json).unwrap();
         assert_eq!(loaded, value);
 
         let mut promoted = valid();
-        promoted.rule_modes.insert("unapproved_action".into(), RuleMode::Enforce);
+        promoted
+            .rule_modes
+            .insert("unapproved_action".into(), RuleMode::Enforce);
         let baseline = crate::fixture::build_standard_corpus().default_baseline;
         assert_eq!(
-            promoted.apply_live_baseline(&baseline).rule_mode("unapproved_action"),
+            promoted
+                .apply_live_baseline(&baseline)
+                .rule_mode("unapproved_action"),
             RuleMode::Enforce,
             "saved settings apply to the live baseline"
         );

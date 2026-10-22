@@ -13,9 +13,7 @@ use clap::{Parser, Subcommand};
 use sha2::{Digest, Sha256};
 
 use crate::auth::JwtAuthVerifier;
-use crate::detector::{
-    InteractionRiskDetector, compute_baseline_hash, load_baseline_profile,
-};
+use crate::detector::{InteractionRiskDetector, compute_baseline_hash, load_baseline_profile};
 use crate::error::{Result, RiskGuardError};
 use crate::fixture::{PROFILE_REPO_TRIAGE_READONLY, build_standard_corpus};
 use crate::hardening::ProverHardeningEngine;
@@ -58,7 +56,11 @@ pub enum Commands {
         public_key_pem: Option<PathBuf>,
         #[arg(long)]
         allow_insecure_local_test: bool,
-        #[arg(long, env = "RISK_GUARD_DEFAULT_TASK_PROFILE", default_value = "repo-triage-readonly")]
+        #[arg(
+            long,
+            env = "RISK_GUARD_DEFAULT_TASK_PROFILE",
+            default_value = "repo-triage-readonly"
+        )]
         default_task_profile: String,
         /// Compatibility only: permit sandbox-only decisions without trusted workload attribution.
         #[arg(long)]
@@ -90,16 +92,26 @@ pub enum Commands {
         /// Bind sandboxes that carry no workload label to a workload derived from the
         /// authenticated (workspace, principal) that created them. Operators and users
         /// only; the ID cannot be chosen or forged from the request.
-        #[arg(long = "workload-from-principal", env = "RISK_GUARD_WORKLOAD_FROM_PRINCIPAL")]
+        #[arg(
+            long = "workload-from-principal",
+            env = "RISK_GUARD_WORKLOAD_FROM_PRINCIPAL"
+        )]
         workload_from_principal: bool,
         /// Let OpenShell's unauthenticated local-development user own a workload and pass the
         /// label allowlist. For local testing only: that caller proves nothing about who it is.
-        #[arg(long = "allow-local-dev-principal", env = "RISK_GUARD_ALLOW_LOCAL_DEV_PRINCIPAL")]
+        #[arg(
+            long = "allow-local-dev-principal",
+            env = "RISK_GUARD_ALLOW_LOCAL_DEV_PRINCIPAL"
+        )]
         allow_local_dev_principal: bool,
         /// Keep detailed decisions this many days; older ones are pruned hourly unless an active lock or an adaptive
         /// training window still needs them. 0 keeps everything (the per-epoch cap still applies). Epochs, locks and
         /// the audit of cleared locks are never pruned.
-        #[arg(long = "decision-retention-days", env = "RISK_GUARD_DECISION_RETENTION_DAYS", default_value_t = 30)]
+        #[arg(
+            long = "decision-retention-days",
+            env = "RISK_GUARD_DECISION_RETENTION_DAYS",
+            default_value_t = 30
+        )]
         decision_retention_days: u32,
     },
     /// Check that a running sidecar is serving, over TLS (for Kubernetes exec probes; exit 0 only if SERVING).
@@ -127,7 +139,11 @@ pub enum Commands {
     RestrictionList {
         #[arg(long)]
         db: PathBuf,
-        #[arg(long, conflicts_with = "sandbox_id", required_unless_present = "sandbox_id")]
+        #[arg(
+            long,
+            conflicts_with = "sandbox_id",
+            required_unless_present = "sandbox_id"
+        )]
         agent_id: Option<String>,
         #[arg(long)]
         sandbox_id: Option<String>,
@@ -138,7 +154,11 @@ pub enum Commands {
     RestrictionClear {
         #[arg(long)]
         db: PathBuf,
-        #[arg(long, conflicts_with = "sandbox_id", required_unless_present = "sandbox_id")]
+        #[arg(
+            long,
+            conflicts_with = "sandbox_id",
+            required_unless_present = "sandbox_id"
+        )]
         agent_id: Option<String>,
         #[arg(long)]
         sandbox_id: Option<String>,
@@ -321,10 +341,18 @@ pub enum Commands {
         #[arg(long, env = "RISK_GUARD_ENTRA_CLIENT_ID", requires = "entra_tenant_id")]
         entra_client_id: Option<String>,
         /// Object IDs of accounts that may read and change settings (repeat or comma-separate).
-        #[arg(long = "entra-admin-oid", env = "RISK_GUARD_ENTRA_ADMIN_OIDS", value_delimiter = ',')]
+        #[arg(
+            long = "entra-admin-oid",
+            env = "RISK_GUARD_ENTRA_ADMIN_OIDS",
+            value_delimiter = ','
+        )]
         entra_admin_oids: Vec<String>,
         /// Object IDs of accounts that may read only.
-        #[arg(long = "entra-viewer-oid", env = "RISK_GUARD_ENTRA_VIEWER_OIDS", value_delimiter = ',')]
+        #[arg(
+            long = "entra-viewer-oid",
+            env = "RISK_GUARD_ENTRA_VIEWER_OIDS",
+            value_delimiter = ','
+        )]
         entra_viewer_oids: Vec<String>,
         /// Also require a listed account to read. Off by default: the public console is readable by anyone and only
         /// administrators (who sign in at /admin) can change settings.
@@ -380,7 +408,9 @@ fn load_normalizer(api_semantics: Option<&Path>, hmac_key: &[u8]) -> Result<Cano
             Ok(normalizer)
         }
         None => {
-            tracing::warn!("using the built-in demo api semantics (GitHub-style routes, host-agnostic)");
+            tracing::warn!(
+                "using the built-in demo api semantics (GitHub-style routes, host-agnostic)"
+            );
             Ok(CanonicalNormalizer::new_default(hmac_key))
         }
     }
@@ -392,7 +422,10 @@ fn restriction_target<'a>(
     context_id: Option<&'a str>,
 ) -> Result<crate::store::RestrictionTarget<'a>> {
     match (agent_id, sandbox_id) {
-        (Some(agent_id), None) => Ok(crate::store::RestrictionTarget::Agent { agent_id, context_id }),
+        (Some(agent_id), None) => Ok(crate::store::RestrictionTarget::Agent {
+            agent_id,
+            context_id,
+        }),
         (None, Some(sandbox_id)) => Ok(crate::store::RestrictionTarget::Sandbox { sandbox_id }),
         _ => Err(RiskGuardError::InvalidArgument(
             "pass exactly one of --agent-id or --sandbox-id".into(),
@@ -460,10 +493,15 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                 ));
             }
             let tls = crate::sidecar::listener_tls(
-                listen, tls_cert.as_deref(), tls_key.as_deref(), allow_insecure_local_test,
+                listen,
+                tls_cert.as_deref(),
+                tls_key.as_deref(),
+                allow_insecure_local_test,
             )?;
-            let hmac_key =
-                crate::sidecar::resource_hmac_key(hmac_key_file.as_deref(), allow_insecure_local_test)?;
+            let hmac_key = crate::sidecar::resource_hmac_key(
+                hmac_key_file.as_deref(),
+                allow_insecure_local_test,
+            )?;
             let store = Arc::new(SqliteRiskStore::open(&db)?);
             store.bind_resource_key(&hmac_key, now_unix_ms())?;
             if decision_retention_days > 0 {
@@ -475,19 +513,30 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                         tick.tick().await;
                         let store = Arc::clone(&retention_store);
                         let cutoff = now_unix_ms().saturating_sub(window_ms);
-                        match tokio::task::spawn_blocking(move || store.prune_decisions_older_than(cutoff)).await {
+                        match tokio::task::spawn_blocking(move || {
+                            store.prune_decisions_older_than(cutoff)
+                        })
+                        .await
+                        {
                             Ok(Ok(0)) => {}
                             Ok(Ok(deleted)) => tracing::info!(
                                 deleted,
                                 retention_days = decision_retention_days,
                                 "pruned decisions past the retention window"
                             ),
-                            Ok(Err(err)) => tracing::warn!(error = %err, "decision retention pruning failed"),
-                            Err(err) => tracing::warn!(error = %err, "decision retention task failed"),
+                            Ok(Err(err)) => {
+                                tracing::warn!(error = %err, "decision retention pruning failed")
+                            }
+                            Err(err) => {
+                                tracing::warn!(error = %err, "decision retention task failed")
+                            }
                         }
                     }
                 });
-                tracing::info!(retention_days = decision_retention_days, "decision retention is enabled");
+                tracing::info!(
+                    retention_days = decision_retention_days,
+                    "decision retention is enabled"
+                );
             }
             if store.get_baseline(&default_task_profile)?.is_none() {
                 return Err(RiskGuardError::InvalidArgument(format!(
@@ -529,10 +578,18 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                             continue;
                         }
                         let store = Arc::clone(&latency_store);
-                        match tokio::task::spawn_blocking(move || store.record_latency_interval(now_unix_ms(), &interval)).await {
+                        match tokio::task::spawn_blocking(move || {
+                            store.record_latency_interval(now_unix_ms(), &interval)
+                        })
+                        .await
+                        {
                             Ok(Ok(())) => {}
-                            Ok(Err(err)) => tracing::warn!(error = %err, "recording decision latency failed"),
-                            Err(err) => tracing::warn!(error = %err, "decision latency task failed"),
+                            Ok(Err(err)) => {
+                                tracing::warn!(error = %err, "recording decision latency failed")
+                            }
+                            Err(err) => {
+                                tracing::warn!(error = %err, "decision latency task failed")
+                            }
                         }
                     }
                 });
@@ -575,9 +632,9 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
 
             let mut server = tonic::transport::Server::builder();
             if let Some(tls) = tls {
-                server = server
-                    .tls_config(tls)
-                    .map_err(|err| RiskGuardError::InvalidArgument(format!("invalid TLS identity: {err}")))?;
+                server = server.tls_config(tls).map_err(|err| {
+                    RiskGuardError::InvalidArgument(format!("invalid TLS identity: {err}"))
+                })?;
             }
             server
                 .add_service(health)
@@ -594,61 +651,122 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             .to_string())
         }
 
-        Commands::AgentRegister { db, agent_id, display_name, workspace } => {
+        Commands::AgentRegister {
+            db,
+            agent_id,
+            display_name,
+            workspace,
+        } => {
             let store = SqliteRiskStore::open(db)?;
             match &workspace {
-                Some(workspace) => store.register_agent_in_workspace(&agent_id, &display_name, workspace)?,
+                Some(workspace) => {
+                    store.register_agent_in_workspace(&agent_id, &display_name, workspace)?
+                }
                 None => store.register_agent(&agent_id, &display_name)?,
             }
             Ok(serde_json::json!({"agent_id": agent_id, "workspace": workspace, "status": "registered"}).to_string())
         }
-        Commands::RunCreate { db, agent_id, run_id, agent_revision, task_profile, mode } => {
+        Commands::RunCreate {
+            db,
+            agent_id,
+            run_id,
+            agent_revision,
+            task_profile,
+            mode,
+        } => {
             SqliteRiskStore::open(db)?.create_agent_run(
-                &agent_id, &run_id, &agent_revision, &task_profile, parse_mode(&mode)?,
+                &agent_id,
+                &run_id,
+                &agent_revision,
+                &task_profile,
+                parse_mode(&mode)?,
             )?;
-            Ok(serde_json::json!({"agent_id": agent_id, "run_id": run_id, "status": "created"}).to_string())
+            Ok(
+                serde_json::json!({"agent_id": agent_id, "run_id": run_id, "status": "created"})
+                    .to_string(),
+            )
         }
-        Commands::RunBind { db, run_id, sandbox_id, gateway_id } => {
+        Commands::RunBind {
+            db,
+            run_id,
+            sandbox_id,
+            gateway_id,
+        } => {
             SqliteRiskStore::open(db)?.bind_agent_run(&run_id, &sandbox_id, &gateway_id)?;
-            Ok(serde_json::json!({"run_id": run_id, "sandbox_id": sandbox_id, "status": "bound"}).to_string())
+            Ok(
+                serde_json::json!({"run_id": run_id, "sandbox_id": sandbox_id, "status": "bound"})
+                    .to_string(),
+            )
         }
         Commands::RunEnd { db, run_id } => {
             SqliteRiskStore::open(db)?.end_agent_run(&run_id)?;
             Ok(serde_json::json!({"run_id": run_id, "status": "ended"}).to_string())
         }
         Commands::GuardrailsShow { db, agent_id } => {
-            let view = SqliteRiskStore::open(db)?.agent_guardrails(&agent_id, now_unix_ms())?
+            let view = SqliteRiskStore::open(db)?
+                .agent_guardrails(&agent_id, now_unix_ms())?
                 .ok_or_else(|| RiskGuardError::InvalidArgument("workload not found".into()))?;
             Ok(serde_json::to_string_pretty(&view)?)
         }
         Commands::GuardrailsExport { db, agent_id, out } => {
-            let yaml = SqliteRiskStore::open(db)?.export_agent_guardrails_policy(&agent_id)?
-                .ok_or_else(|| RiskGuardError::InvalidArgument("workload has no saved guardrails".into()))?;
+            let yaml = SqliteRiskStore::open(db)?
+                .export_agent_guardrails_policy(&agent_id)?
+                .ok_or_else(|| {
+                    RiskGuardError::InvalidArgument("workload has no saved guardrails".into())
+                })?;
             if let Some(path) = out {
-                std::fs::write(&path, yaml).map_err(|error| RiskGuardError::InvalidArgument(
-                    format!("cannot write exported policy '{}': {error}", path.display()),
-                ))?;
+                std::fs::write(&path, yaml).map_err(|error| {
+                    RiskGuardError::InvalidArgument(format!(
+                        "cannot write exported policy '{}': {error}",
+                        path.display()
+                    ))
+                })?;
                 Ok(serde_json::json!({"status":"exported","path":path}).to_string())
             } else {
                 Ok(yaml)
             }
         }
         Commands::AdaptiveShow { db, agent_id } => {
-            let view = SqliteRiskStore::open(db)?.agent_adaptive(&agent_id, now_unix_ms())?
+            let view = SqliteRiskStore::open(db)?
+                .agent_adaptive(&agent_id, now_unix_ms())?
                 .ok_or_else(|| RiskGuardError::InvalidArgument("workload not found".into()))?;
             Ok(serde_json::to_string_pretty(&view)?)
         }
-        Commands::AdaptiveApply { db, agent_id, request } => {
+        Commands::AdaptiveApply {
+            db,
+            agent_id,
+            request,
+        } => {
             let file = std::fs::File::open(&request).map_err(|error| {
-                RiskGuardError::InvalidArgument(format!("cannot read adaptive request '{}': {error}", request.display()))
+                RiskGuardError::InvalidArgument(format!(
+                    "cannot read adaptive request '{}': {error}",
+                    request.display()
+                ))
             })?;
-            if file.metadata().map_err(|error| RiskGuardError::InvalidArgument(error.to_string()))?.len() > 65_536 {
-                return Err(RiskGuardError::InvalidArgument("adaptive request exceeds 64 KiB".into()));
+            if file
+                .metadata()
+                .map_err(|error| RiskGuardError::InvalidArgument(error.to_string()))?
+                .len()
+                > 65_536
+            {
+                return Err(RiskGuardError::InvalidArgument(
+                    "adaptive request exceeds 64 KiB".into(),
+                ));
             }
-            let operation: crate::adaptive_controls::AdaptiveOperation = serde_json::from_reader(file)?;
-            match SqliteRiskStore::open(db)?.apply_adaptive_operation(&agent_id, &operation, "local-cli", now_unix_ms())? {
-                crate::adaptive_controls::AdaptiveUpdateResult::Applied(view) => Ok(serde_json::to_string_pretty(&view)?),
-                crate::adaptive_controls::AdaptiveUpdateResult::Conflict(message) => Err(RiskGuardError::Policy(message)),
+            let operation: crate::adaptive_controls::AdaptiveOperation =
+                serde_json::from_reader(file)?;
+            match SqliteRiskStore::open(db)?.apply_adaptive_operation(
+                &agent_id,
+                &operation,
+                "local-cli",
+                now_unix_ms(),
+            )? {
+                crate::adaptive_controls::AdaptiveUpdateResult::Applied(view) => {
+                    Ok(serde_json::to_string_pretty(&view)?)
+                }
+                crate::adaptive_controls::AdaptiveUpdateResult::Conflict(message) => {
+                    Err(RiskGuardError::Policy(message))
+                }
             }
         }
         Commands::BaselineImport { db, profile } => {
@@ -669,7 +787,8 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                 "baseline_hash": hash,
                 "maturity": baseline.maturity(),
                 "source": "operator_import"
-            }).to_string())
+            })
+            .to_string())
         }
 
         Commands::EpochCreate {
@@ -694,7 +813,10 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
 
             let (resolved_task_profile, baseline_hash) =
                 if let Some(profile) = store.get_baseline(&task_profile)? {
-                    (profile.task_profile.clone(), compute_baseline_hash(&profile))
+                    (
+                        profile.task_profile.clone(),
+                        compute_baseline_hash(&profile),
+                    )
                 } else {
                     return Err(RiskGuardError::InvalidArgument(format!(
                         "baseline '{task_profile}' is not provisioned; use baseline-import"
@@ -785,7 +907,9 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
 
             let epoch_id = if let Some(ref ep) = active_epoch {
                 ep.epoch_id.clone()
-            } else if let Some(first_decision) = store.list_decisions(&sandbox_id, 1)?.into_iter().next() {
+            } else if let Some(first_decision) =
+                store.list_decisions(&sandbox_id, 1)?.into_iter().next()
+            {
                 first_decision.epoch_id
             } else {
                 format!("ep-{sandbox_id}")
@@ -877,8 +1001,10 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             api_semantics,
             allow_insecure_local_test,
         } => {
-            let hmac_key =
-                crate::sidecar::resource_hmac_key(hmac_key_file.as_deref(), allow_insecure_local_test)?;
+            let hmac_key = crate::sidecar::resource_hmac_key(
+                hmac_key_file.as_deref(),
+                allow_insecure_local_test,
+            )?;
             let store = SqliteRiskStore::open(&db)?;
             store.bind_resource_key(&hmac_key, now_unix_ms())?;
             let normalizer = load_normalizer(api_semantics.as_deref(), &hmac_key)?;
@@ -903,7 +1029,12 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             Ok(serde_json::to_string_pretty(&evaluation)?)
         }
 
-        Commands::HealthCheck { endpoint, tls_ca, server_name, timeout_secs } => {
+        Commands::HealthCheck {
+            endpoint,
+            tls_ca,
+            server_name,
+            timeout_secs,
+        } => {
             crate::sidecar::probe_health(
                 &endpoint,
                 tls_ca.as_deref(),
@@ -919,9 +1050,17 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             Ok(serde_json::to_string_pretty(&generated)?)
         }
 
-        Commands::RestrictionList { db, agent_id, sandbox_id, context_id } => {
-            let target =
-                restriction_target(agent_id.as_deref(), sandbox_id.as_deref(), context_id.as_deref())?;
+        Commands::RestrictionList {
+            db,
+            agent_id,
+            sandbox_id,
+            context_id,
+        } => {
+            let target = restriction_target(
+                agent_id.as_deref(),
+                sandbox_id.as_deref(),
+                context_id.as_deref(),
+            )?;
             let view = SqliteRiskStore::open(&db)?.list_restrictions(target, now_unix_ms())?;
             Ok(serde_json::to_string_pretty(&view)?)
         }
@@ -935,10 +1074,18 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             operator,
             reason,
         } => {
-            let target =
-                restriction_target(agent_id.as_deref(), sandbox_id.as_deref(), context_id.as_deref())?;
-            let cleared = SqliteRiskStore::open(&db)?
-                .clear_restriction(target, &scope, &operator, &reason, now_unix_ms())?;
+            let target = restriction_target(
+                agent_id.as_deref(),
+                sandbox_id.as_deref(),
+                context_id.as_deref(),
+            )?;
+            let cleared = SqliteRiskStore::open(&db)?.clear_restriction(
+                target,
+                &scope,
+                &operator,
+                &reason,
+                now_unix_ms(),
+            )?;
             Ok(serde_json::to_string_pretty(&cleared)?)
         }
 
@@ -961,7 +1108,14 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                 )?),
                 _ => None,
             };
-            crate::operator_dashboard::serve_with_sign_in(listen, db, operator_token_file, entra, entra_require_sign_in_to_read).await?;
+            crate::operator_dashboard::serve_with_sign_in(
+                listen,
+                db,
+                operator_token_file,
+                entra,
+                entra_require_sign_in_to_read,
+            )
+            .await?;
             Ok(serde_json::json!({"status": "stopped", "listen": listen.to_string()}).to_string())
         }
         Commands::DemoDashboard { listen, db } => {
@@ -1215,12 +1369,9 @@ network_policies:
         let normalizer = CanonicalNormalizer::new_default(crate::sidecar::INSECURE_TEST_HMAC_KEY);
         let detector = InteractionRiskDetector::new_default();
 
-        for (idx, path) in [
-            "/repos/org/docs-site",
-            "/repos/org/docs-site/issues",
-        ]
-        .into_iter()
-        .enumerate()
+        for (idx, path) in ["/repos/org/docs-site", "/repos/org/docs-site/issues"]
+            .into_iter()
+            .enumerate()
         {
             let req = normalizer
                 .normalize(&RawRequestInput {

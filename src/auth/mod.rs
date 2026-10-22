@@ -198,9 +198,10 @@ impl JwtAuthVerifier {
         validation.validate_aud = false;
         validation.set_required_spec_claims(&["iss", "aud", "sub", "iat", "exp", "jti"]);
 
-        let token_data = decode::<ExtensionJwtClaims>(token, decoding_key, &validation).map_err(
-            |err| RiskGuardError::Unauthenticated(format!("JWT verification failed: {err}")),
-        )?;
+        let token_data =
+            decode::<ExtensionJwtClaims>(token, decoding_key, &validation).map_err(|err| {
+                RiskGuardError::Unauthenticated(format!("JWT verification failed: {err}"))
+            })?;
         let claims = token_data.claims;
 
         let expected_issuer = self.expected_issuer();
@@ -537,10 +538,9 @@ impl JwtTestIssuer {
                     "gateway extension token must not specify sandbox_id".to_string(),
                 ));
             }
-            (ExtensionCallerKind::Supervisor, Some(sb)) if !sb.trim().is_empty() => (
-                format!("{SPIFFE_SANDBOX_PREFIX}{sb}"),
-                Some(sb.to_string()),
-            ),
+            (ExtensionCallerKind::Supervisor, Some(sb)) if !sb.trim().is_empty() => {
+                (format!("{SPIFFE_SANDBOX_PREFIX}{sb}"), Some(sb.to_string()))
+            }
             (ExtensionCallerKind::Supervisor, _) => {
                 return Err(RiskGuardError::InvalidArgument(
                     "supervisor extension token requires non-empty sandbox_id".to_string(),
@@ -584,9 +584,10 @@ impl JwtTestIssuer {
     /// Construct a tonic [`MetadataMap`] containing `authorization: Bearer <token>`.
     pub fn bearer_metadata(token: &str) -> Result<MetadataMap> {
         let mut metadata = MetadataMap::new();
-        let header_val = AsciiMetadataValue::try_from(format!("Bearer {token}")).map_err(|err| {
-            RiskGuardError::InvalidArgument(format!("invalid bearer token metadata: {err}"))
-        })?;
+        let header_val =
+            AsciiMetadataValue::try_from(format!("Bearer {token}")).map_err(|err| {
+                RiskGuardError::InvalidArgument(format!("invalid bearer token metadata: {err}"))
+            })?;
         metadata.insert("authorization", header_val);
         Ok(metadata)
     }
@@ -1009,4 +1010,3 @@ mod tests {
         ));
     }
 }
-

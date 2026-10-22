@@ -98,7 +98,11 @@ impl SqliteRiskStore {
                 principal_provider: row.get(3)?,
                 principal_subject: row.get(4)?,
                 agent_id: row.get(5)?,
-                source: if source == "principal" { "principal" } else { "label" },
+                source: if source == "principal" {
+                    "principal"
+                } else {
+                    "label"
+                },
                 bound: outcome == "bound",
                 reason: row.get(8)?,
             })
@@ -114,7 +118,10 @@ impl SqliteRiskStore {
         workspace: &str,
     ) -> Result<()> {
         identifier(agent_id, "agent_id")?;
-        if workspace.trim().is_empty() || workspace.len() > 128 || workspace.chars().any(char::is_control) {
+        if workspace.trim().is_empty()
+            || workspace.len() > 128
+            || workspace.chars().any(char::is_control)
+        {
             return Err(RiskGuardError::InvalidArgument(
                 "workspace must contain 1..128 bytes without control characters".into(),
             ));
@@ -152,8 +159,8 @@ impl SqliteRiskStore {
         } else {
             task_profile
         };
-        let profile =
-            query_baseline_by_name_or_hash(&tx, profile_reference, profile_reference)?.ok_or_else(|| {
+        let profile = query_baseline_by_name_or_hash(&tx, profile_reference, profile_reference)?
+            .ok_or_else(|| {
                 RiskGuardError::InvalidArgument(
                     "baseline must be imported before creating a run".into(),
                 )
@@ -210,11 +217,13 @@ impl SqliteRiskStore {
         }
         let learning_started: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM adaptive_sessions WHERE run_id = ?1)",
-            params![run_id], |row| row.get(0),
+            params![run_id],
+            |row| row.get(0),
         )?;
         if learning_started {
             return Err(RiskGuardError::PermissionDenied(
-                "learning runs freeze their sandbox binding; use a fresh run for another sandbox".into(),
+                "learning runs freeze their sandbox binding; use a fresh run for another sandbox"
+                    .into(),
             ));
         }
         let context: Option<(String, String, String, String)> = tx
@@ -320,8 +329,9 @@ impl SqliteRiskStore {
         let (epoch, run_exists) = {
             let mut conn = self.lock_conn()?;
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let epoch = query_active_epoch(&tx, sandbox_id)?
-                .ok_or_else(|| RiskGuardError::InvalidArgument("sandbox has no active epoch".into()))?;
+            let epoch = query_active_epoch(&tx, sandbox_id)?.ok_or_else(|| {
+                RiskGuardError::InvalidArgument("sandbox has no active epoch".into())
+            })?;
             let existing_binding: Option<String> = tx
                 .query_row(
                     "SELECT run_id FROM epoch_bindings WHERE epoch_id = ?1",
@@ -526,7 +536,11 @@ impl SqliteRiskStore {
                 })))?.collect::<std::result::Result<Vec<_>, _>>()?;
                 let run_lifecycle = if ended.is_some() {
                     "ended"
-                } else if sandboxes.is_empty() || sandboxes.iter().any(|s| matches!(s["lifecycle"].as_str(), Some("recently_active" | "idle"))) {
+                } else if sandboxes.is_empty()
+                    || sandboxes.iter().any(|s| {
+                        matches!(s["lifecycle"].as_str(), Some("recently_active" | "idle"))
+                    })
+                {
                     "open"
                 } else {
                     "presumed_gone"
@@ -565,14 +579,29 @@ impl SqliteRiskStore {
             })?;
             let mut decisions = Vec::new();
             for row in rows {
-                let (request, eval, run, context, revision, settings_revision, settings_json, settings_hash) = row?;
+                let (
+                    request,
+                    eval,
+                    run,
+                    context,
+                    revision,
+                    settings_revision,
+                    settings_json,
+                    settings_hash,
+                ) = row?;
                 let guardrails = match (settings_revision, settings_json, settings_hash) {
                     (Some(revision), Some(payload), Some(hash)) => {
                         if hex::encode(Sha256::digest(payload.as_bytes())) != hash {
-                            return Err(RiskGuardError::Storage("decision guardrail settings hash mismatch".into()));
+                            return Err(RiskGuardError::Storage(
+                                "decision guardrail settings hash mismatch".into(),
+                            ));
                         }
-                        let settings: crate::guardrails::AgentGuardrails = serde_json::from_str(&payload)
-                            .map_err(|error| RiskGuardError::Storage(format!("invalid decision guardrails: {error}")))?;
+                        let settings: crate::guardrails::AgentGuardrails =
+                            serde_json::from_str(&payload).map_err(|error| {
+                                RiskGuardError::Storage(format!(
+                                    "invalid decision guardrails: {error}"
+                                ))
+                            })?;
                         Some(json!({
                             "revision": revision,
                             "observe_threshold": settings.observe_threshold,
@@ -581,11 +610,23 @@ impl SqliteRiskStore {
                         }))
                     }
                     (None, None, None) => None,
-                    _ => return Err(RiskGuardError::Storage("incomplete decision guardrail revision".into())),
+                    _ => {
+                        return Err(RiskGuardError::Storage(
+                            "incomplete decision guardrail revision".into(),
+                        ));
+                    }
                 };
                 let evaluation: RiskEvaluation = serde_json::from_str(&eval)?;
-                let transport = super::adaptive::decision_transport(&tx, &evaluation.epoch_id, &evaluation.request_id)?;
-                let adaptive = super::adaptive::decision_assessments(&tx, &evaluation.epoch_id, &evaluation.request_id)?;
+                let transport = super::adaptive::decision_transport(
+                    &tx,
+                    &evaluation.epoch_id,
+                    &evaluation.request_id,
+                )?;
+                let adaptive = super::adaptive::decision_assessments(
+                    &tx,
+                    &evaluation.epoch_id,
+                    &evaluation.request_id,
+                )?;
                 decisions.push(json!({
                     "request": serde_json::from_str::<NormalizedRequest>(&request)?,
                     "evaluation": evaluation,
@@ -677,7 +718,8 @@ impl SqliteRiskStore {
             })?;
             let mut snaps = Vec::new();
             for row in rows {
-                let (id, sandbox_id, policy_hash, policy_yaml, source, captured_at_ms, run_id) = row?;
+                let (id, sandbox_id, policy_hash, policy_yaml, source, captured_at_ms, run_id) =
+                    row?;
                 let parsed = openshell_policy_schema::parse_policy(&policy_yaml)
                     .ok()
                     .and_then(|doc| serde_json::to_value(doc).ok());

@@ -35,13 +35,14 @@ impl ProverHardeningEngine {
 
 impl HardeningEngine for ProverHardeningEngine {
     fn extract_credentialed_endpoints(&self, policy_yaml: &str) -> Result<BTreeSet<(String, u16)>> {
-        let doc = openshell_policy_schema::parse_policy(policy_yaml)
-            .map_err(|err| RiskGuardError::Policy(format!("failed to parse policy YAML: {err:#}")))?;
+        let doc = openshell_policy_schema::parse_policy(policy_yaml).map_err(|err| {
+            RiskGuardError::Policy(format!("failed to parse policy YAML: {err:#}"))
+        })?;
 
         let mut endpoints = BTreeSet::new();
         for (rule_key, rule) in &doc.network_policies {
-            let is_provider =
-                is_provider_rule_name(rule_key) || is_provider_rule_name(rule.effective_name(rule_key));
+            let is_provider = is_provider_rule_name(rule_key)
+                || is_provider_rule_name(rule.effective_name(rule_key));
             for endpoint in &rule.endpoints {
                 let is_credentialed = is_provider
                     || endpoint.credential_binding.is_some()
@@ -243,8 +244,8 @@ impl HardeningEngine for ProverHardeningEngine {
         interval_end_ms: i64,
         coverage_gaps: Vec<String>,
     ) -> Result<HardeningCandidate> {
-        let mut candidate_doc =
-            openshell_policy_schema::parse_policy(current_policy_yaml).map_err(|err| {
+        let mut candidate_doc = openshell_policy_schema::parse_policy(current_policy_yaml)
+            .map_err(|err| {
                 RiskGuardError::Policy(format!("failed to parse current policy YAML: {err:#}"))
             })?;
 
@@ -391,9 +392,11 @@ impl HardeningEngine for ProverHardeningEngine {
             }
         }
 
-        let candidate_yaml = openshell_policy_schema::serialize_policy(&candidate_doc)
-            .map_err(|err| {
-                RiskGuardError::Policy(format!("failed to serialize candidate policy YAML: {err:#}"))
+        let candidate_yaml =
+            openshell_policy_schema::serialize_policy(&candidate_doc).map_err(|err| {
+                RiskGuardError::Policy(format!(
+                    "failed to serialize candidate policy YAML: {err:#}"
+                ))
             })?;
 
         let source_policy_hash = sha256_hex(current_policy_yaml.as_bytes());
@@ -534,8 +537,7 @@ fn is_broad_rest_endpoint(endpoint: &NetworkEndpoint) -> bool {
     endpoint.access.is_empty()
         && !endpoint.rules.is_empty()
         && endpoint.rules.iter().any(|r| {
-            r.allow.method == "*"
-                || matches!(r.allow.path.as_str(), "" | "*" | "**" | "/**" | "/*")
+            r.allow.method == "*" || matches!(r.allow.path.as_str(), "" | "*" | "**" | "/**" | "/*")
         })
 }
 
@@ -563,7 +565,10 @@ fn request_matches_binary_pattern(req: &NormalizedRequest, pattern: &str) -> boo
             .any(|anc| path_glob_matches(pattern, anc))
 }
 
-fn request_matches_endpoint_connection(req: &NormalizedRequest, endpoint: &NetworkEndpoint) -> bool {
+fn request_matches_endpoint_connection(
+    req: &NormalizedRequest,
+    endpoint: &NetworkEndpoint,
+) -> bool {
     let ports = endpoint.effective_ports();
     ports.contains(&req.port) && host_glob_matches(&endpoint.host, &req.host)
 }
@@ -591,9 +596,10 @@ fn path_glob_matches(pattern: &str, path: &str) -> bool {
         return true;
     }
     if let Some(prefix) = pattern.strip_suffix("/**")
-        && (path == prefix || path.starts_with(&format!("{prefix}/"))) {
-            return true;
-        }
+        && (path == prefix || path.starts_with(&format!("{prefix}/")))
+    {
+        return true;
+    }
     let pat_segs: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
     let path_segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     wildcard_segments_match(&pat_segs, &path_segs)
@@ -644,10 +650,7 @@ fn synthesize_l7_paths(req: &NormalizedRequest) -> Vec<String> {
             "*/*"
         };
         let replaced = route.replace("{owner}/{repo}", rep);
-        let segments: Vec<&str> = replaced
-            .split('/')
-            .filter(|s| !s.is_empty())
-            .collect();
+        let segments: Vec<&str> = replaced.split('/').filter(|s| !s.is_empty()).collect();
 
         // /repos/<owner>/<repo> has 3 segments
         if segments.len() <= 3 && !replaced.contains('{') {
@@ -674,7 +677,7 @@ fn synthesize_l7_paths(req: &NormalizedRequest) -> Vec<String> {
             }
             return vec![base_path, wildcard_path];
         }
-        return vec![ sanitize_l7_path(&format!("{base_path}/**")) ];
+        return vec![sanitize_l7_path(&format!("{base_path}/**"))];
     }
 
     // Generic route template without {owner}/{repo}
@@ -766,11 +769,7 @@ fn method_pattern_allows(rule_method: &str, req_method: &str) -> bool {
     rule_method.eq_ignore_ascii_case("GET") && req_method.eq_ignore_ascii_case("HEAD")
 }
 
-fn endpoint_allows_method_and_path(
-    endpoint: &NetworkEndpoint,
-    method: &str,
-    path: &str,
-) -> bool {
+fn endpoint_allows_method_and_path(endpoint: &NetworkEndpoint, method: &str, path: &str) -> bool {
     if !endpoint.path.is_empty() && !path_glob_matches(&endpoint.path, path) {
         return false;
     }
@@ -794,8 +793,7 @@ fn endpoint_allows_method_and_path(
             .iter()
             .any(|m| m.eq_ignore_ascii_case(method)),
         "" => endpoint.rules.iter().any(|r| {
-            method_pattern_allows(&r.allow.method, method)
-                && path_glob_matches(&r.allow.path, path)
+            method_pattern_allows(&r.allow.method, method) && path_glob_matches(&r.allow.path, path)
         }),
         _ => false,
     }
@@ -1152,7 +1150,10 @@ network_policies:
         let ce = proof_method
             .step2_counterexample_or_reason
             .expect("should include counterexample");
-        assert!(ce.contains("POST") || ce.contains("/admin"), "unexpected ce: {ce}");
+        assert!(
+            ce.contains("POST") || ce.contains("/admin"),
+            "unexpected ce: {ce}"
+        );
 
         let proof_host = engine
             .verify_two_step_containment(boundary_yaml, expanding_host_yaml, Duration::from_secs(5))
@@ -1273,11 +1274,18 @@ network_policies:
         assert_eq!(candidate.replay_total_requests, 2);
         assert_eq!(candidate.replay_would_block, 0);
         assert_eq!(candidate.status, "ready");
-        assert_ne!(candidate.source_policy_hash, candidate.candidate_policy_hash);
+        assert_ne!(
+            candidate.source_policy_hash,
+            candidate.candidate_policy_hash
+        );
 
         let parsed_candidate = openshell_policy_schema::parse_policy(&candidate.candidate_yaml)
             .expect("candidate YAML must parse");
-        assert!(parsed_candidate.network_policies.contains_key("_provider_github"));
+        assert!(
+            parsed_candidate
+                .network_policies
+                .contains_key("_provider_github")
+        );
 
         let gh_rule = &parsed_candidate.network_policies["github_api"];
         assert_eq!(gh_rule.binaries.len(), 1);
@@ -1454,7 +1462,10 @@ network_policies:
         assert_eq!(candidate.diff_summary.len(), 1);
         assert!(candidate.diff_summary[0].contains("pruned 1 unexercised REST rules"));
         assert!(!candidate.candidate_yaml.contains("DELETE"));
-        assert!(candidate.candidate_yaml.contains("/repos/local/review/issues"));
+        assert!(
+            candidate
+                .candidate_yaml
+                .contains("/repos/local/review/issues")
+        );
     }
 }
-

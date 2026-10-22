@@ -938,25 +938,31 @@ pub(super) fn evaluate(
     let mut assessments = Vec::new();
     for id in ids {
         let enforced = head.enforced.as_deref() == Some(id.as_str());
-        let (model, result) =
-            match load_and_assess(conn, frame, identity, scope, &id, window.as_ref()) {
-                Ok(Some(assessed)) => assessed,
-                Ok(None) => continue,
-                // An enforced model is part of the decision, so its failure fails closed.
-                Err(error) if enforced => return Err(error),
-                // A shadow model is observation only; its failure must never decide a request.
-                Err(error) => {
-                    tracing::warn!(model_id = %id, %error, "shadow adaptive model unavailable; request evaluated without it");
-                    eval.signals.push(SignalContribution {
-                        feature: "adaptive_shadow".to_string(),
-                        observed_summary: format!("model={id}; unavailable: {error}"),
-                        baseline_summary: "shadow_model_unavailable".to_string(),
-                        contribution: 0,
-                        support: "shadow failures are recorded, never enforced".to_string(),
-                    });
-                    continue;
-                }
-            };
+        let (model, result) = match load_and_assess(
+            conn,
+            frame,
+            identity,
+            scope,
+            &id,
+            window.as_ref(),
+        ) {
+            Ok(Some(assessed)) => assessed,
+            Ok(None) => continue,
+            // An enforced model is part of the decision, so its failure fails closed.
+            Err(error) if enforced => return Err(error),
+            // A shadow model is observation only; its failure must never decide a request.
+            Err(error) => {
+                tracing::warn!(model_id = %id, %error, "shadow adaptive model unavailable; request evaluated without it");
+                eval.signals.push(SignalContribution {
+                    feature: "adaptive_shadow".to_string(),
+                    observed_summary: format!("model={id}; unavailable: {error}"),
+                    baseline_summary: "shadow_model_unavailable".to_string(),
+                    contribution: 0,
+                    support: "shadow failures are recorded, never enforced".to_string(),
+                });
+                continue;
+            }
+        };
         let would_block = result.high_confidence
             && result.score >= eval.threshold.max(learner::WOULD_BLOCK_THRESHOLD);
         let mode = if enforced { "enforce" } else { "shadow" };
@@ -1041,7 +1047,11 @@ fn load_and_assess(
                 "adaptive window unavailable: {error}"
             )));
         }
-        None => return Err(RiskGuardError::Storage("adaptive window unavailable".into())),
+        None => {
+            return Err(RiskGuardError::Storage(
+                "adaptive window unavailable".into(),
+            ));
+        }
     };
     let result = learner::assess(&model.profile, frame.request, window);
     Ok(Some((model, result)))
@@ -1095,9 +1105,7 @@ pub(super) fn record(
         params![identity.run_id],
         |row| row.get(0),
     )?;
-    if !has_session
-        && request.timestamp_ms >= 0
-        && auto_learning_enabled(conn, &identity.agent_id)?
+    if !has_session && request.timestamp_ms >= 0 && auto_learning_enabled(conn, &identity.agent_id)?
     {
         let eligible: bool = conn.query_row(
             "SELECT EXISTS(

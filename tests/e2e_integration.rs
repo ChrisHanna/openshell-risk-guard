@@ -185,7 +185,8 @@ impl RunningSidecarServer {
         cooldown_duration_ms: i64,
         max_in_flight: usize,
     ) -> Self {
-        let store = Arc::new(open_and_seed_store(db_path).expect("open and seed on-disk SQLite store"));
+        let store =
+            Arc::new(open_and_seed_store(db_path).expect("open and seed on-disk SQLite store"));
         let pragmas = store.verify_pragmas().expect("verify SQLite pragmas");
         assert_eq!(
             pragmas,
@@ -200,8 +201,7 @@ impl RunningSidecarServer {
         );
         let normalizer = Arc::new(CanonicalNormalizer::new_default(DEMO_HMAC_KEY));
         let detector = Arc::new(
-            InteractionRiskDetector::new_default()
-                .with_cooldown_duration_ms(cooldown_duration_ms),
+            InteractionRiskDetector::new_default().with_cooldown_duration_ms(cooldown_duration_ms),
         );
         let hardening = Arc::new(ProverHardeningEngine::new());
         let admission = Arc::new(Semaphore::new(max_in_flight));
@@ -370,10 +370,12 @@ fn build_interceptor_validate_request(
         service: "openshell.v1.OpenShell".to_string(),
         method: method.to_string(),
         principal: HashMap::new(),
-        phase: Some(interceptor_evaluation::Phase::Validate(ValidateEvaluation {
-            proposed_operation: Some(json_to_struct(proposed_operation)),
-            current_state: None,
-        })),
+        phase: Some(interceptor_evaluation::Phase::Validate(
+            ValidateEvaluation {
+                proposed_operation: Some(json_to_struct(proposed_operation)),
+                current_state: None,
+            },
+        )),
     };
     let mut req = Request::new(eval);
     *req.metadata_mut() = metadata;
@@ -463,8 +465,7 @@ fn openshell_static_policy_allows(
 ) -> bool {
     let doc = openshell_policy_schema::parse_policy(policy_yaml).expect("parse policy YAML");
     for rule in doc.network_policies.values() {
-        let binary_ok = rule.binaries.is_empty()
-            || rule.binaries.iter().any(|b| b.path == binary);
+        let binary_ok = rule.binaries.is_empty() || rule.binaries.iter().any(|b| b.path == binary);
         let endpoint_ok = rule.endpoints.iter().any(|ep| {
             ep.host.eq_ignore_ascii_case(host)
                 && ep.effective_ports().contains(&port)
@@ -524,7 +525,9 @@ async fn ten_step_live_demo_and_fault_injection_suite() {
     // STEP 1: Parse and display deliberately broad initial policy.yaml
     // =========================================================================
     println!("\n--------------------------------------------------------------------------------");
-    println!("STEP 1: Deliberately Broad Initial Static Policy (access: full + credential_binding)");
+    println!(
+        "STEP 1: Deliberately Broad Initial Static Policy (access: full + credential_binding)"
+    );
     println!("--------------------------------------------------------------------------------");
     let parsed_initial_policy = openshell_policy_schema::parse_policy(INITIAL_BROAD_POLICY_YAML)
         .expect("initial policy.yaml must parse cleanly");
@@ -647,7 +650,9 @@ async fn ten_step_live_demo_and_fault_injection_suite() {
     // STEP 3: Benign Task Requests -> Decision::Allow (score = 10), upstream.get_hits() == 2
     // =========================================================================
     println!("\n--------------------------------------------------------------------------------");
-    println!("STEP 3: Benign Task Requests (GET /repos/org/docs-site & /issues from /usr/bin/curl)");
+    println!(
+        "STEP 3: Benign Task Requests (GET /repos/org/docs-site & /issues from /usr/bin/curl)"
+    );
     println!("--------------------------------------------------------------------------------");
     let mut mw_client = server.connect_middleware_client().await;
 
@@ -717,7 +722,10 @@ async fn ten_step_live_demo_and_fault_injection_suite() {
         Some("25")
     );
     assert_eq!(res_novel_read.findings.len(), 1);
-    assert_eq!(res_novel_read.findings[0].r#type, "behavioral_risk_observed");
+    assert_eq!(
+        res_novel_read.findings[0].r#type,
+        "behavioral_risk_observed"
+    );
     assert_eq!(upstream.get_hits(), 3);
     println!(
         "[STEP 4 PASS] Novel harmless read allowed with observation: risk_score=25 (<70), reason='{}', upstream.get_hits()={}",
@@ -993,7 +1001,9 @@ async fn ten_step_live_demo_and_fault_injection_suite() {
     // (e) Simulated OpenShell baseline denial (never rescued by middleware)
     // =========================================================================
     println!("\n--------------------------------------------------------------------------------");
-    println!("STEP 8 (Gate G-10): Fault Injection (Idempotency, Conflict, Auth, Admission, Baseline)");
+    println!(
+        "STEP 8 (Gate G-10): Fault Injection (Idempotency, Conflict, Auth, Admission, Baseline)"
+    );
     println!("--------------------------------------------------------------------------------");
 
     // 8(a): Exact duplicate request_id idempotency on sbx_demo
@@ -1229,7 +1239,10 @@ async fn ten_step_live_demo_and_fault_injection_suite() {
     assert_eq!(candidate.replay_total_requests, 3);
     assert_eq!(candidate.replay_would_block, 0);
     assert_eq!(candidate.status, "ready");
-    assert_ne!(candidate.source_policy_hash, candidate.candidate_policy_hash);
+    assert_ne!(
+        candidate.source_policy_hash,
+        candidate.candidate_policy_hash
+    );
 
     // Verify active policy hash in SQLite remains unchanged (recommendations never auto-apply!)
     let epoch_after_report = server
@@ -1256,7 +1269,10 @@ async fn ten_step_live_demo_and_fault_injection_suite() {
 
     println!("Diff summary: {:?}", candidate.diff_summary);
     println!("Two-Step Proof: {:?}", candidate.two_step_proof);
-    println!("Narrowed Candidate Policy YAML:\n{}", candidate.candidate_yaml);
+    println!(
+        "Narrowed Candidate Policy YAML:\n{}",
+        candidate.candidate_yaml
+    );
     println!(
         "[STEP 10 PASS] Hardening report ready: raw_prover='{}', step1_invariant={}, step2_verdict='{}', verified_non_expanding={}, replay_would_block={}/{}, active_policy_hash unchanged",
         candidate.two_step_proof.raw_prover_status,
@@ -1475,7 +1491,10 @@ async fn gate_g10_fault_injection_duplicates_auth_admission_and_cold_start() {
         credentialed_endpoints: BTreeSet::from([("api.github.local".to_string(), 18443)]),
         active_policy_hash: Some("pol_cold".to_string()),
     };
-    server.store.upsert_epoch(&cold_epoch).expect("upsert cold epoch");
+    server
+        .store
+        .upsert_epoch(&cold_epoch)
+        .expect("upsert cold epoch");
 
     let mut mw_client = server.connect_middleware_client().await;
     let cold_token = issuer

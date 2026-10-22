@@ -35,13 +35,21 @@ pub struct LatencyInterval {
 
 impl Default for LatencyInterval {
     fn default() -> Self {
-        Self { count: 0, sum_us: 0, max_us: 0, buckets: vec![0; BUCKET_BOUNDS_US.len() + 1] }
+        Self {
+            count: 0,
+            sum_us: 0,
+            max_us: 0,
+            buckets: vec![0; BUCKET_BOUNDS_US.len() + 1],
+        }
     }
 }
 
 impl LatencyInterval {
     pub fn record(&mut self, micros: u64) {
-        let slot = BUCKET_BOUNDS_US.iter().position(|bound| micros <= *bound).unwrap_or(BUCKET_BOUNDS_US.len());
+        let slot = BUCKET_BOUNDS_US
+            .iter()
+            .position(|bound| micros <= *bound)
+            .unwrap_or(BUCKET_BOUNDS_US.len());
         self.buckets[slot] += 1;
         self.count += 1;
         self.sum_us = self.sum_us.saturating_add(micros);
@@ -67,7 +75,9 @@ impl LatencyInterval {
         if self.count == 0 {
             return None;
         }
-        let needed = ((self.count as f64) * quantile.clamp(0.0, 1.0)).ceil().max(1.0) as u64;
+        let needed = ((self.count as f64) * quantile.clamp(0.0, 1.0))
+            .ceil()
+            .max(1.0) as u64;
         let mut seen = 0;
         for (slot, in_bucket) in self.buckets.iter().enumerate() {
             seen += in_bucket;
@@ -116,7 +126,10 @@ pub struct LatencyTimer<'a> {
 
 impl<'a> LatencyTimer<'a> {
     pub fn start(recorder: Option<&'a LatencyRecorder>) -> Self {
-        Self { recorder, started: std::time::Instant::now() }
+        Self {
+            recorder,
+            started: std::time::Instant::now(),
+        }
     }
 }
 
@@ -141,7 +154,10 @@ mod tests {
         assert_eq!(iv.count, 6);
         assert_eq!(iv.max_us, 600_000);
         assert_eq!(iv.sum_us, 100 + 250 + 251 + 900 + 4_000 + 600_000);
-        assert_eq!(iv.buckets[0], 2, "100 and 250 are within the first bound (inclusive)");
+        assert_eq!(
+            iv.buckets[0], 2,
+            "100 and 250 are within the first bound (inclusive)"
+        );
         assert_eq!(iv.buckets[1], 1, "251 is in the second");
         assert_eq!(iv.buckets[2], 1, "900 is within 1 ms");
         assert_eq!(iv.buckets[4], 1, "4 ms is within 5 ms");
@@ -161,8 +177,14 @@ mod tests {
         assert_eq!(iv.quantile_upper_bound_us(0.98), Some(1_000));
         assert_eq!(iv.quantile_upper_bound_us(0.99), Some(10_000));
         assert_eq!(iv.quantile_upper_bound_us(1.0), Some(50_000));
-        assert!(iv.quantile_upper_bound_us(0.5).unwrap() >= 800, "never understates");
-        assert_eq!(LatencyInterval::default().quantile_upper_bound_us(0.5), None);
+        assert!(
+            iv.quantile_upper_bound_us(0.5).unwrap() >= 800,
+            "never understates"
+        );
+        assert_eq!(
+            LatencyInterval::default().quantile_upper_bound_us(0.5),
+            None
+        );
     }
 
     #[test]
@@ -181,9 +203,17 @@ mod tests {
         b.record(900_000);
         a.merge(&b);
         assert_eq!((a.count, a.max_us, a.over_timeout()), (3, 900_000, 1));
-        let bad = LatencyInterval { count: 99, sum_us: 1, max_us: 1, buckets: vec![1, 2] };
+        let bad = LatencyInterval {
+            count: 99,
+            sum_us: 1,
+            max_us: 1,
+            buckets: vec![1, 2],
+        };
         a.merge(&bad);
-        assert_eq!(a.count, 3, "a wrong-length bucket list is dropped, not guessed at");
+        assert_eq!(
+            a.count, 3,
+            "a wrong-length bucket list is dropped, not guessed at"
+        );
     }
 
     #[test]
@@ -195,7 +225,11 @@ mod tests {
         }
         let first = recorder.take();
         assert_eq!(first.count, 1);
-        assert!(first.max_us >= 3_000, "the timer measured the sleep: {}", first.max_us);
+        assert!(
+            first.max_us >= 3_000,
+            "the timer measured the sleep: {}",
+            first.max_us
+        );
         assert_eq!(recorder.take().count, 0, "taking resets the interval");
         drop(LatencyTimer::start(None)); // no recorder: nothing happens
     }

@@ -7,10 +7,13 @@ use openshell_risk_guard::store::SqliteRiskStore;
 use openshell_risk_guard::types::*;
 use serde_json::{Value, json};
 
-fn open_and_seed_store(path: impl AsRef<std::path::Path>) -> openshell_risk_guard::Result<SqliteRiskStore> {
+fn open_and_seed_store(
+    path: impl AsRef<std::path::Path>,
+) -> openshell_risk_guard::Result<SqliteRiskStore> {
     let store = seed_fixture_store(path)?;
     let mut baseline = build_standard_corpus().default_baseline;
-    baseline.normalizer_version = openshell_risk_guard::normalizer::DEFAULT_NORMALIZER_VERSION.into();
+    baseline.normalizer_version =
+        openshell_risk_guard::normalizer::DEFAULT_NORMALIZER_VERSION.into();
     store.store_baseline(&baseline)?;
     Ok(store)
 }
@@ -450,7 +453,8 @@ fn task_profile_changes_are_pending_and_new_runs_use_the_approved_profile() {
     let original = store.get_active_epoch("original").unwrap().unwrap();
     let mut alternate = build_standard_corpus().default_baseline;
     alternate.task_profile = "another-approved-task".into();
-    alternate.normalizer_version = openshell_risk_guard::normalizer::DEFAULT_NORMALIZER_VERSION.into();
+    alternate.normalizer_version =
+        openshell_risk_guard::normalizer::DEFAULT_NORMALIZER_VERSION.into();
     store.store_baseline(&alternate).unwrap();
     let mut desired = settings(&store, "a");
     desired.task_profile = alternate.task_profile.clone();
@@ -516,16 +520,28 @@ fn an_operator_can_promote_a_shadow_rule_and_it_takes_effect_on_the_next_request
             true,
         )
         .unwrap();
-    assert_ne!(before.outcome, DecisionOutcome::Deny, "a shadow rule never blocks");
-    assert_eq!(shadow_hits(&before), vec!["rule=unapproved_resource; mode=shadow"]);
+    assert_ne!(
+        before.outcome,
+        DecisionOutcome::Deny,
+        "a shadow rule never blocks"
+    );
+    assert_eq!(
+        shadow_hits(&before),
+        vec!["rule=unapproved_resource; mode=shadow"]
+    );
 
     // An administrator promotes the rule from another connection, as the console does.
     let operator = SqliteRiskStore::open(&db).unwrap();
     let mut desired = settings(&operator, "a");
-    desired.rule_modes.insert("unapproved_resource".into(), RuleMode::Enforce);
+    desired
+        .rule_modes
+        .insert("unapproved_resource".into(), RuleMode::Enforce);
     let saved = save(&operator, "a", desired, 0);
     assert_eq!(saved["revision"], 1);
-    assert_eq!(saved["settings"]["rule_modes"]["unapproved_resource"], "enforce");
+    assert_eq!(
+        saved["settings"]["rule_modes"]["unapproved_resource"],
+        "enforce"
+    );
 
     let after = evaluator
         .evaluate_authenticated(
@@ -537,8 +553,17 @@ fn an_operator_can_promote_a_shadow_rule_and_it_takes_effect_on_the_next_request
         .unwrap();
     assert_eq!(after.outcome, DecisionOutcome::Deny);
     assert_eq!(after.reason_code, REASON_TASK_CONSTRAINT_DENIED);
-    assert!(shadow_hits(&after).is_empty(), "an enforced rule is no longer reported as shadow");
-    assert!(after.signals.iter().any(|s| s.feature == "guardrails_revision"), "the decision names the settings revision");
+    assert!(
+        shadow_hits(&after).is_empty(),
+        "an enforced rule is no longer reported as shadow"
+    );
+    assert!(
+        after
+            .signals
+            .iter()
+            .any(|s| s.feature == "guardrails_revision"),
+        "the decision names the settings revision"
+    );
 
     // The approved resource still passes, and the promotion is on the audit trail with who made it.
     let approved = evaluator
@@ -557,5 +582,10 @@ fn an_operator_can_promote_a_shadow_rule_and_it_takes_effect_on_the_next_request
     drop(operator);
     drop(evaluator);
     let reopened = SqliteRiskStore::open(&db).unwrap();
-    assert_eq!(settings(&reopened, "a").rule_modes.get("unapproved_resource"), Some(&RuleMode::Enforce));
+    assert_eq!(
+        settings(&reopened, "a")
+            .rule_modes
+            .get("unapproved_resource"),
+        Some(&RuleMode::Enforce)
+    );
 }

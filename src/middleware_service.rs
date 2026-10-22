@@ -96,9 +96,7 @@ impl MiddlewareStageConfig {
                     "enforce" => EnforcementMode::Enforce,
                     "observe" => EnforcementMode::Observe,
                     _ => {
-                        return Err(
-                            "config.mode must be 'observe' or 'enforce'".to_string(),
-                        );
+                        return Err("config.mode must be 'observe' or 'enforce'".to_string());
                     }
                 }
             }
@@ -304,8 +302,14 @@ fn build_http_request_result(eval: &RiskEvaluation) -> HttpRequestResult {
         ("risk_score".to_string(), eval.risk_score.to_string()),
         ("threshold".to_string(), eval.threshold.to_string()),
         ("mode".to_string(), eval.mode.as_str().to_string()),
-        ("state_sequence".to_string(), eval.state_sequence.to_string()),
-        ("detector_version".to_string(), eval.detector_version.clone()),
+        (
+            "state_sequence".to_string(),
+            eval.state_sequence.to_string(),
+        ),
+        (
+            "detector_version".to_string(),
+            eval.detector_version.clone(),
+        ),
         ("baseline_hash".to_string(), eval.baseline_hash.clone()),
     ]);
 
@@ -390,10 +394,14 @@ impl SupervisorMiddleware for RiskGuardMiddlewareService {
             ));
         }
 
-        let caller = self.auth
+        let caller = self
+            .auth
             .verify_supervisor_call(request.metadata(), &ctx.sandbox_id)
             .map_err(map_risk_guard_error)?;
-        let crate::types::AuthenticatedCaller::Supervisor { gateway_id, jti, .. } = caller else {
+        let crate::types::AuthenticatedCaller::Supervisor {
+            gateway_id, jti, ..
+        } = caller
+        else {
             return Err(Status::permission_denied("supervisor identity required"));
         };
         let source = if jti == "insecure-local-test" {
@@ -459,7 +467,11 @@ impl SupervisorMiddleware for RiskGuardMiddlewareService {
             self.eval_timeout,
             tokio::task::spawn_blocking(move || {
                 store.evaluate_native_authenticated(
-                    &normalized, detector.as_ref(), &gateway_id, require_agent, source,
+                    &normalized,
+                    detector.as_ref(),
+                    &gateway_id,
+                    require_agent,
+                    source,
                 )
             }),
         )
@@ -546,7 +558,11 @@ mod tests {
         }
     }
 
-    fn setup_service() -> (RiskGuardMiddlewareService, JwtTestIssuer, Arc<SqliteRiskStore>) {
+    fn setup_service() -> (
+        RiskGuardMiddlewareService,
+        JwtTestIssuer,
+        Arc<SqliteRiskStore>,
+    ) {
         let issuer = JwtTestIssuer::new(TEST_GATEWAY_ID);
         let verifier = Arc::new(
             issuer
@@ -776,30 +792,71 @@ mod tests {
         let (service, issuer, store) = setup_service();
         let service = service.with_required_agent_identity(true);
         let mut unbound = build_signed_eval_request(
-            &issuer, TEST_SANDBOX_ID, TEST_SANDBOX_ID, "unbound",
-            "GET", "/repos/org/docs-site/issues",
+            &issuer,
+            TEST_SANDBOX_ID,
+            TEST_SANDBOX_ID,
+            "unbound",
+            "GET",
+            "/repos/org/docs-site/issues",
         );
-        unbound.get_mut().config = Some(make_config_struct([
-            ("agent_id", Kind::StringValue("self-declared-trusted-agent".into())),
-        ]));
-        assert_eq!(service.evaluate_http_request(unbound).await.unwrap_err().code(), tonic::Code::PermissionDenied);
-        store.register_agent("operator-agent", "Approved reviewer").unwrap();
-        store.create_agent_run(
-            "operator-agent", "operator-run", "revision-1", TEST_TASK_PROFILE, EnforcementMode::Enforce,
-        ).unwrap();
-        store.bind_agent_run("operator-run", TEST_SANDBOX_ID, TEST_GATEWAY_ID).unwrap();
+        unbound.get_mut().config = Some(make_config_struct([(
+            "agent_id",
+            Kind::StringValue("self-declared-trusted-agent".into()),
+        )]));
+        assert_eq!(
+            service
+                .evaluate_http_request(unbound)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::PermissionDenied
+        );
+        store
+            .register_agent("operator-agent", "Approved reviewer")
+            .unwrap();
+        store
+            .create_agent_run(
+                "operator-agent",
+                "operator-run",
+                "revision-1",
+                TEST_TASK_PROFILE,
+                EnforcementMode::Enforce,
+            )
+            .unwrap();
+        store
+            .bind_agent_run("operator-run", TEST_SANDBOX_ID, TEST_GATEWAY_ID)
+            .unwrap();
         let request = build_signed_eval_request(
-            &issuer, TEST_SANDBOX_ID, TEST_SANDBOX_ID, "bound",
-            "GET", "/repos/org/docs-site/issues",
+            &issuer,
+            TEST_SANDBOX_ID,
+            TEST_SANDBOX_ID,
+            "bound",
+            "GET",
+            "/repos/org/docs-site/issues",
         );
-        assert_eq!(service.evaluate_http_request(request).await.unwrap().into_inner().decision, Decision::Allow as i32);
-        let detail = store.operator_agent_detail("operator-agent", i64::MAX - 1).unwrap().unwrap();
-        assert_eq!(detail["decisions"][0]["identity"]["agent_id"], "operator-agent");
+        assert_eq!(
+            service
+                .evaluate_http_request(request)
+                .await
+                .unwrap()
+                .into_inner()
+                .decision,
+            Decision::Allow as i32
+        );
+        let detail = store
+            .operator_agent_detail("operator-agent", i64::MAX - 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            detail["decisions"][0]["identity"]["agent_id"],
+            "operator-agent"
+        );
         assert_eq!(detail["decisions"][0]["identity"]["run_id"], "operator-run");
     }
 
     #[tokio::test]
-    async fn evaluate_http_request_allows_benign_denies_cross_repo_delete_and_latches_restriction() {
+    async fn evaluate_http_request_allows_benign_denies_cross_repo_delete_and_latches_restriction()
+    {
         let (service, issuer, _) = setup_service();
 
         // 1. Benign GET /repos/org/docs-site/issues -> ALLOW, no mutations, has_body == false
@@ -881,7 +938,7 @@ mod tests {
 
     #[tokio::test]
     async fn evaluate_http_request_rejects_missing_jwt_mismatched_sandbox_and_conflicting_duplicate_id()
-    {
+     {
         let (service, issuer, _) = setup_service();
 
         // 1. Missing JWT -> Status::unauthenticated

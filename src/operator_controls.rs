@@ -16,9 +16,9 @@ use hmac::{Hmac, Mac};
 use serde_json::json;
 use sha2::Sha256;
 
+use crate::adaptive_controls::{AdaptiveOperation, AdaptiveUpdateResult};
 use crate::entra_auth::{AuthError, EntraVerifier, Identity, Role};
 use crate::error::{Result, RiskGuardError};
-use crate::adaptive_controls::{AdaptiveOperation, AdaptiveUpdateResult};
 use crate::guardrails::{GuardrailsSaveResult, GuardrailsUpdate};
 use crate::store::SqliteRiskStore;
 
@@ -43,7 +43,11 @@ struct ClearRestrictionRequest {
 
 impl OperatorControls {
     pub(crate) fn disabled() -> Self {
-        Self { verifier: None, entra: None, public_read: false }
+        Self {
+            verifier: None,
+            entra: None,
+            public_read: false,
+        }
     }
 
     pub(crate) fn with_entra(mut self, entra: Arc<EntraVerifier>, public_read: bool) -> Self {
@@ -76,10 +80,16 @@ impl OperatorControls {
     /// Who is calling, for the reads and the writes alike. Only an Entra token counts here.
     async fn identity(&self, headers: &HeaderMap) -> std::result::Result<Identity, Response> {
         let Some(entra) = &self.entra else {
-            return Err(auth_failure(StatusCode::NOT_FOUND, "sign-in is not configured"));
+            return Err(auth_failure(
+                StatusCode::NOT_FOUND,
+                "sign-in is not configured",
+            ));
         };
         let Some(token) = bearer_token(headers) else {
-            return Err(auth_failure(StatusCode::UNAUTHORIZED, "sign in to view this console"));
+            return Err(auth_failure(
+                StatusCode::UNAUTHORIZED,
+                "sign in to view this console",
+            ));
         };
         entra.verify(token).await.map_err(|error| match error {
             AuthError::Invalid(_) => auth_failure(StatusCode::UNAUTHORIZED, "sign in again"),
@@ -195,12 +205,19 @@ impl OperatorControls {
             };
         }
         if !self.enabled() {
-            return Err((StatusCode::NOT_FOUND, Json(json!({
-                "error": "operator controls are disabled; sign-in is not configured"
-            }))).into_response());
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "error": "operator controls are disabled; sign-in is not configured"
+                })),
+            )
+                .into_response());
         }
         let Some(expected) = &self.verifier else {
-            return Err(auth_failure(StatusCode::UNAUTHORIZED, "sign in with an administrator account"));
+            return Err(auth_failure(
+                StatusCode::UNAUTHORIZED,
+                "sign in with an administrator account",
+            ));
         };
         let host = headers.get(header::HOST).and_then(|h| h.to_str().ok());
         let origin = headers
@@ -271,10 +288,9 @@ pub(crate) async fn read_gate(
     if controls.entra.is_some() && !controls.public_read {
         let path = request.uri().path();
         let open = matches!(path, "/" | "/admin" | "/api/operator/status");
-        if !open
-            && let Err(response) = controls.identity(request.headers()).await {
-                return response;
-            }
+        if !open && let Err(response) = controls.identity(request.headers()).await {
+            return response;
+        }
     }
     next.run(request).await
 }
@@ -701,7 +717,9 @@ mod tests {
                 active_policy_hash: None,
             })
             .unwrap();
-        store.bind_agent_run("run-1", "sandbox-1", "gateway").unwrap();
+        store
+            .bind_agent_run("run-1", "sandbox-1", "gateway")
+            .unwrap();
 
         let normalized = CanonicalNormalizer::new_default(b"operator-controls-test-key")
             .normalize(&RawRequestInput {
@@ -804,7 +822,8 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn when_sign_in_is_required_to_read_nobody_sees_anything_until_a_listed_account_signs_in() {
+    async fn when_sign_in_is_required_to_read_nobody_sees_anything_until_a_listed_account_signs_in()
+    {
         use crate::entra_auth::tests::{ADMIN, STRANGER, VIEWER, test_token, test_verifier};
         let store = store();
         let controls = OperatorControls::disabled().with_entra(test_verifier(), false);
@@ -841,13 +860,38 @@ mod tests {
 
         // A viewer can read but not change anything.
         let viewer = test_token(VIEWER);
-        let (read, who) = request(&origin, "GET", "/api/auth/whoami", None, Some(&viewer), "").await;
+        let (read, who) =
+            request(&origin, "GET", "/api/auth/whoami", None, Some(&viewer), "").await;
         assert_eq!(read, StatusCode::OK);
         assert_eq!(who["role"], "viewer");
-        assert_eq!(request(&origin, "GET", "/api/agents/agent/guardrails", None, Some(&viewer), "").await.0, StatusCode::OK);
+        assert_eq!(
+            request(
+                &origin,
+                "GET",
+                "/api/agents/agent/guardrails",
+                None,
+                Some(&viewer),
+                ""
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
         let body = r#"{"scope":"agent","reason":"x"}"#;
-        let (denied, _) = request(&origin, "POST", "/api/agents/agent/restrictions/clear", None, Some(&viewer), body).await;
-        assert_eq!(denied, StatusCode::FORBIDDEN, "a viewer must not clear locks");
+        let (denied, _) = request(
+            &origin,
+            "POST",
+            "/api/agents/agent/restrictions/clear",
+            None,
+            Some(&viewer),
+            body,
+        )
+        .await;
+        assert_eq!(
+            denied,
+            StatusCode::FORBIDDEN,
+            "a viewer must not clear locks"
+        );
 
         // The admin reads, and a change is recorded against the verified identity rather than a fixed name.
         let admin = test_token(ADMIN);
@@ -871,8 +915,14 @@ mod tests {
         )
         .await;
         assert_eq!(saved, StatusCode::OK);
-        let by = view["history"][0]["updated_by"].as_str().unwrap().to_string();
-        assert!(by.contains(&format!("entra:{ADMIN}")), "audit names the verified object ID: {by}");
+        let by = view["history"][0]["updated_by"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            by.contains(&format!("entra:{ADMIN}")),
+            "audit names the verified object ID: {by}"
+        );
         assert_ne!(by, "local-operator");
 
         // A viewer's identical change is refused and leaves the revision alone.
@@ -890,7 +940,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn on_the_public_console_anyone_reads_but_only_a_signed_in_administrator_changes_anything() {
+    async fn on_the_public_console_anyone_reads_but_only_a_signed_in_administrator_changes_anything()
+     {
         use crate::entra_auth::tests::{ADMIN, STRANGER, VIEWER, test_token, test_verifier};
         let store = store();
         let (origin, server) = start(
@@ -902,7 +953,12 @@ mod tests {
         assert_eq!(status["sign_in"]["public_read"], true);
 
         // Reading needs nothing.
-        for path in ["/api/state", "/api/agents/agent", "/api/agents/agent/guardrails", "/api/agents/agent/restrictions"] {
+        for path in [
+            "/api/state",
+            "/api/agents/agent",
+            "/api/agents/agent/guardrails",
+            "/api/agents/agent/restrictions",
+        ] {
             let (code, _) = request(&origin, "GET", path, None, None, "").await;
             assert_eq!(code, StatusCode::OK, "{path} is public");
         }
@@ -920,22 +976,54 @@ mod tests {
         let put = |token: Option<String>| {
             let (origin, body) = (origin.clone(), body.clone());
             async move {
-                request(&origin, "PUT", "/api/agents/agent/guardrails", None, token.as_deref(), &body).await
+                request(
+                    &origin,
+                    "PUT",
+                    "/api/agents/agent/guardrails",
+                    None,
+                    token.as_deref(),
+                    &body,
+                )
+                .await
             }
         };
         assert_eq!(put(None).await.0, StatusCode::UNAUTHORIZED, "anonymous");
-        assert_eq!(put(Some("not.a.token".into())).await.0, StatusCode::UNAUTHORIZED, "junk token");
-        assert_eq!(put(Some(test_token(STRANGER))).await.0, StatusCode::FORBIDDEN, "unlisted account");
-        assert_eq!(put(Some(test_token(VIEWER))).await.0, StatusCode::FORBIDDEN, "viewer");
+        assert_eq!(
+            put(Some("not.a.token".into())).await.0,
+            StatusCode::UNAUTHORIZED,
+            "junk token"
+        );
+        assert_eq!(
+            put(Some(test_token(STRANGER))).await.0,
+            StatusCode::FORBIDDEN,
+            "unlisted account"
+        );
+        assert_eq!(
+            put(Some(test_token(VIEWER))).await.0,
+            StatusCode::FORBIDDEN,
+            "viewer"
+        );
         let clear = r#"{"scope":"agent","reason":"x"}"#;
         assert_eq!(
-            request(&origin, "POST", "/api/agents/agent/restrictions/clear", None, None, clear).await.0,
+            request(
+                &origin,
+                "POST",
+                "/api/agents/agent/restrictions/clear",
+                None,
+                None,
+                clear
+            )
+            .await
+            .0,
             StatusCode::UNAUTHORIZED
         );
         let (saved, view) = put(Some(test_token(ADMIN))).await;
         assert_eq!(saved, StatusCode::OK);
         let by = view["history"][0]["updated_by"].as_str().unwrap();
-        assert!(by.contains(&format!("entra:{ADMIN}")), "audit names the verified account: {by}");
+        assert!(
+            by.contains(&format!("entra:{ADMIN}")),
+            "audit names the verified account: {by}"
+        );
         server.abort();
     }
 
@@ -946,7 +1034,11 @@ mod tests {
         let controls = OperatorControls::from_token(&token).with_entra(test_verifier(), false);
         let (origin, server) = start(controls, store()).await;
         let (code, _) = request(&origin, "GET", "/api/state", None, Some(&token), "").await;
-        assert_eq!(code, StatusCode::UNAUTHORIZED, "the local token is for writes only, and never opens the data");
+        assert_eq!(
+            code,
+            StatusCode::UNAUTHORIZED,
+            "the local token is for writes only, and never opens the data"
+        );
         server.abort();
     }
 

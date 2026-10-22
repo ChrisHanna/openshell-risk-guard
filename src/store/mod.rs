@@ -14,13 +14,14 @@ use sha2::{Digest, Sha256};
 use crate::error::{Result, RiskGuardError};
 use crate::types::{
     BaselineProfile, BindingAudit, DecisionOutcome, DetectorContext, EnforcementMode, EpochRecord,
-    HardeningCandidate, NativeObservationSource, SandboxBinding, NormalizedRequest, REASON_BEHAVIORAL_RISK_RESTRICTED, RatchetAction,
-    RiskDetector, RiskEvaluation, RiskStore, SignalContribution, WindowSnapshot,
+    HardeningCandidate, NativeObservationSource, NormalizedRequest,
+    REASON_BEHAVIORAL_RISK_RESTRICTED, RatchetAction, RiskDetector, RiskEvaluation, RiskStore,
+    SandboxBinding, SignalContribution, WindowSnapshot,
 };
 
-mod identity;
-mod guardrails;
 mod adaptive;
+mod guardrails;
+mod identity;
 mod operations;
 use identity::{AgentIdentity, resolve_identity};
 pub use operations::RestrictionTarget;
@@ -64,11 +65,19 @@ struct StateOwner<'a> {
 
 impl StateOwner<'_> {
     fn windows(self) -> &'static str {
-        if self.agent { "agent_window_buckets" } else { "window_buckets" }
+        if self.agent {
+            "agent_window_buckets"
+        } else {
+            "window_buckets"
+        }
     }
 
     fn restrictions(self) -> &'static str {
-        if self.agent { "agent_restrictions" } else { "restrictions" }
+        if self.agent {
+            "agent_restrictions"
+        } else {
+            "restrictions"
+        }
     }
 }
 
@@ -188,7 +197,8 @@ impl SqliteRiskStore {
             }
         }
         let agents = identity::agent_inventory(&tx, now_ms)?;
-        let total_agents: i64 = tx.query_row("SELECT COUNT(*) FROM agents", [], |row| row.get(0))?;
+        let total_agents: i64 =
+            tx.query_row("SELECT COUNT(*) FROM agents", [], |row| row.get(0))?;
         let (lifecycle, connectivity) = lifecycle_overview(&tx, now_ms)?;
         let latency = operations::latency_summary(&tx, now_ms, operations::LATENCY_WINDOW_MS)?;
         tx.commit()?;
@@ -220,13 +230,16 @@ impl SqliteRiskStore {
             return Ok(None);
         };
         let summary = operator_epoch_summary(&tx, &epoch, now_ms)?;
-        let baseline_json: Option<String> = tx.query_row(
-            "SELECT payload_json FROM artifacts
+        let baseline_json: Option<String> = tx
+            .query_row(
+                "SELECT payload_json FROM artifacts
              WHERE artifact_type = 'baseline_profile' AND artifact_hash = ?1",
-            params![epoch.baseline_hash],
-            |row| row.get(0),
-        ).optional()?;
-        let baseline = baseline_json.map(|raw| serde_json::from_str::<BaselineProfile>(&raw))
+                params![epoch.baseline_hash],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let baseline = baseline_json
+            .map(|raw| serde_json::from_str::<BaselineProfile>(&raw))
             .transpose()?;
         let mut decisions = Vec::new();
         {
@@ -240,8 +253,16 @@ impl SqliteRiskStore {
             for row in rows {
                 let (request, evaluation) = row?;
                 let evaluation: RiskEvaluation = serde_json::from_str(&evaluation)?;
-                let transport = adaptive::decision_transport(&tx, &evaluation.epoch_id, &evaluation.request_id)?;
-                let adaptive = adaptive::decision_assessments(&tx, &evaluation.epoch_id, &evaluation.request_id)?;
+                let transport = adaptive::decision_transport(
+                    &tx,
+                    &evaluation.epoch_id,
+                    &evaluation.request_id,
+                )?;
+                let adaptive = adaptive::decision_assessments(
+                    &tx,
+                    &evaluation.epoch_id,
+                    &evaluation.request_id,
+                )?;
                 decisions.push(serde_json::json!({
                     "request": serde_json::from_str::<NormalizedRequest>(&request)?,
                     "evaluation": evaluation,
@@ -278,7 +299,8 @@ impl SqliteRiskStore {
                     "start_ms": row.get::<_, i64>(1)?,
                     "end_ms": row.get::<_, i64>(2)?
                 }))
-            })?.collect::<std::result::Result<Vec<_>, _>>()?
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?
         };
         tx.commit()?;
         Ok(Some(serde_json::json!({
@@ -305,9 +327,10 @@ impl SqliteRiskStore {
         let mut out = Vec::new();
         for row in rows {
             let payload_json = row?;
-            let candidate: HardeningCandidate = serde_json::from_str(&payload_json).map_err(|e| {
-                RiskGuardError::Storage(format!("corrupt recommendation payload_json: {e}"))
-            })?;
+            let candidate: HardeningCandidate =
+                serde_json::from_str(&payload_json).map_err(|e| {
+                    RiskGuardError::Storage(format!("corrupt recommendation payload_json: {e}"))
+                })?;
             out.push(candidate);
         }
         Ok(out)
@@ -323,7 +346,11 @@ impl SqliteRiskStore {
              ORDER BY start_ms ASC, id ASC",
         )?;
         let rows = stmt.query_map(params![sandbox_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
         })?;
         let mut out = Vec::new();
         for row in rows {
@@ -361,9 +388,8 @@ impl SqliteRiskStore {
     /// Clear runtime epoch/decision/restriction rows for a clean live demo reset while keeping baseline artifacts.
     pub fn clear_runtime_tables(&self) -> Result<()> {
         let conn = self.lock_conn()?;
-        let attributed: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM agents)", [], |row| row.get(0),
-        )?;
+        let attributed: bool =
+            conn.query_row("SELECT EXISTS(SELECT 1 FROM agents)", [], |row| row.get(0))?;
         if attributed {
             return Err(RiskGuardError::PermissionDenied(
                 "demo reset is not permitted on an agent-registered database".into(),
@@ -390,7 +416,8 @@ impl SqliteRiskStore {
         let mut conn = self.lock_conn()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let epoch_ids = {
-            let mut stmt = tx.prepare("SELECT DISTINCT epoch_id FROM decisions ORDER BY epoch_id")?;
+            let mut stmt =
+                tx.prepare("SELECT DISTINCT epoch_id FROM decisions ORDER BY epoch_id")?;
             stmt.query_map([], |row| row.get::<_, String>(0))?
                 .collect::<std::result::Result<Vec<_>, _>>()?
         };
@@ -461,16 +488,21 @@ fn operator_epoch_summary(
     let identity = resolve_identity(conn, epoch)?;
     let owner = state_owner(epoch, identity.as_ref());
     let restrictions: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM {} WHERE epoch_id = ?1
-         AND (tier = 'strict_epoch' OR cooldown_until_ms > ?2)", owner.restrictions()),
+        &format!(
+            "SELECT COUNT(*) FROM {} WHERE epoch_id = ?1
+         AND (tier = 'strict_epoch' OR cooldown_until_ms > ?2)",
+            owner.restrictions()
+        ),
         params![owner.id, now_ms],
         |row| row.get(0),
     )?;
-    let last_score: Option<u32> = conn.query_row(
-        "SELECT risk_score FROM decisions WHERE epoch_id = ?1 ORDER BY sequence DESC LIMIT 1",
-        params![epoch.epoch_id],
-        |row| row.get(0),
-    ).optional()?;
+    let last_score: Option<u32> = conn
+        .query_row(
+            "SELECT risk_score FROM decisions WHERE epoch_id = ?1 ORDER BY sequence DESC LIMIT 1",
+            params![epoch.epoch_id],
+            |row| row.get(0),
+        )
+        .optional()?;
     Ok(serde_json::json!({
         "epoch": epoch,
         "identity": identity,
@@ -491,16 +523,25 @@ impl RiskStore for SqliteRiskStore {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let bound: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM epoch_bindings WHERE epoch_id = ?1)",
-            params![epoch.epoch_id], |row| row.get(0),
+            params![epoch.epoch_id],
+            |row| row.get(0),
         )?;
         if bound {
-            let original = query_active_epoch(&tx, &epoch.sandbox_id)?
-                .ok_or_else(|| RiskGuardError::PermissionDenied("bound epoch cannot be reactivated or moved".into()))?;
-            if original.epoch_id != epoch.epoch_id || original.gateway_id != epoch.gateway_id
-                || original.task_profile != epoch.task_profile || original.baseline_hash != epoch.baseline_hash
-                || original.mode != epoch.mode || original.created_at_ms != epoch.created_at_ms
+            let original = query_active_epoch(&tx, &epoch.sandbox_id)?.ok_or_else(|| {
+                RiskGuardError::PermissionDenied(
+                    "bound epoch cannot be reactivated or moved".into(),
+                )
+            })?;
+            if original.epoch_id != epoch.epoch_id
+                || original.gateway_id != epoch.gateway_id
+                || original.task_profile != epoch.task_profile
+                || original.baseline_hash != epoch.baseline_hash
+                || original.mode != epoch.mode
+                || original.created_at_ms != epoch.created_at_ms
             {
-                return Err(RiskGuardError::PermissionDenied("bound epoch identity, baseline and mode are immutable".into()));
+                return Err(RiskGuardError::PermissionDenied(
+                    "bound epoch identity, baseline and mode are immutable".into(),
+                ));
             }
         }
 
@@ -572,9 +613,10 @@ impl RiskStore for SqliteRiskStore {
         let mut epoch = query_active_epoch(&tx, sandbox_id)?;
         if let Some(epoch) = epoch.as_mut()
             && let Some(identity) = resolve_identity(&tx, epoch)?
-                && let Some(saved) = guardrails::query_saved(&tx, &identity.agent_id)? {
-                    epoch.mode = saved.settings.mode;
-                }
+            && let Some(saved) = guardrails::query_saved(&tx, &identity.agent_id)?
+        {
+            epoch.mode = saved.settings.mode;
+        }
         tx.commit()?;
         Ok(epoch)
     }
@@ -842,8 +884,14 @@ fn lifecycle_state(last_activity_ms: i64, now_ms: i64) -> &'static str {
 
 /// Lifecycle and connectivity as Risk Guard can honestly know them. It learns about sandboxes only from the calls
 /// it receives (gateway interceptor events and supervisor requests); it never queries the gateway.
-fn lifecycle_overview(conn: &Connection, now_ms: i64) -> Result<(serde_json::Value, serde_json::Value)> {
-    let recorded: i64 = conn.query_row("SELECT COUNT(DISTINCT sandbox_id) FROM epochs", [], |r| r.get(0))?;
+fn lifecycle_overview(
+    conn: &Connection,
+    now_ms: i64,
+) -> Result<(serde_json::Value, serde_json::Value)> {
+    let recorded: i64 =
+        conn.query_row("SELECT COUNT(DISTINCT sandbox_id) FROM epochs", [], |r| {
+            r.get(0)
+        })?;
     let active: i64 = conn.query_row(
         "SELECT COUNT(DISTINCT sandbox_id) FROM epochs WHERE active != 0",
         [],
@@ -867,13 +915,15 @@ fn lifecycle_overview(conn: &Connection, now_ms: i64) -> Result<(serde_json::Val
             }
         }
     }
-    let decisions_total: i64 = conn.query_row("SELECT COUNT(*) FROM decisions", [], |r| r.get(0))?;
+    let decisions_total: i64 =
+        conn.query_row("SELECT COUNT(*) FROM decisions", [], |r| r.get(0))?;
     let decisions_on_active: i64 = conn.query_row(
         "SELECT COUNT(*) FROM decisions d JOIN epochs e USING(epoch_id) WHERE e.active != 0",
         [],
         |r| r.get(0),
     )?;
-    let last_request: Option<i64> = conn.query_row("SELECT MAX(created_at_ms) FROM decisions", [], |r| r.get(0))?;
+    let last_request: Option<i64> =
+        conn.query_row("SELECT MAX(created_at_ms) FROM decisions", [], |r| r.get(0))?;
     let last_event: Option<i64> = conn.query_row(
         "SELECT MAX(MAX(created_at_ms), COALESCE(MAX(closed_at_ms), 0)) FROM epochs",
         [],
@@ -901,7 +951,7 @@ fn lifecycle_overview(conn: &Connection, now_ms: i64) -> Result<(serde_json::Val
         "decisions_recorded": decisions_total,
         "decisions_on_active_epochs": decisions_on_active,
         "note": "Risk Guard learns of sandboxes only from gateway interceptor events and supervisor requests. \
-An epoch with no activity for the not-seen window most likely belongs to a deleted sandbox whose event was missed.",
+    An epoch with no activity for the not-seen window most likely belongs to a deleted sandbox whose event was missed.",
     });
     let connectivity = serde_json::json!({
         "status": status,
@@ -914,8 +964,14 @@ An epoch with no activity for the not-seen window most likely belongs to a delet
 
 fn state_owner<'a>(epoch: &'a EpochRecord, identity: Option<&'a AgentIdentity>) -> StateOwner<'a> {
     match identity {
-        Some(identity) => StateOwner { id: &identity.context_id, agent: true },
-        None => StateOwner { id: &epoch.epoch_id, agent: false },
+        Some(identity) => StateOwner {
+            id: &identity.context_id,
+            agent: true,
+        },
+        None => StateOwner {
+            id: &epoch.epoch_id,
+            agent: false,
+        },
     }
 }
 
@@ -939,12 +995,15 @@ impl SqliteRiskStore {
             ))
         })?;
         if gateway_id.is_some_and(|gateway| epoch.gateway_id != gateway) {
-            return Err(RiskGuardError::PermissionDenied("authenticated gateway does not own sandbox epoch".into()));
+            return Err(RiskGuardError::PermissionDenied(
+                "authenticated gateway does not own sandbox epoch".into(),
+            ));
         }
         let identity = resolve_identity(&tx, &epoch)?;
         let identity_required: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM identity_required_sandboxes WHERE sandbox_id = ?1)",
-            params![req.sandbox_id], |row| row.get(0),
+            params![req.sandbox_id],
+            |row| row.get(0),
         )?;
         if identity.is_none() && (require_agent || identity_required) {
             return Err(RiskGuardError::PermissionDenied(
@@ -952,26 +1011,47 @@ impl SqliteRiskStore {
             ));
         }
         if let Some(identity) = &identity {
-            let (ended, profile, hash, mode, config): (Option<i64>, String, String, String, String) = tx.query_row(
+            let (ended, profile, hash, mode, config): (
+                Option<i64>,
+                String,
+                String,
+                String,
+                String,
+            ) = tx.query_row(
                 "SELECT r.ended_at_ms, c.task_profile, c.baseline_hash, c.mode, c.configuration_id
                  FROM agent_runs r JOIN scoring_contexts c USING(context_id) WHERE r.run_id = ?1",
                 params![identity.run_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
             )?;
-            if ended.is_some() || profile != epoch.task_profile || hash != epoch.baseline_hash
-                || mode != epoch.mode.as_str() || config != detector.configuration_id()
+            if ended.is_some()
+                || profile != epoch.task_profile
+                || hash != epoch.baseline_hash
+                || mode != epoch.mode.as_str()
+                || config != detector.configuration_id()
             {
                 return Err(RiskGuardError::PermissionDenied(
-                    "run ended or scoring configuration no longer matches its immutable binding".into(),
+                    "run ended or scoring configuration no longer matches its immutable binding"
+                        .into(),
                 ));
             }
             let pinned_baseline: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM artifacts
                  WHERE artifact_hash = ?1 AND artifact_type = 'baseline_profile')",
-                params![hash], |row| row.get(0),
+                params![hash],
+                |row| row.get(0),
             )?;
             if !pinned_baseline {
-                return Err(RiskGuardError::Storage("pinned agent baseline is unavailable".into()));
+                return Err(RiskGuardError::Storage(
+                    "pinned agent baseline is unavailable".into(),
+                ));
             }
         }
         let owner = state_owner(&epoch, identity.as_ref());
@@ -988,10 +1068,9 @@ impl SqliteRiskStore {
             .optional()?
         {
             if stored_fingerprint == req.fingerprint {
-                let eval: RiskEvaluation =
-                    serde_json::from_str(&evaluation_json).map_err(|e| {
-                        RiskGuardError::Storage(format!("corrupt decision evaluation_json: {e}"))
-                    })?;
+                let eval: RiskEvaluation = serde_json::from_str(&evaluation_json).map_err(|e| {
+                    RiskGuardError::Storage(format!("corrupt decision evaluation_json: {e}"))
+                })?;
                 return Ok(eval);
             }
             return Err(RiskGuardError::ConflictingDuplicateRequestId {
@@ -1000,16 +1079,20 @@ impl SqliteRiskStore {
             });
         }
 
-        let saved_guardrails = identity.as_ref()
+        let saved_guardrails = identity
+            .as_ref()
             .map(|identity| guardrails::query_saved(&tx, &identity.agent_id))
-            .transpose()?.flatten();
+            .transpose()?
+            .flatten();
         let base_baseline = load_baseline_for_epoch(&tx, &epoch)?;
         let baseline = if let (Some(saved), Some(identity)) = (&saved_guardrails, &identity) {
             guardrails::effective_baseline(&tx, &identity.agent_id, &base_baseline, saved)?
         } else {
             base_baseline
         };
-        let configured_detector = saved_guardrails.as_ref().map(|saved| saved.settings.detector());
+        let configured_detector = saved_guardrails
+            .as_ref()
+            .map(|saved| saved.settings.detector());
         let effective_detector: &dyn RiskDetector = match configured_detector.as_ref() {
             Some(configured) => configured,
             None => detector,
@@ -1019,8 +1102,9 @@ impl SqliteRiskStore {
             effective_epoch.mode = saved.settings.mode;
         }
         let adaptive_revision = saved_guardrails.as_ref().map_or(0, |saved| saved.revision);
-        let adaptive_cooldown_ms = saved_guardrails.as_ref()
-            .map_or(300_000, |saved| i64::from(saved.settings.cooldown_seconds) * 1_000);
+        let adaptive_cooldown_ms = saved_guardrails.as_ref().map_or(300_000, |saved| {
+            i64::from(saved.settings.cooldown_seconds) * 1_000
+        });
 
         // 3. Check restrictions for (epoch.epoch_id, req.restriction_scope) AND route-level cooldown scope.
         let route_scope = format!(
@@ -1040,10 +1124,8 @@ impl SqliteRiskStore {
             req.timestamp_ms,
         )? {
             let state_sequence = epoch.next_sequence;
-            let next_sequence_i64 =
-                i64::try_from(state_sequence.saturating_add(1)).map_err(|_| {
-                    RiskGuardError::Storage("epoch.next_sequence overflow".to_string())
-                })?;
+            let next_sequence_i64 = i64::try_from(state_sequence.saturating_add(1))
+                .map_err(|_| RiskGuardError::Storage("epoch.next_sequence overflow".to_string()))?;
 
             tx.execute(
                 "UPDATE epochs SET next_sequence = ?1 WHERE epoch_id = ?2",
@@ -1066,7 +1148,9 @@ impl SqliteRiskStore {
                 outcome: DecisionOutcome::Deny,
                 reason_code: REASON_BEHAVIORAL_RISK_RESTRICTED.to_string(),
                 risk_score: 100,
-                threshold: saved_guardrails.as_ref().map_or(70, |saved| saved.settings.enforce_threshold),
+                threshold: saved_guardrails
+                    .as_ref()
+                    .map_or(70, |saved| saved.settings.enforce_threshold),
                 ratchet_action,
                 signals: vec![SignalContribution {
                     feature: format!("restriction:{}", matched.tier),
@@ -1090,10 +1174,17 @@ impl SqliteRiskStore {
                 decision_timestamp_ms: req.timestamp_ms,
             };
 
-            let window = WindowSnapshot { warming: true, ..Default::default() };
+            let window = WindowSnapshot {
+                warming: true,
+                ..Default::default()
+            };
             let adaptive_frame = adaptive::Frame {
-                identity: identity.as_ref(), revision: adaptive_revision, source,
-                request: req, window: &window, cooldown_ms: adaptive_cooldown_ms,
+                identity: identity.as_ref(),
+                revision: adaptive_revision,
+                source,
+                request: req,
+                window: &window,
+                cooldown_ms: adaptive_cooldown_ms,
             };
             let base_evaluation = eval.clone();
             let assessments = adaptive::evaluate(&tx, &adaptive_frame, &mut eval)?;
@@ -1104,12 +1195,19 @@ impl SqliteRiskStore {
             insert_identity(&tx, req, &epoch, identity.as_ref())?;
             adaptive::record(&tx, &adaptive_frame, &base_evaluation, &assessments)?;
             if let (Some(saved), Some(identity)) = (&saved_guardrails, &identity) {
-                guardrails::record_revision(&tx, &epoch.epoch_id, &identity.agent_id, saved, &eval)?;
+                guardrails::record_revision(
+                    &tx,
+                    &epoch.epoch_id,
+                    &identity.agent_id,
+                    saved,
+                    &eval,
+                )?;
             }
             if epoch.next_sequence > MAX_RETAINED_DECISIONS_PER_EPOCH as u64
                 && epoch.next_sequence % 1_000 == 0
             {
-                let _ = prune_epoch_decisions(&tx, &epoch.epoch_id, MAX_RETAINED_DECISIONS_PER_EPOCH)?;
+                let _ =
+                    prune_epoch_decisions(&tx, &epoch.epoch_id, MAX_RETAINED_DECISIONS_PER_EPOCH)?;
             }
             tx.commit()?;
             return Ok(eval);
@@ -1140,18 +1238,20 @@ impl SqliteRiskStore {
             },
         )?;
         let adaptive_frame = adaptive::Frame {
-            identity: identity.as_ref(), revision: adaptive_revision, source,
-            request: req, window: &window, cooldown_ms: adaptive_cooldown_ms,
+            identity: identity.as_ref(),
+            revision: adaptive_revision,
+            source,
+            request: req,
+            window: &window,
+            cooldown_ms: adaptive_cooldown_ms,
         };
         let base_evaluation = eval.clone();
         let assessments = adaptive::evaluate(&tx, &adaptive_frame, &mut eval)?;
 
         // 8. Set eval.state_sequence = epoch.next_sequence, update epochs.next_sequence = epoch.next_sequence + 1.
         eval.state_sequence = epoch.next_sequence;
-        let next_sequence_i64 =
-            i64::try_from(epoch.next_sequence.saturating_add(1)).map_err(|_| {
-                RiskGuardError::Storage("epoch.next_sequence overflow".to_string())
-            })?;
+        let next_sequence_i64 = i64::try_from(epoch.next_sequence.saturating_add(1))
+            .map_err(|_| RiskGuardError::Storage("epoch.next_sequence overflow".to_string()))?;
         tx.execute(
             "UPDATE epochs SET next_sequence = ?1 WHERE epoch_id = ?2",
             params![next_sequence_i64, epoch.epoch_id],
@@ -1169,14 +1269,14 @@ impl SqliteRiskStore {
         prune_expired_window_buckets(&tx, owner, req.timestamp_ms)?;
 
         // 10. Apply eval.ratchet_action.
-        let seq_i64 = i64::try_from(eval.state_sequence).map_err(|_| {
-            RiskGuardError::Storage("eval.state_sequence overflow".to_string())
-        })?;
+        let seq_i64 = i64::try_from(eval.state_sequence)
+            .map_err(|_| RiskGuardError::Storage("eval.state_sequence overflow".to_string()))?;
         match eval.ratchet_action.clone() {
             RatchetAction::None => {}
             RatchetAction::LatchTier1StrictEpoch { scope } => {
                 tx.execute(
-                    &format!("INSERT OR REPLACE INTO {} (
+                    &format!(
+                        "INSERT OR REPLACE INTO {} (
                         epoch_id,
                         scope,
                         tier,
@@ -1184,7 +1284,9 @@ impl SqliteRiskStore {
                         strike_count,
                         trigger_request_id,
                         created_sequence
-                    ) VALUES (?1, ?2, 'strict_epoch', ?3, 3, ?4, ?5)", owner.restrictions()),
+                    ) VALUES (?1, ?2, 'strict_epoch', ?3, 3, ?4, ?5)",
+                        owner.restrictions()
+                    ),
                     params![owner.id, scope, i64::MAX, req.request_id, seq_i64],
                 )?;
             }
@@ -1194,8 +1296,11 @@ impl SqliteRiskStore {
             } => {
                 let existing: Option<(String, i64)> = tx
                     .query_row(
-                        &format!("SELECT tier, strike_count
-                         FROM {} WHERE epoch_id = ?1 AND scope = ?2", owner.restrictions()),
+                        &format!(
+                            "SELECT tier, strike_count
+                         FROM {} WHERE epoch_id = ?1 AND scope = ?2",
+                            owner.restrictions()
+                        ),
                         params![owner.id, scope],
                         |row| Ok((row.get(0)?, row.get(1)?)),
                     )
@@ -1213,7 +1318,10 @@ impl SqliteRiskStore {
                     };
                     ("strict_epoch", i64::MAX)
                 } else {
-                    ("cooldown", req.timestamp_ms.saturating_add(cooldown_duration_ms))
+                    (
+                        "cooldown",
+                        req.timestamp_ms.saturating_add(cooldown_duration_ms),
+                    )
                 };
 
                 let persisted_strikes = if new_tier == "strict_epoch" {
@@ -1223,7 +1331,8 @@ impl SqliteRiskStore {
                 };
 
                 tx.execute(
-                    &format!("INSERT OR REPLACE INTO {} (
+                    &format!(
+                        "INSERT OR REPLACE INTO {} (
                         epoch_id,
                         scope,
                         tier,
@@ -1231,7 +1340,9 @@ impl SqliteRiskStore {
                         strike_count,
                         trigger_request_id,
                         created_sequence
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", owner.restrictions()),
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                        owner.restrictions()
+                    ),
                     params![
                         owner.id,
                         scope,
@@ -1416,7 +1527,9 @@ fn query_active_epoch(conn: &Connection, sandbox_id: &str) -> Result<Option<Epoc
 
     let mode = parse_enforcement_mode(&mode_raw)?;
     let next_sequence = u64::try_from(next_sequence_raw).map_err(|_| {
-        RiskGuardError::Storage(format!("negative next_sequence in database: {next_sequence_raw}"))
+        RiskGuardError::Storage(format!(
+            "negative next_sequence in database: {next_sequence_raw}"
+        ))
     })?;
     let credentialed_endpoints: BTreeSet<(String, u16)> =
         serde_json::from_str(&credentialed_endpoints_json).map_err(|e| {
@@ -1505,15 +1618,22 @@ fn find_active_restriction(
     host_scope: &str,
     timestamp_ms: i64,
 ) -> Result<Option<MatchedRestriction>> {
-    let mut stmt = conn.prepare(
-        &format!("SELECT scope, tier, cooldown_until_ms, strike_count, trigger_request_id
+    let mut stmt = conn.prepare(&format!(
+        "SELECT scope, tier, cooldown_until_ms, strike_count, trigger_request_id
          FROM {}
          WHERE epoch_id = ?1 AND scope IN (?2, ?3, ?4, ?5)
          ORDER BY CASE WHEN tier = 'strict_epoch' THEN 0 ELSE 1 END,
-                  created_sequence ASC", owner.restrictions()),
-    )?;
+                  created_sequence ASC",
+        owner.restrictions()
+    ))?;
     let rows = stmt.query_map(
-        params![owner.id, restriction_scope, route_scope, method_scope, host_scope],
+        params![
+            owner.id,
+            restriction_scope,
+            route_scope,
+            method_scope,
+            host_scope
+        ],
         |row| {
             Ok(MatchedRestriction {
                 scope: row.get(0)?,
@@ -1572,16 +1692,22 @@ fn query_window_range(
     min_bucket_start_ms: i64,
     max_bucket_start_ms: i64,
 ) -> Result<(u32, u32)> {
-    let mut stmt = conn.prepare(
-        &format!("SELECT req_count, resources_json
+    let mut stmt = conn.prepare(&format!(
+        "SELECT req_count, resources_json
          FROM {}
          WHERE epoch_id = ?1
            AND bucket_kind = ?2
            AND bucket_start_ms >= ?3
-           AND bucket_start_ms <= ?4", owner.windows()),
-    )?;
+           AND bucket_start_ms <= ?4",
+        owner.windows()
+    ))?;
     let rows = stmt.query_map(
-        params![owner.id, bucket_kind, min_bucket_start_ms, max_bucket_start_ms],
+        params![
+            owner.id,
+            bucket_kind,
+            min_bucket_start_ms,
+            max_bucket_start_ms
+        ],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
     )?;
 
@@ -1615,8 +1741,11 @@ fn update_window_bucket(
 ) -> Result<()> {
     let existing: Option<(i64, String)> = tx
         .query_row(
-            &format!("SELECT req_count, resources_json
-             FROM {} WHERE epoch_id = ?1 AND bucket_kind = ?2 AND bucket_start_ms = ?3", owner.windows()),
+            &format!(
+                "SELECT req_count, resources_json
+             FROM {} WHERE epoch_id = ?1 AND bucket_kind = ?2 AND bucket_start_ms = ?3",
+                owner.windows()
+            ),
             params![owner.id, bucket_kind, bucket_start_ms],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -1638,14 +1767,23 @@ fn update_window_bucket(
     let resources_json = serde_json::to_string(&resources)?;
 
     tx.execute(
-        &format!("INSERT OR REPLACE INTO {} (
+        &format!(
+            "INSERT OR REPLACE INTO {} (
             epoch_id,
             bucket_kind,
             bucket_start_ms,
             req_count,
             resources_json
-        ) VALUES (?1, ?2, ?3, ?4, ?5)", owner.windows()),
-        params![owner.id, bucket_kind, bucket_start_ms, new_count, resources_json],
+        ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            owner.windows()
+        ),
+        params![
+            owner.id,
+            bucket_kind,
+            bucket_start_ms,
+            new_count,
+            resources_json
+        ],
     )?;
     Ok(())
 }
@@ -1657,7 +1795,10 @@ fn prune_expired_window_buckets(
 ) -> Result<()> {
     let cutoff_ms = timestamp_ms.saturating_sub(WINDOW_RETENTION_MS);
     tx.execute(
-        &format!("DELETE FROM {} WHERE epoch_id = ?1 AND bucket_start_ms < ?2", owner.windows()),
+        &format!(
+            "DELETE FROM {} WHERE epoch_id = ?1 AND bucket_start_ms < ?2",
+            owner.windows()
+        ),
         params![owner.id, cutoff_ms],
     )?;
     Ok(())
@@ -1768,9 +1909,8 @@ fn insert_decision_row(
 ) -> Result<()> {
     let normalized_request_json = serde_json::to_string(req)?;
     let evaluation_json = serde_json::to_string(eval)?;
-    let sequence_i64 = i64::try_from(eval.state_sequence).map_err(|_| {
-        RiskGuardError::Storage("eval.state_sequence overflows i64".to_string())
-    })?;
+    let sequence_i64 = i64::try_from(eval.state_sequence)
+        .map_err(|_| RiskGuardError::Storage("eval.state_sequence overflows i64".to_string()))?;
     let risk_score_i64 = i64::from(eval.risk_score);
 
     tx.execute(
@@ -2446,7 +2586,10 @@ mod tests {
             .latest_policy_snapshot("sbx-aux")
             .expect("latest snapshot")
             .expect("snapshot exists");
-        assert_eq!(snap, ("sha256:pol-2".to_string(), "version: 1\n".to_string()));
+        assert_eq!(
+            snap,
+            ("sha256:pol-2".to_string(), "version: 1\n".to_string())
+        );
 
         store
             .record_coverage_gap("sbx-aux", "stream_lag", 100, 200)
@@ -2593,26 +2736,50 @@ mod tests {
         assert_eq!(empty["sandbox_lifecycle"]["sandboxes_recorded"], 0);
 
         // A busy sandbox (request a minute ago), a quiet one (request 2h ago) and a long-gone one (a day ago).
-        for (sandbox, last_request_age) in [("sbx-busy", 60_000), ("sbx-quiet", 2 * hour), ("sbx-gone", 24 * hour)] {
+        for (sandbox, last_request_age) in [
+            ("sbx-busy", 60_000),
+            ("sbx-quiet", 2 * hour),
+            ("sbx-gone", 24 * hour),
+        ] {
             let mut epoch = sample_epoch(sandbox);
             epoch.created_at_ms = now - 25 * hour;
             store.upsert_epoch(&epoch).expect("upsert epoch");
-            let req = sample_request(&format!("req-{sandbox}"), sandbox, "GET", "/repos/{owner}/{repo}",
-                "org/docs-site", now - last_request_age, &format!("fp-{sandbox}"));
-            store.evaluate_and_commit_atomic(&req, &detector).expect("decision");
+            let req = sample_request(
+                &format!("req-{sandbox}"),
+                sandbox,
+                "GET",
+                "/repos/{owner}/{repo}",
+                "org/docs-site",
+                now - last_request_age,
+                &format!("fp-{sandbox}"),
+            );
+            store
+                .evaluate_and_commit_atomic(&req, &detector)
+                .expect("decision");
         }
         // A fourth sandbox is deleted: its epoch closes, and the close time is recorded.
-        store.upsert_epoch(&sample_epoch("sbx-deleted")).expect("upsert epoch");
-        store.terminate_epoch("ep-sbx-deleted").expect("terminate epoch");
+        store
+            .upsert_epoch(&sample_epoch("sbx-deleted"))
+            .expect("upsert epoch");
+        store
+            .terminate_epoch("ep-sbx-deleted")
+            .expect("terminate epoch");
         {
             // terminate_epoch stamps the real clock; pin it to this test's synthetic clock.
             let conn = store.lock_conn().expect("lock");
             let closed: Option<i64> = conn
-                .query_row("SELECT closed_at_ms FROM epochs WHERE epoch_id = 'ep-sbx-deleted'", [], |r| r.get(0))
+                .query_row(
+                    "SELECT closed_at_ms FROM epochs WHERE epoch_id = 'ep-sbx-deleted'",
+                    [],
+                    |r| r.get(0),
+                )
                 .expect("closed_at_ms");
             assert!(closed.is_some(), "closing an epoch records when it closed");
-            conn.execute("UPDATE epochs SET closed_at_ms = ?1 WHERE epoch_id = 'ep-sbx-deleted'", params![now - 3 * hour])
-                .expect("pin close time");
+            conn.execute(
+                "UPDATE epochs SET closed_at_ms = ?1 WHERE epoch_id = 'ep-sbx-deleted'",
+                params![now - 3 * hour],
+            )
+            .expect("pin close time");
         }
 
         let inv = store.operator_inventory(now).expect("inventory");
@@ -2620,31 +2787,49 @@ mod tests {
         assert_eq!(life["sandboxes_recorded"], 4);
         assert_eq!(life["sandboxes_with_active_epoch"], 3);
         assert_eq!(life["sandboxes_closed"], 1);
-        assert_eq!(life["recently_active"], 1, "only the sandbox with a request a minute ago");
+        assert_eq!(
+            life["recently_active"], 1,
+            "only the sandbox with a request a minute ago"
+        );
         assert_eq!(life["idle"], 1, "the one quiet for two hours");
-        assert_eq!(life["not_seen_recently"], 1, "the one quiet for a day, most likely deleted");
+        assert_eq!(
+            life["not_seen_recently"], 1,
+            "the one quiet for a day, most likely deleted"
+        );
         assert_eq!(life["decisions_recorded"], 3);
         // The headline total counts active epochs; the lifecycle block explains the difference from "recorded".
         assert_eq!(inv["total_sandboxes"], 3);
         assert_eq!(inv["gateway_connectivity"]["status"], "receiving");
         assert!(inv["gateway_connectivity"]["last_supervisor_request_ms"].is_number());
         // Each listed sandbox carries its own state.
-        let states: std::collections::BTreeMap<String, String> = inv["sandboxes"].as_array().unwrap().iter()
-            .map(|s| (s["epoch"]["sandbox_id"].as_str().unwrap().to_string(), s["sandbox_lifecycle"].as_str().unwrap().to_string()))
+        let states: std::collections::BTreeMap<String, String> = inv["sandboxes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                (
+                    s["epoch"]["sandbox_id"].as_str().unwrap().to_string(),
+                    s["sandbox_lifecycle"].as_str().unwrap().to_string(),
+                )
+            })
             .collect();
         assert_eq!(states["sbx-busy"], "recently_active");
         assert_eq!(states["sbx-quiet"], "idle");
         assert_eq!(states["sbx-gone"], "not_seen_recently");
 
         // Long after the last activity the link is reported as quiet, not as connected.
-        let later = store.operator_inventory(now + 2 * hour).expect("later inventory");
+        let later = store
+            .operator_inventory(now + 2 * hour)
+            .expect("later inventory");
         assert_eq!(later["gateway_connectivity"]["status"], "quiet");
     }
 
     #[test]
     fn age_based_retention_prunes_old_decisions_but_keeps_what_a_lock_still_needs() {
         let store = SqliteRiskStore::open_in_memory().expect("open in-memory store");
-        store.upsert_epoch(&sample_epoch("sbx-retention")).expect("upsert epoch");
+        store
+            .upsert_epoch(&sample_epoch("sbx-retention"))
+            .expect("upsert epoch");
         let detector = ScriptedDetector::new(|req, ctx| {
             // req-2 trips a cooldown, so it becomes the trigger of a restriction and is pinned.
             let ratchet_action = if req.request_id == "req-2" {
@@ -2676,26 +2861,51 @@ mod tests {
         });
         let base = 1_700_000_000_000_i64;
         for i in 1..=6_i64 {
-            let req = sample_request(&format!("req-{i}"), "sbx-retention", "GET", "/repos/{owner}/{repo}",
-                &format!("org/repo-{i}"), base + i * 20_000, &format!("fp-{i}"));
-            store.evaluate_and_commit_atomic(&req, &detector).expect("eval");
+            let req = sample_request(
+                &format!("req-{i}"),
+                "sbx-retention",
+                "GET",
+                "/repos/{owner}/{repo}",
+                &format!("org/repo-{i}"),
+                base + i * 20_000,
+                &format!("fp-{i}"),
+            );
+            store
+                .evaluate_and_commit_atomic(&req, &detector)
+                .expect("eval");
         }
         let ids = |store: &SqliteRiskStore| -> Vec<String> {
-            let mut ids: Vec<String> = store.list_decisions("sbx-retention", 100).expect("list")
-                .into_iter().map(|d| d.request_id).collect();
+            let mut ids: Vec<String> = store
+                .list_decisions("sbx-retention", 100)
+                .expect("list")
+                .into_iter()
+                .map(|d| d.request_id)
+                .collect();
             ids.sort();
             ids
         };
         assert_eq!(ids(&store).len(), 6);
 
         // Keep only decisions from req-4 on. req-1 and req-3 are old and unpinned; req-2 is old but still pinned.
-        let deleted = store.prune_decisions_older_than(base + 4 * 20_000).expect("prune by age");
+        let deleted = store
+            .prune_decisions_older_than(base + 4 * 20_000)
+            .expect("prune by age");
         assert_eq!(deleted, 2, "the two old, unpinned decisions");
         assert_eq!(ids(&store), vec!["req-2", "req-4", "req-5", "req-6"]);
 
         // Pruning again is a no-op, and a cutoff before everything removes nothing.
-        assert_eq!(store.prune_decisions_older_than(base + 4 * 20_000).expect("repeat"), 0);
-        assert_eq!(store.prune_decisions_older_than(base).expect("early cutoff"), 0);
+        assert_eq!(
+            store
+                .prune_decisions_older_than(base + 4 * 20_000)
+                .expect("repeat"),
+            0
+        );
+        assert_eq!(
+            store
+                .prune_decisions_older_than(base)
+                .expect("early cutoff"),
+            0
+        );
     }
 
     #[test]

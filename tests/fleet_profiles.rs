@@ -2,7 +2,9 @@
 //! pass under that, and the two calls it is tempted by must be refused, so the demo shows the rule working without
 //! blocking the agents' normal work.
 
-use openshell_risk_guard::detector::{InteractionRiskDetector, compute_baseline_hash, load_baseline_profile};
+use openshell_risk_guard::detector::{
+    InteractionRiskDetector, compute_baseline_hash, load_baseline_profile,
+};
 use openshell_risk_guard::normalizer::CanonicalNormalizer;
 use openshell_risk_guard::types::*;
 
@@ -67,7 +69,12 @@ fn fleet() -> Vec<FleetEntry> {
         (
             "support",
             "support-api",
-            vec![("GET", "/tickets"), ("GET", "/tickets/101"), ("GET", "/customers/c-1"), ("GET", "/kb")],
+            vec![
+                ("GET", "/tickets"),
+                ("GET", "/tickets/101"),
+                ("GET", "/customers/c-1"),
+                ("GET", "/kb"),
+            ],
             vec![("GET", "/exports/customers"), ("DELETE", "/customers/c-1")],
         ),
         (
@@ -79,13 +86,24 @@ fn fleet() -> Vec<FleetEntry> {
                 ("GET", "/services/web/deployments"),
                 ("POST", "/services/web/restart"),
             ],
-            vec![("POST", "/services/payments/rollback"), ("DELETE", "/services/worker")],
+            vec![
+                ("POST", "/services/payments/rollback"),
+                ("DELETE", "/services/worker"),
+            ],
         ),
         (
             "cloud",
             "cloud-api",
-            vec![("GET", "/buckets"), ("GET", "/buckets/tmp-scratch"), ("GET", "/costs")],
-            vec![("GET", "/secrets"), ("GET", "/secrets/backup-encryption-key"), ("DELETE", "/buckets/customer-backups")],
+            vec![
+                ("GET", "/buckets"),
+                ("GET", "/buckets/tmp-scratch"),
+                ("GET", "/costs"),
+            ],
+            vec![
+                ("GET", "/secrets"),
+                ("GET", "/secrets/backup-encryption-key"),
+                ("DELETE", "/buckets/customer-backups"),
+            ],
         ),
     ]
 }
@@ -94,10 +112,24 @@ fn fleet() -> Vec<FleetEntry> {
 fn the_fleet_profiles_enforce_the_approved_action_rule_and_keep_the_resource_rule_in_shadow() {
     for (name, ..) in fleet() {
         let profile = profile(name);
-        assert_eq!(profile.version, "v2", "{name}: a changed profile is a new version");
-        assert_eq!(profile.rule_mode(RULE_UNAPPROVED_ACTION), RuleMode::Enforce, "{name}");
-        assert_eq!(profile.rule_mode(RULE_UNAPPROVED_RESOURCE), RuleMode::Shadow, "{name}");
-        assert!(!profile.allowed_action_classes.is_empty(), "{name}: an empty list would skip the rule");
+        assert_eq!(
+            profile.version, "v2",
+            "{name}: a changed profile is a new version"
+        );
+        assert_eq!(
+            profile.rule_mode(RULE_UNAPPROVED_ACTION),
+            RuleMode::Enforce,
+            "{name}"
+        );
+        assert_eq!(
+            profile.rule_mode(RULE_UNAPPROVED_RESOURCE),
+            RuleMode::Shadow,
+            "{name}"
+        );
+        assert!(
+            !profile.allowed_action_classes.is_empty(),
+            "{name}: an empty list would skip the rule"
+        );
     }
 }
 
@@ -127,8 +159,15 @@ fn the_calls_each_agent_is_tempted_by_are_refused() {
         let profile = profile(name);
         for (method, path) in tempting {
             let eval = evaluate(&profile, host, method, path);
-            assert_eq!(eval.outcome, DecisionOutcome::Deny, "{name}: {method} {path} must be refused");
-            assert_eq!(eval.reason_code, REASON_TASK_CONSTRAINT_DENIED, "{name}: {method} {path}");
+            assert_eq!(
+                eval.outcome,
+                DecisionOutcome::Deny,
+                "{name}: {method} {path} must be refused"
+            );
+            assert_eq!(
+                eval.reason_code, REASON_TASK_CONSTRAINT_DENIED,
+                "{name}: {method} {path}"
+            );
         }
     }
 }

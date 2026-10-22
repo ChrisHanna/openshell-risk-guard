@@ -375,7 +375,10 @@ fn unreadable_shadow_model_never_fails_requests_but_unreadable_enforced_model_fa
         true,
         NativeObservationSource::LocalTestSupervisor,
     );
-    assert!(enforced.is_err(), "an enforced model that cannot load must fail closed");
+    assert!(
+        enforced.is_err(),
+        "an enforced model that cannot load must fail closed"
+    );
 }
 
 #[test]
@@ -628,7 +631,10 @@ fn qualified_model_requires_shadow_review_then_enforces_and_keeps_its_ratchet_wh
         .unwrap();
     assert_eq!(other["adaptive"][0]["assessment"]["score"], 0);
     let reviewed = reviewed_would_block(&store, burst_time + 1);
-    assert!(reviewed > 0, "the clean-run burst is unlabeled would-block evidence to review");
+    assert!(
+        reviewed > 0,
+        "the clean-run burst is unlabeled would-block evidence to review"
+    );
     assert!(
         store
             .apply_adaptive_operation(
@@ -883,12 +889,19 @@ fn auto_learning_never_approves_flagged_windows_or_manual_captures() {
     let dir = tempfile::tempdir().unwrap();
     let store = seed(&dir.path().join("auto-gate.db"));
     let t = now();
-    apply(&store, AdaptiveOperation::SetAutoLearning { enabled: true }, t);
+    apply(
+        &store,
+        AdaptiveOperation::SetAutoLearning { enabled: true },
+        t,
+    );
 
     // A read-only request the detector flagged (unexpected binary) is "clean" enough
     // to keep recording, but not enough to approve without a human.
     bind(&store, "flagged-run", "flagged-sandbox");
-    native(&store, &request("flagged-sandbox", "flagged-plain", "GET", t + 1));
+    native(
+        &store,
+        &request("flagged-sandbox", "flagged-plain", "GET", t + 1),
+    );
     let mut odd = request("flagged-sandbox", "flagged-odd-binary", "GET", t + 2);
     odd.binary_path = Some("/tmp/unknown-tool".into());
     let flagged = native(&store, &odd);
@@ -898,7 +911,10 @@ fn auto_learning_never_approves_flagged_windows_or_manual_captures() {
     // An operator-started capture always waits for its operator's review.
     bind(&store, "manual-run", "manual-sandbox");
     let manual = start(&store, "manual-run", LearningScope::LocalDemo, t + 10);
-    native(&store, &request("manual-sandbox", "manual-get", "GET", t + 11));
+    native(
+        &store,
+        &request("manual-sandbox", "manual-get", "GET", t + 11),
+    );
     store.end_agent_run("manual-run").unwrap();
 
     let view = store.agent_adaptive("learner", t + 20).unwrap().unwrap();
@@ -1074,4 +1090,3 @@ fn zero_click_auto_shadow_learning_enrolls_approves_and_fits_on_run_end_while_bl
             .any(|s| s["run_id"] == "resumed-run" && s["status"] == "recording")
     );
 }
-

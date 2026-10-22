@@ -360,7 +360,8 @@ fn evaluate_corpus_with_comparator(
         }
     }
 
-    let ub_95_false_deny = clopper_pearson_upper_bound_95(false_denied_benign_episodes, benign_episodes);
+    let ub_95_false_deny =
+        clopper_pearson_upper_bound_95(false_denied_benign_episodes, benign_episodes);
     let episode_recall = (detected_misuse_episodes as f64) / (misuse_episodes as f64);
 
     let mut family_recall = BTreeMap::new();
@@ -424,14 +425,14 @@ fn evaluate_corpus_with_comparator(
 
 fn print_markdown_evaluation_summary(results: &[ComparatorMetrics]) {
     println!("\n================================================================================");
-    println!("### OpenShell Behavioral Risk Guard — Statistical & Ablation Evaluation (Gates G-02..G-05)");
+    println!(
+        "### OpenShell Behavioral Risk Guard — Statistical & Ablation Evaluation (Gates G-02..G-05)"
+    );
     println!("================================================================================\n");
     println!(
         "| Comparator | Benign Eps | False Denials | 95% UB (<=1.0%) | Misuse Eps | Blocked Misuse | Episode Recall (%) | Enforce Precision (%) | Alert Ep Precision (%) | False Denials / 1k Benign Reqs | Obs Alerts / 1k Benign Reqs |"
     );
-    println!(
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
-    );
+    println!("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
 
     for m in results {
         println!(
@@ -466,11 +467,7 @@ fn print_markdown_evaluation_summary(results: &[ComparatorMetrics]) {
     for family in MISUSE_FAMILIES {
         let mut cols = Vec::with_capacity(results.len());
         for m in results {
-            let (det, tot, rec) = m
-                .family_recall
-                .get(family)
-                .copied()
-                .unwrap_or((0, 0, 0.0));
+            let (det, tot, rec) = m.family_recall.get(family).copied().unwrap_or((0, 0, 0.0));
             cols.push(format!("{det}/{tot} ({:.1}%)", rec * 100.0));
         }
         println!(
@@ -633,8 +630,7 @@ fn gates_g02_g03_g04_g05_comparator_and_ablation_evaluation() {
         full_contextual.episode_recall
     );
     assert_eq!(
-        full_contextual.detected_misuse_episodes,
-        full_contextual.misuse_episodes,
+        full_contextual.detected_misuse_episodes, full_contextual.misuse_episodes,
         "FullContextual should detect all 105 misuse episodes across all 5 families"
     );
 
@@ -808,9 +804,8 @@ async fn gate_g06_end_to_end_durable_sqlite_grpc_latency_benchmark() {
     let temp_db = NamedTempFile::new_in("/dev/shm")
         .or_else(|_| NamedTempFile::new())
         .expect("create on-disk NamedTempFile for SQLite");
-    let store = Arc::new(
-        SqliteRiskStore::open(temp_db.path()).expect("open on-disk SqliteRiskStore"),
-    );
+    let store =
+        Arc::new(SqliteRiskStore::open(temp_db.path()).expect("open on-disk SqliteRiskStore"));
 
     // Verify Gate G-11 / NFR-12 durability pragmas: WAL + synchronous=FULL (2) + foreign_keys=ON (1)
     let (journal_mode, synchronous, foreign_keys) =
@@ -1042,7 +1037,9 @@ async fn gate_g06_end_to_end_durable_sqlite_grpc_latency_benchmark() {
     println!("| Concurrent Worker Tasks | {num_workers} | 20 |");
     println!("| Total Measured gRPC Requests | {total_requests} | 200 |");
     println!("| Achieved Throughput | {throughput_rps:.1} req/s | >= 100 req/s |");
-    println!("| SQLite Durability Pragmas | `WAL`, `synchronous=FULL` | `WAL`, `synchronous=FULL` |");
+    println!(
+        "| SQLite Durability Pragmas | `WAL`, `synchronous=FULL` | `WAL`, `synchronous=FULL` |"
+    );
     println!("| Latency p50 | {p50_ms:.2} ms | - |");
     println!("| Latency Mean | {mean_ms:.2} ms | - |");
     println!("| Latency p95 | {p95_ms:.2} ms | <= 25.00 ms |");

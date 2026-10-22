@@ -14,7 +14,13 @@ fn seed(path: &std::path::Path) -> SqliteRiskStore {
     store.store_baseline(&profile).unwrap();
     store.register_agent(AGENT, "Clearance test").unwrap();
     store
-        .create_agent_run(AGENT, "run-1", "r1", &profile.task_profile, EnforcementMode::Enforce)
+        .create_agent_run(
+            AGENT,
+            "run-1",
+            "r1",
+            &profile.task_profile,
+            EnforcementMode::Enforce,
+        )
         .unwrap();
     store
         .upsert_epoch(&EpochRecord {
@@ -31,7 +37,9 @@ fn seed(path: &std::path::Path) -> SqliteRiskStore {
             active_policy_hash: None,
         })
         .unwrap();
-    store.bind_agent_run("run-1", "sandbox-1", "gateway").unwrap();
+    store
+        .bind_agent_run("run-1", "sandbox-1", "gateway")
+        .unwrap();
     store
 }
 
@@ -68,7 +76,10 @@ fn evaluate(store: &SqliteRiskStore, id: &str, method: &str, path: &str) -> Risk
 fn operator_clearance_is_audited_and_lets_the_scope_be_scored_again() {
     let dir = tempfile::tempdir().unwrap();
     let store = seed(&dir.path().join("clearance.db"));
-    let agent = RestrictionTarget::Agent { agent_id: AGENT, context_id: None };
+    let agent = RestrictionTarget::Agent {
+        agent_id: AGENT,
+        context_id: None,
+    };
 
     let first = evaluate(&store, "delete-1", "DELETE", "/repos/org/payments-prod");
     assert_eq!(first.outcome, DecisionOutcome::Deny);
@@ -82,29 +93,54 @@ fn operator_clearance_is_audited_and_lets_the_scope_be_scored_again() {
     assert_eq!(row["blocking"], true);
     let scope = row["scope"].as_str().unwrap().to_string();
 
-    assert!(store.clear_restriction(agent, &scope, "", "reviewed", 2_000_001).is_err());
-    assert!(store.clear_restriction(agent, &scope, "alice", " ", 2_000_001).is_err());
-    assert!(store.clear_restriction(agent, "no-such-scope", "alice", "reviewed", 2_000_001).is_err());
+    assert!(
+        store
+            .clear_restriction(agent, &scope, "", "reviewed", 2_000_001)
+            .is_err()
+    );
+    assert!(
+        store
+            .clear_restriction(agent, &scope, "alice", " ", 2_000_001)
+            .is_err()
+    );
+    assert!(
+        store
+            .clear_restriction(agent, "no-such-scope", "alice", "reviewed", 2_000_001)
+            .is_err()
+    );
     assert!(
         store
             .clear_restriction(
-                RestrictionTarget::Sandbox { sandbox_id: "sandbox-1" },
-                &scope, "alice", "reviewed", 2_000_001,
+                RestrictionTarget::Sandbox {
+                    sandbox_id: "sandbox-1"
+                },
+                &scope,
+                "alice",
+                "reviewed",
+                2_000_001,
             )
             .is_err(),
         "agent-bound restrictions are not owned by the legacy sandbox epoch"
     );
 
     let cleared = store
-        .clear_restriction(agent, &scope, "alice", "approved maintenance task", 2_000_002)
+        .clear_restriction(
+            agent,
+            &scope,
+            "alice",
+            "approved maintenance task",
+            2_000_002,
+        )
         .unwrap();
     assert_eq!(cleared["status"], "cleared");
     assert_eq!(cleared["trigger_request_id"], "delete-1");
     assert_eq!(cleared["cleared_by"], "alice");
-    assert!(store.list_restrictions(agent, 2_000_003).unwrap()["restrictions"]
-        .as_array()
-        .unwrap()
-        .is_empty());
+    assert!(
+        store.list_restrictions(agent, 2_000_003).unwrap()["restrictions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 
     // The scope is scored again rather than short-circuited by the old restriction.
     let rescored = evaluate(&store, "delete-3", "DELETE", "/repos/org/payments-prod");

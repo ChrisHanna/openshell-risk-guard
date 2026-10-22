@@ -325,9 +325,7 @@ impl UpstreamFixtureServer {
             .map_err(|e| RiskGuardError::Internal(format!("read from fixture failed: {e}")))?;
 
         let raw_resp = String::from_utf8_lossy(&buf);
-        let (headers, body) = raw_resp
-            .split_once("\r\n\r\n")
-            .unwrap_or((&raw_resp, ""));
+        let (headers, body) = raw_resp.split_once("\r\n\r\n").unwrap_or((&raw_resp, ""));
         let status_line = headers.lines().next().unwrap_or_default();
         let status_code = status_line
             .split_whitespace()
@@ -656,25 +654,22 @@ impl EvaluationCorpus {
     /// Writes `baseline_profile.json` and `episodes.json` into `dir`.
     pub fn write_to_dir(&self, dir: &Path) -> Result<()> {
         std::fs::create_dir_all(dir).map_err(|e| {
-            RiskGuardError::Storage(format!("failed to create testdata dir {}: {e}", dir.display()))
+            RiskGuardError::Storage(format!(
+                "failed to create testdata dir {}: {e}",
+                dir.display()
+            ))
         })?;
         let baseline_path = dir.join("baseline_profile.json");
         let episodes_path = dir.join("episodes.json");
 
         let baseline_json = serde_json::to_string_pretty(&self.default_baseline)?;
         std::fs::write(&baseline_path, baseline_json).map_err(|e| {
-            RiskGuardError::Storage(format!(
-                "failed to write {}: {e}",
-                baseline_path.display()
-            ))
+            RiskGuardError::Storage(format!("failed to write {}: {e}", baseline_path.display()))
         })?;
 
         let episodes_json = serde_json::to_string_pretty(&self.episodes)?;
         std::fs::write(&episodes_path, episodes_json).map_err(|e| {
-            RiskGuardError::Storage(format!(
-                "failed to write {}: {e}",
-                episodes_path.display()
-            ))
+            RiskGuardError::Storage(format!("failed to write {}: {e}", episodes_path.display()))
         })?;
 
         Ok(())
@@ -691,10 +686,7 @@ pub fn repo_triage_readonly_baseline() -> BaselineProfile {
         normalizer_version: "1.0.0".to_string(),
         training_sessions: 25,
         training_requests: 350,
-        expected_binaries: BTreeSet::from([
-            "/usr/bin/curl".to_string(),
-            "/usr/bin/gh".to_string(),
-        ]),
+        expected_binaries: BTreeSet::from(["/usr/bin/curl".to_string(), "/usr/bin/gh".to_string()]),
         approved_resources: BTreeSet::from([
             "org/docs-site".to_string(),
             "org/sdk-core".to_string(),
@@ -731,10 +723,7 @@ pub fn maintenance_cleanup_baseline() -> BaselineProfile {
         normalizer_version: "1.0.0".to_string(),
         training_sessions: 24,
         training_requests: 280,
-        expected_binaries: BTreeSet::from([
-            "/usr/bin/curl".to_string(),
-            "/usr/bin/gh".to_string(),
-        ]),
+        expected_binaries: BTreeSet::from(["/usr/bin/curl".to_string(), "/usr/bin/gh".to_string()]),
         approved_resources: BTreeSet::from(["org/docs-site".to_string()]),
         allowed_action_classes: BTreeSet::from([
             "GET /repos/{owner}/{repo}".to_string(),
@@ -763,10 +752,7 @@ pub fn cold_start_new_baseline() -> BaselineProfile {
         normalizer_version: "1.0.0".to_string(),
         training_sessions: 3,
         training_requests: 18,
-        expected_binaries: BTreeSet::from([
-            "/usr/bin/curl".to_string(),
-            "/usr/bin/gh".to_string(),
-        ]),
+        expected_binaries: BTreeSet::from(["/usr/bin/curl".to_string(), "/usr/bin/gh".to_string()]),
         approved_resources: BTreeSet::from(["org/docs-site".to_string()]),
         allowed_action_classes: BTreeSet::from([
             "GET /repos/{owner}/{repo}".to_string(),
@@ -992,9 +978,7 @@ pub fn build_standard_corpus() -> EvaluationCorpus {
             credentialed_endpoint: false,
             requests,
             expected_any_deny: false,
-            description: format!(
-                "Benign read-only POST /search/code query session #{idx}"
-            ),
+            description: format!("Benign read-only POST /search/code query session #{idx}"),
         });
     }
 
@@ -1355,8 +1339,7 @@ mod tests {
             .await
             .expect("GET /repos/org/docs-site should succeed");
         assert_eq!(get_status, StatusCode::OK.as_u16());
-        let get_body: serde_json::Value =
-            serde_json::from_str(&get_body_str).expect("valid json");
+        let get_body: serde_json::Value = serde_json::from_str(&get_body_str).expect("valid json");
         assert_eq!(get_body["full_name"], "org/docs-site");
         assert_eq!(server.total_requests(), 1);
         assert_eq!(server.get_hits(), 1);
@@ -1563,8 +1546,8 @@ mod tests {
 
         let raw_episodes = std::fs::read_to_string(testdata_dir.join("episodes.json"))
             .expect("read episodes.json");
-        let parsed_episodes: Vec<LabeledEpisode> =
-            serde_json::from_str(&raw_episodes).expect("parse episodes.json as Vec<LabeledEpisode>");
+        let parsed_episodes: Vec<LabeledEpisode> = serde_json::from_str(&raw_episodes)
+            .expect("parse episodes.json as Vec<LabeledEpisode>");
         assert_eq!(parsed_episodes.len(), corpus.episodes.len());
 
         let parsed_corpus: EvaluationCorpus =
@@ -1635,4 +1618,3 @@ mod tests {
         }
     }
 }
-
