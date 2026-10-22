@@ -495,6 +495,10 @@ pub trait RiskStore: Send + Sync {
     fn auto_bind_sandbox_epoch(&self, _binding: &SandboxBinding) -> Result<()> {
         Ok(())
     }
+    /// Whether the workload behind a sandbox is locked (holds a strict-epoch restriction); `None` if the sandbox is unknown.
+    fn sandbox_lock_state(&self, _sandbox_id: &str) -> Result<Option<bool>> {
+        Ok(None)
+    }
     /// Append one workload-binding attempt (accepted or refused) to the audit trail.
     fn record_binding_audit(&self, _entry: &BindingAudit) -> Result<()> {
         Ok(())

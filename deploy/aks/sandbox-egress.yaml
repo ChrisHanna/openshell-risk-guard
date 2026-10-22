@@ -1,0 +1,251 @@
+# An egress proxy in the network path of OpenShell's sandboxes, which cuts off a sandbox whose workload Risk Guard has locked.
+# Rendered by scripts/aks/18-enable-sandbox-egress.ps1, which fills __TRUST_DOMAIN__.
+#
+#   sandbox ──▶ supervisor (OpenShell policy, SSRF checks, Risk Guard's per-request check)
+#                  │ allowed TLS egress
+#                  ▼  HTTP CONNECT (the gateway's upstreamProxy setting)
+#               Envoy "sandbox-egress" ── Check (gRPC, mTLS, its own SVID) ──▶ Risk Guard
+#                  │ allow: opens the tunnel          deny: 403, no tunnel
+#                  ▼
+#               the destination
+#
+# OpenShell applies its own policy first; this is a second, independent gate after it. All the proxy can see of a CONNECT is where it
+# came from and the address and port it is going to. The source address is mapped to the sandbox by Risk Guard (supervisor pods carry
+# the label openshell.ai/sandbox-id), and the tunnel is refused when that sandbox's workload is locked or Risk Guard has no record of
+# it. The proxy fails closed: if Risk Guard cannot answer, no tunnel is opened.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: risk-guard-sandbox-egress
+spec:
+  className: openshell-spire
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: sandbox-egress
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshell
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sandbox-egress
+  namespace: openshell
+---
+# Risk Guard reads supervisor pods to turn a pod address into a sandbox. Read-only, one namespace, pods only.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: risk-guard-tunnels
+  namespace: openshell
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: risk-guard-pod-reader
+  namespace: openshell
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: risk-guard-pod-reader
+  namespace: openshell
+subjects:
+  - kind: ServiceAccount
+    name: risk-guard-tunnels
+    namespace: openshell
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: risk-guard-pod-reader
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sandbox-egress-config
+  namespace: openshell
+data:
+  envoy.yaml: |
+    node: { id: sandbox-egress, cluster: sandbox-egress }
+    admin:
+      address: { socket_address: { address: 127.0.0.1, port_value: 9901 } }
+    static_resources:
+      listeners:
+        - name: tunnels
+          address: { socket_address: { address: 0.0.0.0, port_value: 8444 } }
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.http_connection_manager
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                    stat_prefix: tunnels
+                    # Only HTTP CONNECT is served. Anything else gets no route.
+                    upgrade_configs:
+                      - upgrade_type: CONNECT
+                    http2_protocol_options: { allow_connect: true }
+                    route_config:
+                      name: connect
+                      virtual_hosts:
+                        - name: any
+                          domains: ["*"]
+                          routes:
+                            - match: { connect_matcher: {} }
+                              route:
+                                cluster: destination
+                                upgrade_configs:
+                                  - upgrade_type: CONNECT
+                                    connect_config: {}
+                    http_filters:
+                      - name: envoy.filters.http.ext_authz
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+                          transport_api_version: V3
+                          # If Risk Guard cannot be reached or cannot decide, no tunnel is opened.
+                          failure_mode_allow: false
+                          grpc_service:
+                            envoy_grpc: { cluster_name: risk_guard_authz }
+                            timeout: 1s
+                      - name: envoy.filters.http.dynamic_forward_proxy
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig
+                          dns_cache_config: &dns_cache
+                            name: tunnel_destinations
+                            dns_lookup_family: V4_ONLY
+                      - name: envoy.filters.http.router
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+      clusters:
+        - name: destination
+          connect_timeout: 10s
+          lb_policy: CLUSTER_PROVIDED
+          cluster_type:
+            name: envoy.clusters.dynamic_forward_proxy
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
+              dns_cache_config: *dns_cache
+        - name: spire_agent
+          type: STATIC
+          connect_timeout: 1s
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+              "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+              explicit_http_config: { http2_protocol_options: {} }
+          load_assignment:
+            cluster_name: spire_agent
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address: { pipe: { path: /spiffe-workload-api/spire-agent.sock } }
+        - name: risk_guard_authz
+          type: STRICT_DNS
+          connect_timeout: 2s
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+              "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+              explicit_http_config: { http2_protocol_options: {} }
+          load_assignment:
+            cluster_name: risk_guard_authz
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address: { socket_address: { address: risk-guard.openshell.svc.cluster.local, port_value: 50062 } }
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+              sni: risk-guard.openshell.svc
+              common_tls_context:
+                tls_certificate_sds_secret_configs:
+                  - name: default
+                    sds_config:
+                      resource_api_version: V3
+                      api_config_source:
+                        api_type: GRPC
+                        transport_api_version: V3
+                        grpc_services:
+                          - envoy_grpc: { cluster_name: spire_agent }
+                validation_context:
+                  trusted_ca: { filename: /etc/risk-guard-ca/ca.crt }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox-egress
+  namespace: openshell
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sandbox-egress
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sandbox-egress
+    spec:
+      serviceAccountName: sandbox-egress
+      nodeSelector:
+        kubernetes.azure.com/agentpool: nodepool1
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: envoy
+          image: envoyproxy/envoy:v1.36.0
+          args: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]
+          ports:
+            - name: tunnels
+              containerPort: 8444
+          readinessProbe:
+            tcpSocket: { port: 8444 }
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/envoy
+              readOnly: true
+            - name: spiffe-workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
+            - name: risk-guard-ca
+              mountPath: /etc/risk-guard-ca
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: sandbox-egress-config
+        - name: spiffe-workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+        - name: risk-guard-ca
+          configMap:
+            name: risk-guard-ca
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandbox-egress
+  namespace: openshell
+spec:
+  selector:
+    app.kubernetes.io/name: sandbox-egress
+  ports:
+    - name: tunnels
+      port: 8444
+      targetPort: tunnels

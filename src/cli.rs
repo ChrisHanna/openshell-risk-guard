@@ -135,6 +135,11 @@ pub enum Commands {
             value_delimiter = ','
         )]
         svid_proxy_ids: Vec<String>,
+        /// Also answer the tunnel checks of OpenShell's upstream proxy: connections from the supervisor pods in this namespace are
+        /// matched to their sandbox by pod address, and refused when Risk Guard has locked the sandbox's workload (or knows
+        /// nothing about it). Needs --svid-proxy-id, and read access to pods in that namespace.
+        #[arg(long = "tunnel-pod-namespace", env = "RISK_GUARD_TUNNEL_POD_NAMESPACE")]
+        tunnel_pod_namespace: Option<String>,
     },
     /// Evaluate one request as the workload that owns an X.509-SVID, against a running SVID listener, and print the decision.
     SvidProbe {
@@ -536,6 +541,7 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             svid_bundle,
             svid_trust_domains,
             svid_proxy_ids,
+            tunnel_pod_namespace,
         } => {
             if public_key_pem.is_none() && !allow_insecure_local_test {
                 return Err(RiskGuardError::InvalidArgument(
@@ -675,14 +681,20 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                 let ext_authz = if svid_proxy_ids.is_empty() {
                     None
                 } else {
-                    Some(crate::ext_authz::ExtAuthzService::new(
+                    let mut service = crate::ext_authz::ExtAuthzService::new(
                         Arc::clone(&svid_store),
                         Arc::clone(&middleware_service.normalizer),
                         Arc::clone(&middleware_service.detector),
                         enroller,
                         policy.clone(),
                         &svid_proxy_ids,
-                    )?)
+                    )?;
+                    if let Some(namespace) = &tunnel_pod_namespace {
+                        service = service.with_tunnel_resolver(Arc::new(
+                            crate::pod_resolver::KubePodResolver::in_cluster(namespace)?,
+                        ));
+                    }
+                    Some(service)
                 };
                 tokio::spawn(async move {
                     if let Err(error) = crate::spiffe::serve_svid_listener(
@@ -702,6 +714,7 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             } else if svid_bundle.is_some()
                 || !svid_trust_domains.is_empty()
                 || !svid_proxy_ids.is_empty()
+                || tunnel_pod_namespace.is_some()
             {
                 return Err(RiskGuardError::InvalidArgument(
                     "--svid-bundle and --svid-trust-domain have no effect without --svid-listen"

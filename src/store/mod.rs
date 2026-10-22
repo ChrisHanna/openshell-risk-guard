@@ -461,6 +461,26 @@ impl SqliteRiskStore {
         }
     }
 
+    /// Whether the workload behind a sandbox is locked: it holds a strict-epoch restriction, the highest tier, which blocks
+    /// everything. `None` when the sandbox has no active epoch, so Risk Guard knows nothing about it.
+    pub fn sandbox_lock_state(&self, sandbox_id: &str) -> Result<Option<bool>> {
+        let conn = self.lock_read_conn()?;
+        let Some(epoch) = query_active_epoch(&conn, sandbox_id)? else {
+            return Ok(None);
+        };
+        let identity = resolve_identity(&conn, &epoch)?;
+        let owner = state_owner(&epoch, identity.as_ref());
+        let locked: bool = conn.query_row(
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM {} WHERE epoch_id = ?1 AND tier = 'strict_epoch')",
+                owner.restrictions()
+            ),
+            params![owner.id],
+            |row| row.get(0),
+        )?;
+        Ok(Some(locked))
+    }
+
     fn lock_conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
         self.conn
             .lock()
@@ -820,6 +840,10 @@ impl RiskStore for SqliteRiskStore {
 
     fn close_sandbox_lifecycle(&self, sandbox_id: &str) -> Result<Option<String>> {
         SqliteRiskStore::close_sandbox_lifecycle(self, sandbox_id)
+    }
+
+    fn sandbox_lock_state(&self, sandbox_id: &str) -> Result<Option<bool>> {
+        SqliteRiskStore::sandbox_lock_state(self, sandbox_id)
     }
 }
 

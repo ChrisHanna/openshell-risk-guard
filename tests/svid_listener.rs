@@ -11,12 +11,13 @@ use openshell_core::proto::{
 };
 use openshell_risk_guard::detector::InteractionRiskDetector;
 use openshell_risk_guard::ext_authz::{
-    AttributeContext, AttributeRequest, CheckRequest, CheckResponse, ExtAuthzService, HttpRequest,
-    Peer,
+    Address, AttributeContext, AttributeRequest, CheckRequest, CheckResponse, ExtAuthzService,
+    HttpRequest, Peer, SocketAddress,
 };
 use openshell_risk_guard::fixture::build_standard_corpus;
 use openshell_risk_guard::middleware_service::RiskGuardMiddlewareService;
 use openshell_risk_guard::normalizer::CanonicalNormalizer;
+use openshell_risk_guard::pod_resolver::{PodResolver, StaticPodResolver};
 use openshell_risk_guard::sidecar;
 use openshell_risk_guard::spiffe::{
     PEER_SPIFFE_HEADER, SpiffeId, SvidAuthVerifier, SvidEnroller, SvidPolicy, serve_svid_listener,
@@ -140,6 +141,15 @@ async fn start_with_proxies(
     trust_domains: &[&str],
     proxies: &[&str],
 ) -> Running {
+    start_full(authority, trust_domains, proxies, None).await
+}
+
+async fn start_full(
+    authority: &Authority,
+    trust_domains: &[&str],
+    proxies: &[&str],
+    tunnels: Option<Arc<dyn PodResolver>>,
+) -> Running {
     let dir = tempfile::tempdir().unwrap();
     let secrets = dir.path().join("secrets");
     sidecar::generate_local_secrets(&secrets, &["127.0.0.1".into(), "localhost".into()]).unwrap();
@@ -164,17 +174,19 @@ async fn start_with_proxies(
     let ext_authz = if proxies.is_empty() {
         None
     } else {
-        Some(
-            ExtAuthzService::new(
-                Arc::clone(&store) as Arc<dyn RiskStore>,
-                Arc::new(CanonicalNormalizer::new_default(&[9u8; 32])),
-                Arc::new(InteractionRiskDetector::new_default()),
-                enroller,
-                policy.clone(),
-                proxies,
-            )
-            .unwrap(),
+        let service = ExtAuthzService::new(
+            Arc::clone(&store) as Arc<dyn RiskStore>,
+            Arc::new(CanonicalNormalizer::new_default(&[9u8; 32])),
+            Arc::new(InteractionRiskDetector::new_default()),
+            enroller,
+            policy.clone(),
+            proxies,
         )
+        .unwrap();
+        Some(match tunnels {
+            Some(resolver) => service.with_tunnel_resolver(resolver),
+            None => service,
+        })
     };
     let service = RiskGuardMiddlewareService::new(
         verifier,
@@ -481,6 +493,7 @@ async fn check(
         Request::new(CheckRequest {
             attributes: Some(AttributeContext {
                 source: Some(Peer {
+                    address: None,
                     service: String::new(),
                     principal: workload.to_string(),
                 }),
@@ -595,5 +608,153 @@ async fn only_a_listed_proxy_may_ask_and_a_workload_cannot_vouch_for_itself() {
     .await
     .unwrap_err();
     assert_eq!(error.code(), Code::PermissionDenied);
+    running.stop.notify_one();
+}
+
+async fn tunnel_check(channel: Channel, source_ip: &str) -> CheckResponse {
+    let mut grpc = tonic::client::Grpc::new(channel);
+    grpc.ready().await.unwrap();
+    grpc.unary(
+        Request::new(CheckRequest {
+            attributes: Some(AttributeContext {
+                source: Some(Peer {
+                    address: Some(Address {
+                        socket_address: Some(SocketAddress {
+                            address: source_ip.to_string(),
+                        }),
+                    }),
+                    service: String::new(),
+                    principal: String::new(),
+                }),
+                request: Some(AttributeRequest {
+                    http: Some(HttpRequest {
+                        id: String::new(),
+                        method: "CONNECT".into(),
+                        path: String::new(),
+                        host: "93.184.216.34:443".into(),
+                        scheme: String::new(),
+                    }),
+                }),
+            }),
+        }),
+        tonic::codegen::http::uri::PathAndQuery::from_static(
+            "/envoy.service.auth.v3.Authorization/Check",
+        ),
+        tonic_prost::ProstCodec::<CheckRequest, CheckResponse>::default(),
+    )
+    .await
+    .unwrap()
+    .into_inner()
+}
+
+#[tokio::test]
+async fn a_sandbox_tunnel_is_carried_unless_the_sandbox_is_unknown_or_its_workload_is_locked() {
+    use openshell_risk_guard::detector::compute_baseline_hash;
+    use openshell_risk_guard::types::{EnforcementMode, EpochRecord, RawRequestInput};
+
+    let authority = Authority::new();
+    let proxy_id = "spiffe://example.org/ns/edge/sa/sandbox-egress";
+    let resolver: Arc<dyn PodResolver> = Arc::new(StaticPodResolver(
+        [
+            ("10.0.0.1".parse().unwrap(), "sbx-open".to_string()),
+            ("10.0.0.2".parse().unwrap(), "sbx-locked".to_string()),
+            (
+                "10.0.0.3".parse().unwrap(),
+                "sbx-never-registered".to_string(),
+            ),
+        ]
+        .into(),
+    ));
+    let running = start_full(&authority, &[TRUST_DOMAIN], &[proxy_id], Some(resolver)).await;
+
+    let baseline = build_standard_corpus().default_baseline;
+    for sandbox in ["sbx-open", "sbx-locked"] {
+        running
+            .store
+            .upsert_epoch(&EpochRecord {
+                epoch_id: format!("ep-{sandbox}"),
+                gateway_id: "svid-gateway".into(),
+                sandbox_id: sandbox.into(),
+                task_profile: baseline.task_profile.clone(),
+                baseline_hash: compute_baseline_hash(&baseline),
+                mode: EnforcementMode::Enforce,
+                active: true,
+                next_sequence: 1,
+                created_at_ms: 0,
+                credentialed_endpoints: Default::default(),
+                active_policy_hash: None,
+            })
+            .unwrap();
+    }
+
+    // Lock one sandbox's workload the way the supervisor path does: by repeating a destructive call until the ratchet latches.
+    let normalizer = CanonicalNormalizer::new_default(&[9u8; 32]);
+    let detector = InteractionRiskDetector::new_default();
+    for n in 0..20_i64 {
+        let request = normalizer
+            .normalize(&RawRequestInput {
+                request_id: format!("lock-{n}"),
+                sandbox_id: "sbx-locked".into(),
+                sandbox_name: "sbx-locked".into(),
+                workspace: "default".into(),
+                scheme: "https".into(),
+                host: "api.github.local".into(),
+                port: 443,
+                method: "DELETE".into(),
+                path: "/repos/org/payments-prod".into(),
+                binary_path: None,
+                pid: None,
+                ancestors: vec![],
+                timestamp_ms: 1_800_000_000_000 + n * 1_000,
+            })
+            .unwrap();
+        let _ = running
+            .store
+            .evaluate_authenticated(&request, &detector, "svid-gateway", false);
+        if running.store.sandbox_lock_state("sbx-locked").unwrap() == Some(true) {
+            break;
+        }
+    }
+    assert_eq!(
+        running.store.sandbox_lock_state("sbx-locked").unwrap(),
+        Some(true),
+        "the test needs a locked workload"
+    );
+    assert_eq!(
+        running.store.sandbox_lock_state("sbx-open").unwrap(),
+        Some(false)
+    );
+
+    let (cert, key) = authority.svid(&[proxy_id]);
+    let channel = connect(&running, Some((&cert, &key))).await.unwrap();
+    let carried = tunnel_check(channel.clone(), "10.0.0.1").await;
+    assert!(
+        carried.ok_response.is_some(),
+        "an unlocked sandbox's tunnel is carried: {carried:?}"
+    );
+    for (source, why) in [
+        ("10.0.0.2", "a locked workload"),
+        ("10.0.0.3", "a sandbox Risk Guard has no record of"),
+        ("10.9.9.9", "an address that is no sandbox"),
+        ("not-an-address", "a malformed address"),
+    ] {
+        let refused = tunnel_check(channel.clone(), source).await;
+        assert!(
+            refused.denied_response.is_some(),
+            "{why} must not get a tunnel: {refused:?}"
+        );
+    }
+    running.stop.notify_one();
+}
+
+#[tokio::test]
+async fn tunnel_checks_are_refused_when_they_are_not_enabled() {
+    let authority = Authority::new();
+    let proxy_id = "spiffe://example.org/ns/edge/sa/sandbox-egress";
+    let running = start_with_proxies(&authority, &[TRUST_DOMAIN], &[proxy_id]).await;
+    let (cert, key) = authority.svid(&[proxy_id]);
+    let channel = connect(&running, Some((&cert, &key))).await.unwrap();
+    let refused = tunnel_check(channel, "10.0.0.1").await;
+    assert!(refused.denied_response.is_some());
     running.stop.notify_one();
 }
