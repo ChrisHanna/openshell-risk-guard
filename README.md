@@ -116,7 +116,9 @@ Where this document says "the sandboxed process", it means the program running i
   Verified on AKS for demo workloads (plain HTTP inside the cluster). OpenShell's own sandboxes get a weaker gate on the network path:
   their TLS tunnels go through an Envoy proxy that refuses operator-quarantined workloads. See [Workload identity](docs/workload-identity.md)
   and the [architecture](docs/architecture.md). Each OpenShell sandbox also has a SPIFFE identity issued by SPIRE through OpenShell's own
-  support, used for credential-less token grants and shown in the console; Risk Guard does not verify it.
+  support, used for credential-less token grants and shown in the console; Risk Guard does not verify it. A task profile can also list
+  the hostnames its sandboxes may open an encrypted connection to (`approved_egress_hosts`), checked at the tunnel gate outside the supervisor
+  (shadow by default).
 - **Network only.** Risk Guard scores HTTP/S requests that OpenShell inspects.
   Filesystem and process behavior are enforced statically by OpenShell
   (Landlock and policy), not scored.

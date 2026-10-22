@@ -154,6 +154,10 @@ On the AKS demo cluster (SPIRE 1.15, Envoy 1.36):
 * A pod received a SPIRE-issued SVID, called the SVID listener with it, and was scored as `spiffe://…/sa/svid-demo`.
 * Through the proxy, a routine `GET` reached the backend and a `DELETE` of a repository was answered `403` by the proxy.
 * The network policy blocked a direct connection from the workload to the backend.
+* **Approved egress hosts, live (22 October 2026).** With `connectByHostname` on, the tunnel gate's log shows the destination by name
+  (`integrate.api.nvidia.com:443`). To prove the gate decides outside the supervisor, the cloud profile was temporarily set to
+  `egress_destination: enforce` with a different approved host: the next fleet sandbox's tunnel to the model was refused (`the destination is not approved
+  for this sandbox's task`) although OpenShell's own policy and the supervisor had allowed it. The profile was then restored to shadow.
 * **Fail-closed drill (22 October 2026).** With Risk Guard scaled to zero, both a routine and a destructive request through the egress
   proxy came back `403` and nothing reached the backend; once Risk Guard was running again the routine request returned `200`. This
   exercised the proxy's external authorization. The same drill has not been run for the sandbox tunnel gate, a SPIRE server outage, an
