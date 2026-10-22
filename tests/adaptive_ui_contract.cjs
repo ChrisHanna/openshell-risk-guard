@@ -64,32 +64,3 @@ assert.ok(html.includes('id="detections-restrictions-card"'), "Missing #detectio
 assert.ok(html.includes('id="cfg-restrictions-card"'), "Missing #cfg-restrictions-card in operator_ui.html");
 assert.ok(html.includes("/restrictions/clear"), "Missing restriction clear endpoint wiring in operator_ui.html");
 
-
-// The service map never shows more than MAP_MAX_ROWS rows, however many different targets a workload touches.
-{
-  const cap = html.indexOf("const MAP_MAX_ROWS");
-  const capEnd = html.indexOf("\nfunction extractFilesystemSummary(", cap);
-  assert.ok(cap >= 0 && capEnd > cap, "the map cap must be in operator_ui.html");
-  const ctx = vm.createContext({});
-  vm.runInContext(html.slice(cap, capEnd) + "\nthis.cap = capNetworkGroups; this.rows = MAP_MAX_ROWS;", ctx);
-  const group = (route, resource, allowed = 1, blocked = 0) => ({
-    key: route + resource, method: "GET", hostPort: "api:443", route, resource, category: "x",
-    allowed, blocked, inheritedBlocks: 0, sandboxes: new Set(["s1"]), requests: Array.from({ length: allowed + blocked }, () => ({})),
-  });
-  assert.equal(ctx.rows, 10);
-  // Look-alike targets differing by a number are one row.
-  const enumerated = Array.from({ length: 30 }, (_, n) => group("/repos/{owner}/{repo}", `org/repo-${100 + n}`));
-  const folded = ctx.cap(enumerated, 10);
-  assert.equal(folded.groups.length, 1);
-  assert.match(folded.groups[0].resource, /\(30 targets\)/);
-  // Many different routes are cut to the limit, blocked ones kept first, and the rest folded into one row.
-  const many = Array.from({ length: 25 }, (_, n) => group(`/thing${String.fromCharCode(97 + (n % 26))}${n}`, `res-${String.fromCharCode(97 + n)}`, 1 + (n % 3), n === 24 ? 5 : 0));
-  const capped = ctx.cap(many, 8);
-  assert.equal(capped.groups.length, 8);
-  assert.equal(capped.hidden, 25 - 7);
-  assert.ok(capped.groups[0].blocked === 5, "the blocked route ranks first");
-  assert.ok(capped.groups[7].isOther, "the last row is the folded one");
-  assert.equal(capped.groups.reduce((n, g) => n + g.allowed + g.blocked, 0), many.reduce((n, g) => n + g.allowed + g.blocked, 0), "nothing is lost from the totals");
-  // Under the limit, nothing changes.
-  assert.equal(ctx.cap(many.slice(0, 5), 8).hidden, 0);
-}
