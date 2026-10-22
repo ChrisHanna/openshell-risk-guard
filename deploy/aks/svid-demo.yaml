@@ -1,0 +1,123 @@
+# A workload that proves who it is with a SPIFFE X.509-SVID and asks Risk Guard to score its requests over the SVID listener.
+# Rendered by scripts/aks/17-deploy-spire.ps1, which fills __IMAGE__.
+#
+# SPIRE gives each pod labelled app.kubernetes.io/name=svid-demo an identity derived from its namespace and service account.
+# spiffe-helper keeps the certificate and key in /certs current as SPIRE rotates them; the caller reads them on every request.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: risk-guard-svid-demo
+spec:
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: svid-demo
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshell
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: svid-demo
+  namespace: openshell
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: svid-demo-helper
+  namespace: openshell
+data:
+  helper.conf: |
+    agent_address = "/spiffe-workload-api/spire-agent.sock"
+    cert_dir = "/certs"
+    svid_file_name = "svid.pem"
+    svid_key_file_name = "svid_key.pem"
+    svid_bundle_file_name = "bundle.pem"
+    daemon_mode = true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: svid-demo
+  namespace: openshell
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: svid-demo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: svid-demo
+    spec:
+      serviceAccountName: svid-demo
+      # The SPIFFE CSI driver shares the agent's unix socket with the pod, which a Kata micro-VM cannot do, so this runs on the
+      # ordinary node pool.
+      nodeSelector:
+        kubernetes.azure.com/agentpool: nodepool1
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: spiffe-helper
+          image: ghcr.io/spiffe/spiffe-helper:0.12.1
+          args: ["-config", "/etc/spiffe-helper/helper.conf"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: spiffe-workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
+            - name: helper-config
+              mountPath: /etc/spiffe-helper
+              readOnly: true
+            - name: certs
+              mountPath: /certs
+        - name: caller
+          image: __IMAGE__
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              # One routine request every 30 seconds, scored as this pod's SPIFFE identity.
+              until [ -s /certs/svid.pem ] && [ -s /certs/svid_key.pem ]; do echo "waiting for the SVID"; sleep 3; done
+              while :; do
+                /usr/local/bin/openshell-risk-guard svid-probe \
+                  --endpoint=https://risk-guard.openshell.svc:50062 \
+                  --server-ca=/etc/openshell-risk-guard/ca/ca.crt \
+                  --server-name=risk-guard.openshell.svc \
+                  --svid=/certs/svid.pem --svid-key=/certs/svid_key.pem \
+                  --method=GET --host=api.github.local --port=443 --path=/repos/org/docs-site/issues || true
+                sleep 30
+              done
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+            - name: ca
+              mountPath: /etc/openshell-risk-guard/ca
+              readOnly: true
+      volumes:
+        - name: spiffe-workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+        - name: helper-config
+          configMap:
+            name: svid-demo-helper
+        - name: certs
+          emptyDir: {}
+        - name: ca
+          configMap:
+            name: risk-guard-ca

@@ -16,6 +16,7 @@ spec:
     - name: grpc-extension
       port: 50061
       targetPort: grpc-extension
+__SVID_SERVICE_PORT__
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -119,9 +120,11 @@ spec:
             # Bind each sandbox to a workload derived from the workspace and the principal the
             # gateway authenticated. OpenShell's unauthenticated local-dev user is never accepted.
             - --workload-from-principal
+__SVID_ARGS__
           ports:
             - name: grpc-extension
               containerPort: 50061
+__SVID_CONTAINER_PORT__
           # Kubernetes' built-in gRPC probe cannot speak TLS and this listener is TLS-only, so the probe is the
           # binary itself: `health-check` calls grpc.health.v1 over TLS and succeeds only when the decision
           # store answers (NOT_SERVING means evaluations are already failing closed).
@@ -172,6 +175,7 @@ spec:
             - name: ca
               mountPath: /etc/openshell-risk-guard/ca
               readOnly: true
+__SVID_MOUNT__
         # Operator console for the same database. It listens on the pod's loopback only; the nginx proxy added by
         # scripts/aks/09-expose-console.ps1 publishes it. With sign-in configured (scripts/aks/15-setup-console-signin.ps1)
         # it shows nothing to anyone but the listed Entra accounts. Locally: kubectl port-forward -n openshell deploy/risk-guard 8791
@@ -229,3 +233,4 @@ __CONSOLE_SIGNIN_ARGS__
         - name: ca
           configMap:
             name: risk-guard-ca
+__SVID_VOLUME__

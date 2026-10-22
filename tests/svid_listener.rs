@@ -394,3 +394,39 @@ async fn an_svid_workload_is_scored_like_any_other_and_a_destructive_call_is_den
     assert_eq!(denied.decision, Decision::Deny as i32);
     running.stop.notify_one();
 }
+
+#[tokio::test]
+async fn the_probe_command_reports_a_decision_for_the_workload_that_owns_the_svid() {
+    let authority = Authority::new();
+    let running = start(&authority, &[TRUST_DOMAIN]).await;
+    let me = SpiffeId::parse("spiffe://example.org/ns/prod/sa/probe").unwrap();
+    let (cert, key) = authority.svid(&[&me.uri()]);
+    let (svid_pem, key_pem) = (cert.pem(), key.serialize_pem());
+    let probe = |method: &'static str, path: &'static str| {
+        let endpoint = format!("https://{}", running.addr);
+        let ca = running.server_ca.clone();
+        let (svid_pem, key_pem) = (svid_pem.clone(), key_pem.clone());
+        async move {
+            openshell_risk_guard::spiffe::probe(&openshell_risk_guard::spiffe::ProbeRequest {
+                endpoint: &endpoint,
+                server_ca_pem: &ca,
+                server_name: Some("localhost"),
+                svid_pem: &svid_pem,
+                svid_key_pem: &key_pem,
+                method,
+                host: "api.github.local",
+                port: 18443,
+                path,
+            })
+            .await
+            .unwrap()
+        }
+    };
+    let allowed = probe("GET", "/repos/org/docs-site/issues").await;
+    assert_eq!(allowed["decision"], "allow");
+    assert_eq!(allowed["spiffe_id"], me.uri());
+    assert_eq!(allowed["sandbox_id"], me.sandbox_id());
+    let denied = probe("DELETE", "/repos/org/payments-prod").await;
+    assert_eq!(denied["decision"], "deny");
+    running.stop.notify_one();
+}

@@ -128,6 +128,30 @@ pub enum Commands {
         )]
         svid_trust_domains: Vec<String>,
     },
+    /// Evaluate one request as the workload that owns an X.509-SVID, against a running SVID listener, and print the decision.
+    SvidProbe {
+        #[arg(long, default_value = "https://risk-guard.openshell.svc:50062")]
+        endpoint: String,
+        /// CA certificate that signed the listener's server certificate.
+        #[arg(long)]
+        server_ca: PathBuf,
+        /// DNS name on the listener's certificate, when the endpoint is an IP address.
+        #[arg(long)]
+        server_name: Option<String>,
+        /// The SVID certificate chain and its private key, as spiffe-helper writes them.
+        #[arg(long)]
+        svid: PathBuf,
+        #[arg(long)]
+        svid_key: PathBuf,
+        #[arg(long, default_value = "GET")]
+        method: String,
+        #[arg(long, default_value = "api.example.internal")]
+        host: String,
+        #[arg(long, default_value_t = 443)]
+        port: u16,
+        #[arg(long, default_value = "/status")]
+        path: String,
+    },
     /// Check that a running sidecar is serving, over TLS (for Kubernetes exec probes; exit 0 only if SERVING).
     HealthCheck {
         #[arg(long, default_value = "https://127.0.0.1:50061")]
@@ -1080,6 +1104,40 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             let normalized = normalizer.normalize(&raw)?;
             let evaluation = store.evaluate_and_commit_atomic(&normalized, &detector)?;
             Ok(serde_json::to_string_pretty(&evaluation)?)
+        }
+
+        Commands::SvidProbe {
+            endpoint,
+            server_ca,
+            server_name,
+            svid,
+            svid_key,
+            method,
+            host,
+            port,
+            path,
+        } => {
+            let read = |path: &Path, what: &str| {
+                std::fs::read_to_string(path).map_err(|error| {
+                    RiskGuardError::InvalidArgument(format!(
+                        "cannot read the {what} '{}': {error}",
+                        path.display()
+                    ))
+                })
+            };
+            let decision = crate::spiffe::probe(&crate::spiffe::ProbeRequest {
+                endpoint: &endpoint,
+                server_ca_pem: &read(&server_ca, "server CA")?,
+                server_name: server_name.as_deref(),
+                svid_pem: &read(&svid, "SVID")?,
+                svid_key_pem: &read(&svid_key, "SVID key")?,
+                method: &method,
+                host: &host,
+                port,
+                path: &path,
+            })
+            .await?;
+            Ok(decision.to_string())
         }
 
         Commands::HealthCheck {

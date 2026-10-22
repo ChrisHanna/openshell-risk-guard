@@ -217,6 +217,101 @@ pub fn spiffe_id_from_certificate(der: &[u8]) -> Result<SpiffeId> {
     Ok(id)
 }
 
+/// Read the SPIFFE ID from the first certificate of a PEM chain (what `spiffe-helper` writes as `svid.pem`).
+pub fn spiffe_id_from_pem(pem: &[u8]) -> Result<SpiffeId> {
+    let (_, block) = x509_parser::pem::parse_x509_pem(pem).map_err(|_| {
+        RiskGuardError::InvalidArgument("the SVID file is not a PEM certificate".into())
+    })?;
+    spiffe_id_from_certificate(&block.contents)
+}
+
+/// Everything `probe` needs to call an SVID listener as one workload.
+pub struct ProbeRequest<'a> {
+    pub endpoint: &'a str,
+    pub server_ca_pem: &'a str,
+    pub server_name: Option<&'a str>,
+    pub svid_pem: &'a str,
+    pub svid_key_pem: &'a str,
+    pub method: &'a str,
+    pub host: &'a str,
+    pub port: u16,
+    pub path: &'a str,
+}
+
+/// Send one request to an SVID listener as the workload that owns the given SVID, and report the decision. This is both a
+/// smoke test for a deployment and a way to exercise a workload that has no gRPC client of its own.
+pub async fn probe(request: &ProbeRequest<'_>) -> Result<serde_json::Value> {
+    use openshell_core::proto::middleware::v1::supervisor_middleware_client::SupervisorMiddlewareClient;
+    use openshell_core::proto::{
+        Decision, HttpRequestEvaluation, HttpRequestTarget, Process, RequestContext,
+        SupervisorMiddlewarePhase,
+    };
+    use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity};
+
+    let id = spiffe_id_from_pem(request.svid_pem.as_bytes())?;
+    let sandbox_id = id.sandbox_id();
+    let mut tls = ClientTlsConfig::new()
+        .ca_certificate(Certificate::from_pem(request.server_ca_pem))
+        .identity(Identity::from_pem(request.svid_pem, request.svid_key_pem));
+    if let Some(name) = request.server_name {
+        tls = tls.domain_name(name);
+    }
+    let channel = Endpoint::from_shared(request.endpoint.to_string())
+        .map_err(|error| RiskGuardError::InvalidArgument(format!("bad endpoint: {error}")))?
+        .tls_config(tls)
+        .map_err(|error| RiskGuardError::InvalidArgument(format!("bad TLS settings: {error}")))?
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .connect()
+        .await
+        .map_err(|error| {
+            RiskGuardError::Internal(format!("cannot connect to the SVID listener: {error}"))
+        })?;
+    let evaluation = Request::new(HttpRequestEvaluation {
+        phase: SupervisorMiddlewarePhase::PreCredentials as i32,
+        context: Some(RequestContext {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            sandbox_id: sandbox_id.clone(),
+            originating_process: Some(Process {
+                binary: "/usr/local/bin/openshell-risk-guard".into(),
+                pid: std::process::id(),
+                ancestors: vec![],
+            }),
+            sandbox: sandbox_id.clone(),
+            workspace: SPIFFE_WORKSPACE.into(),
+        }),
+        config: None,
+        target: Some(HttpRequestTarget {
+            scheme: "https".into(),
+            host: request.host.into(),
+            port: u32::from(request.port),
+            method: request.method.into(),
+            path: request.path.into(),
+            query: String::new(),
+        }),
+        headers: vec![],
+        body: vec![],
+        middleware_name: "risk-guard".into(),
+    });
+    let response = SupervisorMiddlewareClient::new(channel)
+        .evaluate_http_request(evaluation)
+        .await
+        .map_err(|status| {
+            RiskGuardError::PermissionDenied(format!("{}: {}", status.code(), status.message()))
+        })?
+        .into_inner();
+    let decision = match Decision::try_from(response.decision) {
+        Ok(Decision::Allow) => "allow",
+        Ok(Decision::Deny) => "deny",
+        _ => "other",
+    };
+    Ok(serde_json::json!({
+        "spiffe_id": id.uri(),
+        "sandbox_id": sandbox_id,
+        "decision": decision,
+        "reason_code": response.reason_code,
+    }))
+}
+
 /// Replace whatever the client sent with the verified identity, or refuse the call. Runs for every request on the SVID listener.
 pub fn attach_peer_identity(
     policy: &SvidPolicy,
@@ -388,12 +483,19 @@ where
     const BUNDLE_POLL: std::time::Duration = std::time::Duration::from_secs(30);
     let policy = Arc::new(policy);
     loop {
-        let pem = std::fs::read(&bundle).map_err(|error| {
-            RiskGuardError::InvalidArgument(format!(
-                "cannot read the SVID trust bundle '{}': {error}",
-                bundle.display()
-            ))
-        })?;
+        // SPIRE publishes the bundle after it starts, which can be after Risk Guard does: wait for it instead of giving up.
+        let pem = loop {
+            match std::fs::read(&bundle) {
+                Ok(pem) if !pem.trim_ascii().is_empty() => break pem,
+                _ => {
+                    tracing::warn!(bundle = %bundle.display(), "waiting for the SPIFFE trust bundle");
+                    tokio::select! {
+                        () = tokio::time::sleep(std::time::Duration::from_secs(15)) => {}
+                        () = shutdown() => return Ok(()),
+                    }
+                }
+            }
+        };
         let tls = server_tls
             .clone()
             .client_ca_root(tonic::transport::Certificate::from_pem(&pem))

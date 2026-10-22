@@ -107,7 +107,19 @@ if ($entraTenant -and $entraClient -and $entraAdmins.Count) {
 } else {
     Write-Note 'console sign-in is not configured (run 15-setup-console-signin.ps1)'
 }
-$manifest = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/risk-guard.yaml') -Raw).Replace('__IMAGE__', $image).Replace('__CONSOLE_SIGNIN_ARGS__', $signIn)
+# SPIFFE workload identity: set up once by 17-deploy-spire.ps1, which records the trust domain. Without it Risk Guard serves only
+# the gateway and supervisors; with it, a second mutual-TLS listener identifies callers by the SPIFFE ID in their X.509-SVID.
+$svid = @{ args = ''; servicePort = ''; containerPort = ''; mount = ''; volume = '' }
+$svidDomain = Get-StateValue 'svidTrustDomain'
+if ($svidDomain) {
+    $svid.args = "            - --svid-listen=0.0.0.0:50062`n            - --svid-bundle=/etc/spire/bundle/bundle.crt`n            - --svid-trust-domain=$svidDomain"
+    $svid.servicePort = "    - name: grpc-svid`n      port: 50062`n      targetPort: grpc-svid"
+    $svid.containerPort = "            - name: grpc-svid`n              containerPort: 50062"
+    $svid.mount = "            - name: spire-bundle`n              mountPath: /etc/spire/bundle`n              readOnly: true"
+    $svid.volume = "        - name: spire-bundle`n          configMap:`n            name: spire-bundle`n            optional: true"
+    Write-Note "SPIFFE listener on :50062 for trust domain $svidDomain"
+}
+$manifest = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/risk-guard.yaml') -Raw).Replace('__IMAGE__', $image).Replace('__CONSOLE_SIGNIN_ARGS__', $signIn).Replace('__SVID_ARGS__', $svid.args).Replace('__SVID_SERVICE_PORT__', $svid.servicePort).Replace('__SVID_CONTAINER_PORT__', $svid.containerPort).Replace('__SVID_MOUNT__', $svid.mount).Replace('__SVID_VOLUME__', $svid.volume)
 Invoke-KubectlApply $manifest
 Invoke-Native kubectl @('rollout', 'restart', 'deploy/risk-guard', '-n', $ns) | Out-Null
 Invoke-Native kubectl @('rollout', 'status', 'deploy/risk-guard', '-n', $ns, '--timeout=300s') | Out-Null
