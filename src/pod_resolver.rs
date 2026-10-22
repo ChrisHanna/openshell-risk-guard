@@ -67,13 +67,7 @@ impl KubePodResolver {
         let ca = std::fs::read(format!("{SERVICE_ACCOUNT_DIR}/ca.crt")).map_err(|error| {
             RiskGuardError::InvalidArgument(format!("cannot read the cluster CA: {error}"))
         })?;
-        let client = reqwest::Client::builder()
-            .add_root_certificate(reqwest::Certificate::from_pem(&ca).map_err(|error| {
-                RiskGuardError::InvalidArgument(format!("bad cluster CA: {error}"))
-            })?)
-            .timeout(Duration::from_secs(5))
-            .build()
-            .map_err(|error| RiskGuardError::Internal(format!("http client: {error}")))?;
+        let client = http_client(&ca)?;
         let host = if host.contains(':') {
             format!("[{host}]")
         } else {
@@ -112,6 +106,21 @@ impl KubePodResolver {
             .map_err(|error| RiskGuardError::Internal(format!("reading pods: {error}")))?;
         Ok(parse_pods(&body))
     }
+}
+
+/// The client for the Kubernetes API: it trusts the cluster's own CA. reqwest is built without a default TLS crypto provider, so one
+/// is installed first (this panicked at startup the first time it was used without it).
+fn http_client(ca_pem: &[u8]) -> Result<reqwest::Client> {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    reqwest::Client::builder()
+        .add_root_certificate(
+            reqwest::Certificate::from_pem(ca_pem).map_err(|error| {
+                RiskGuardError::InvalidArgument(format!("bad cluster CA: {error}"))
+            })?,
+        )
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|error| RiskGuardError::Internal(format!("http client: {error}")))
 }
 
 /// Supervisor pods with an address, keyed by it. A pod without the sandbox label is ignored.
@@ -153,6 +162,15 @@ impl PodResolver for KubePodResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_api_client_can_be_built_in_a_process_that_installed_no_crypto_provider() {
+        let key = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let ca = params.self_signed(&key).unwrap();
+        http_client(ca.pem().as_bytes()).expect("the client builds");
+    }
 
     #[test]
     fn only_running_supervisor_pods_with_a_sandbox_label_and_an_address_are_mapped() {
