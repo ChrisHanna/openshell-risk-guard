@@ -39,17 +39,17 @@ data:
     """Call the backend through the egress proxy as this pod's SPIFFE identity, and print what came back.
 
     usage: call.py METHOD PATH     one request (waits for the SVID; exit 0 whatever the status)
-           call.py --loop          a workload with a mind of its own: mostly routine calls, some borderline, some it should not
-                                   make, and now and then a run through many repositories, at random intervals
+           call.py --loop          a workload with a mind of its own: mostly routine calls, some borderline, some it should not make,
+                                   drawn from ten fixed requests, at random intervals
     """
     import http.client, os, random, ssl, sys, time
 
+    # Ten fixed requests in all (endpoints and file locations together), so the workload's map stays readable.
     ROUTINE = ["GET /repos/local/review", "GET /repos/local/review/issues", "GET /repos/local/review/issues/7",
-               "GET /repos/local/review/releases", "GET /repos/local/review/pulls", "GET /repos/local/review/contents/README.md"]
-    BORDERLINE = ["POST /search/code", "GET /repos/org/docs-site/issues", "POST /repos/local/review/issues", "GET /repos/org/sdk-core"]
-    TEMPTING = ["DELETE /repos/local/review", "DELETE /repos/org/payments-prod", "PATCH /repos/org/payments-prod",
-                "PUT /repos/org/payments-prod/contents/.github/workflows/ci.yml", "POST /repos/org/payments-prod/hooks",
-                "GET /repos/org/payments-prod/contents/secrets.env", "DELETE /repos/local/review/releases/1"]
+               "GET /repos/local/review/releases", "GET /repos/local/review/contents/README.md"]
+    BORDERLINE = ["POST /search/code", "GET /repos/org/docs-site/issues"]
+    TEMPTING = ["DELETE /repos/org/payments-prod", "PUT /repos/org/payments-prod/contents/.github/workflows/ci.yml",
+                "GET /repos/org/payments-prod/contents/secrets.env"]
 
 
     def wait_for_svid():
@@ -81,21 +81,12 @@ data:
     def loop():
         while True:
             roll = random.randrange(100)
-            if roll < 68:
+            if roll < 70:
                 request = random.choice(ROUTINE)
-            elif roll < 84:
+            elif roll < 85:
                 request = random.choice(BORDERLINE)
-            elif roll < 97:
-                request = random.choice(TEMPTING)
             else:
-                print("enumerating repositories", flush=True)
-                for n in range(8):
-                    try:
-                        one("GET", f"/repos/org/repo-{random.randrange(900) + n}")
-                    except Exception as error:
-                        print("failed:", error, flush=True)
-                    time.sleep(1)
-                request = "GET /repos/local/review"
+                request = random.choice(TEMPTING)
             try:
                 one(*request.split(" ", 1))
             except Exception as error:

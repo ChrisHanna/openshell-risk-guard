@@ -87,15 +87,13 @@ spec:
           command: ["/bin/bash", "-c"]
           args:
             - |
-              # A workload with a mind of its own: mostly routine reads, some borderline calls, some it should not make, and now and
-              # then a run through many different repositories. Each call is scored as this pod's SPIFFE identity.
+              # A workload with a mind of its own, drawn from ten fixed requests (endpoints and file locations together) so its map stays readable:
+              # mostly routine reads, two borderline calls, three it should not make.
               routine=("GET /repos/local/review" "GET /repos/local/review/issues" "GET /repos/local/review/issues/7"
-                       "GET /repos/local/review/releases" "GET /repos/local/review/pulls" "GET /repos/local/review/contents/README.md")
-              borderline=("POST /search/code" "GET /repos/org/docs-site/issues" "POST /repos/local/review/issues"
-                          "GET /repos/org/sdk-core")
-              tempting=("DELETE /repos/local/review" "DELETE /repos/org/payments-prod" "PATCH /repos/org/payments-prod"
-                        "PUT /repos/org/payments-prod/contents/.github/workflows/ci.yml" "POST /repos/org/payments-prod/hooks"
-                        "GET /repos/org/payments-prod/contents/secrets.env" "DELETE /repos/local/review/releases/1")
+                       "GET /repos/local/review/releases" "GET /repos/local/review/contents/README.md")
+              borderline=("POST /search/code" "GET /repos/org/docs-site/issues")
+              tempting=("DELETE /repos/org/payments-prod" "PUT /repos/org/payments-prod/contents/.github/workflows/ci.yml"
+                        "GET /repos/org/payments-prod/contents/secrets.env")
               probe() {
                 /usr/local/bin/openshell-risk-guard svid-probe \
                   --endpoint=https://risk-guard.openshell.svc:50062 \
@@ -106,13 +104,9 @@ spec:
               until [ -s /certs/svid.pem ] && [ -s /certs/svid_key.pem ]; do echo "waiting for the SVID"; sleep 3; done
               while :; do
                 r=$((RANDOM % 100))
-                if   [ $r -lt 68 ]; then set -- ${routine[RANDOM % ${#routine[@]}]}
-                elif [ $r -lt 84 ]; then set -- ${borderline[RANDOM % ${#borderline[@]}]}
-                elif [ $r -lt 97 ]; then set -- ${tempting[RANDOM % ${#tempting[@]}]}
-                else
-                  echo "enumerating repositories"
-                  for n in 1 2 3 4 5 6 7 8; do probe GET "/repos/org/repo-$((RANDOM % 900 + n))"; sleep 1; done
-                  set -- GET /repos/local/review
+                if   [ $r -lt 70 ]; then set -- ${routine[RANDOM % ${#routine[@]}]}
+                elif [ $r -lt 85 ]; then set -- ${borderline[RANDOM % ${#borderline[@]}]}
+                else                     set -- ${tempting[RANDOM % ${#tempting[@]}]}
                 fi
                 probe "$1" "$2"
                 sleep $((15 + RANDOM % 60))
