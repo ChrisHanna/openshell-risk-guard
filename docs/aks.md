@@ -242,7 +242,7 @@ policy (the one hostname it may reach) and a Risk Guard baseline (its approved t
 by the same harmless fixture pod under different hostnames, so the console shows three different destinations. POST and
 DELETE calls only record themselves; nothing is changed anywhere.
 
-Every 3 to 5 minutes (`MIN_WAIT` and `MAX_WAIT` seconds) one agent runs one randomly chosen task. Every third run of
+Each agent runs on its own random schedule (`MIN_WAIT` to `MAX_WAIT` seconds apart, 8 to 20 minutes by default, after a random start offset), so runs sometimes overlap. Each run is one randomly chosen task. Every third run of
 an agent is screened by the NeMo Guardrails input rail first (`--guardrails-every N`), so some requests are stopped
 before they reach Risk Guard and others are stopped by it. Use `--once` for a single pass. Each sandbox is deleted
 after its run, and every 3 hours (`SWEEP_EVERY` seconds) the fleet also removes any `agent-*` sandbox older than that, such as one left behind by a dropped connection, so the Kata node stays small.

@@ -50,7 +50,7 @@ spec:
           # The first heartbeat is written when the loop starts, after the entrypoint has waited for the gateway.
           livenessProbe:
             exec:
-              command: ["sh", "-c", "test $(( $(date +%s) - $(cat /tmp/fleet-heartbeat 2>/dev/null || echo 0) )) -lt 1800"]
+              command: ["sh", "-c", "set -- /tmp/fleet-heartbeat-*; [ -e \"$1\" ] || exit 1; for f; do [ $(( $(date +%s) - $(cat $f) )) -lt 1800 ] || exit 1; done"]
             initialDelaySeconds: 600
             periodSeconds: 60
             failureThreshold: 3

@@ -8,7 +8,8 @@
 #   nat-agent    careful reviewer: read-only triage tasks            -> stays low risk
 #   release-bot  mostly routine, occasionally tries a risky change   -> climbs, may get denied
 #   ops-cleaner  keeps trying to delete things it should not         -> denied, then locked
-# Every 3-5 minutes (random) one agent runs one task chosen at random from its list. Every Nth run of an agent the
+# Each agent runs on its own random schedule (every 8-20 minutes by default, after a random start offset), so runs
+# sometimes overlap and never fall into a rotation. Each run is one task chosen at random from its list. Every Nth run of an agent the
 # NeMo Guardrails input rail screens the task first (default: every 3rd), so you can see the rail catch some
 # requests before they reach Risk Guard. Sandboxes are deleted after their run so the Kata node does not fill up.
 #
@@ -28,7 +29,9 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-MIN_WAIT="${MIN_WAIT:-180}"; MAX_WAIT="${MAX_WAIT:-300}"
+# Each agent keeps its own random schedule: it waits MIN_WAIT..MAX_WAIT seconds between its runs, and starts after a random
+# offset, so agents drift in and out of step and sometimes overlap, the way real workloads do.
+MIN_WAIT="${MIN_WAIT:-480}"; MAX_WAIT="${MAX_WAIT:-1200}"
 CLI="${OPENSHELL_BIN:-openshell}"
 
 appid() { python3 -c "import json,sys; print(json.load(open(sys.argv[1], encoding='utf-8-sig')).get('agentAppId-'+sys.argv[2],''))" "$STATE" "$1"; }
@@ -76,39 +79,49 @@ last_sweep=0
 # Liveness. The loop refreshes this file at the start and end of every run and before every wait; the in-cluster pod's liveness probe
 # (deploy/aks/fleet.yaml) restarts the pod if it goes stale. RUN_TIMEOUT stops one hung run from stalling the whole fleet: it is
 # killed (its sandbox is deleted by run-agent.sh's exit trap) and the loop carries on.
-HEARTBEAT_FILE="${HEARTBEAT_FILE:-/tmp/fleet-heartbeat}"
+HEARTBEAT_PREFIX="${HEARTBEAT_PREFIX:-/tmp/fleet-heartbeat}"   # one file per agent: <prefix>-<agent>
 RUN_TIMEOUT="${RUN_TIMEOUT:-1200}"
-heartbeat() { date +%s > "$HEARTBEAT_FILE" 2>/dev/null || true; }
-heartbeat
+heartbeat() { date +%s > "$HEARTBEAT_PREFIX-${1:-main}" 2>/dev/null || true; }
 
-declare -A RUNS
 for a in "${AGENTS[@]}"; do [ -n "$(appid "$a")" ] || { echo "no Entra app for '$a': run 13-register-agent-identity.ps1 -AgentName $a" >&2; exit 1; }; done
 
-n=0
-while :; do
-  [ $(( $(date -u +%s) - last_sweep )) -ge "$SWEEP_EVERY" ] && sweep_old_sandboxes
-  agent="${AGENTS[$((n % ${#AGENTS[@]}))]}"
-  n=$((n + 1))
+# One agent's loop. $1 is the agent; the first agent also sweeps leftovers.
+agent_loop() {
+  local agent="$1" runs=0 task out rc started sandbox wait_s guard options
   mapfile -t options <<<"${TASKS[$agent]}"
-  task="${options[$((RANDOM % ${#options[@]}))]}"
-  RUNS[$agent]=$(( ${RUNS[$agent]:-0} + 1 ))
-  guard=(); [ $((RUNS[$agent] % GUARD_EVERY)) -eq 0 ] && guard=(--guardrails)
+  heartbeat "$agent"
+  [ "$ONCE" = 1 ] || { wait_s=$(( RANDOM % MIN_WAIT )); echo "--- $agent starts in ${wait_s}s"; sleep "$wait_s"; }
+  while :; do
+    [ "$agent" = "${AGENTS[0]}" ] && [ $(( $(date -u +%s) - last_sweep )) -ge "$SWEEP_EVERY" ] && sweep_old_sandboxes
+    task="${options[$((RANDOM % ${#options[@]}))]}"
+    runs=$((runs + 1))
+    guard=(); [ $((runs % GUARD_EVERY)) -eq 0 ] && guard=(--guardrails)
 
-  heartbeat
-  echo "=== $(date '+%H:%M:%S')  $agent  ${guard[*]:-no-guardrail}"
-  started="$(date +%s)"
-  out="$(CLEANUP_SANDBOX=1 AGENT_PROFILE="${PROFILE[$agent]}" AGENT_NAME="openshell-agent-$agent" TAIL_LINES=12 timeout --kill-after=30 "$RUN_TIMEOUT" bash "$HERE/scripts/aks/run-agent.sh" "$(appid "$agent")" "$task" "${guard[@]}" 2>&1)"
-  rc=$?
-  echo "$out"
-  [ "$rc" -eq 124 ] && echo "--- run timed out after ${RUN_TIMEOUT}s and was stopped"
-  echo "--- run took $(( $(date +%s) - started ))s (exit $rc)"
-  heartbeat
-  sandbox="$(printf '%s\n' "$out" | sed -n 's/^sandbox: \([^ ]*\).*/\1/p' | tail -1)"
-  [ -n "$sandbox" ] && "$CLI" sandbox delete "$sandbox" >/dev/null 2>&1
+    heartbeat "$agent"
+    echo "=== $(date '+%H:%M:%S')  $agent  ${guard[*]:-no-guardrail}"
+    started="$(date +%s)"
+    out="$(CLEANUP_SANDBOX=1 AGENT_PROFILE="${PROFILE[$agent]}" AGENT_NAME="openshell-agent-$agent" TAIL_LINES=12 timeout --kill-after=30 "$RUN_TIMEOUT" bash "$HERE/scripts/aks/run-agent.sh" "$(appid "$agent")" "$task" "${guard[@]}" 2>&1)"
+    rc=$?
+    echo "$out"
+    [ "$rc" -eq 124 ] && echo "--- $agent run timed out after ${RUN_TIMEOUT}s and was stopped"
+    echo "--- $agent run took $(( $(date +%s) - started ))s (exit $rc)"
+    heartbeat "$agent"
+    sandbox="$(printf '%s\n' "$out" | sed -n 's/^sandbox: \([^ ]*\).*/\1/p' | tail -1)"
+    [ -n "$sandbox" ] && "$CLI" sandbox delete "$sandbox" >/dev/null 2>&1
 
-  [ "$ONCE" = 1 ] && break
-  wait_s=$(( MIN_WAIT + RANDOM % (MAX_WAIT - MIN_WAIT + 1) ))
-  echo "--- next run in ${wait_s}s"
-  heartbeat
-  sleep "$wait_s"
-done
+    [ "$ONCE" = 1 ] && break
+    wait_s=$(( MIN_WAIT + RANDOM % (MAX_WAIT - MIN_WAIT + 1) ))
+    echo "--- $agent next run in ${wait_s}s"
+    heartbeat "$agent"
+    sleep "$wait_s"
+  done
+}
+
+if [ "$ONCE" = 1 ]; then
+  for a in "${AGENTS[@]}"; do agent_loop "$a"; done
+else
+  for a in "${AGENTS[@]}"; do agent_loop "$a" & done
+  # Stop every agent loop if the pod is asked to stop. Each loop keeps its own heartbeat, so one stuck agent is noticed.
+  trap 'kill $(jobs -p) 2>/dev/null; exit 0' TERM INT
+  wait
+fi
