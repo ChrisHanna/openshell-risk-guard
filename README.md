@@ -115,7 +115,8 @@ Where this document says "the sandboxed process", it means the program running i
   (SPIRE) over mutual TLS, and an Envoy egress proxy can enforce Risk Guard's decision on the network path, outside the workload.
   Verified on AKS for demo workloads (plain HTTP inside the cluster). OpenShell's own sandboxes get a weaker gate on the network path:
   their TLS tunnels go through an Envoy proxy that refuses operator-quarantined workloads. See [Workload identity](docs/workload-identity.md)
-  and the [architecture](docs/architecture.md).
+  and the [architecture](docs/architecture.md). Each OpenShell sandbox also has a SPIFFE identity issued by SPIRE through OpenShell's own
+  support, used for credential-less token grants and shown in the console; Risk Guard does not verify it.
 - **Network only.** Risk Guard scores HTTP/S requests that OpenShell inspects.
   Filesystem and process behavior are enforced statically by OpenShell
   (Landlock and policy), not scored.

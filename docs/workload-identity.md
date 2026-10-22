@@ -65,6 +65,39 @@ The demo workload's network policy (Cilium, which the cluster enforces) lets it 
 time out, so the proxy is its only route. Without a policy like that, a compromised workload could simply connect to the backend
 itself and the proxy would enforce nothing.
 
+## OpenShell's own sandboxes: a SPIFFE identity each
+
+OpenShell can give every sandbox's supervisor a SPIFFE identity, and uses it for dynamic provider token grants. This deployment turns
+that on (`scripts/aks/19-enable-sandbox-spiffe.ps1`) and keeps the three questions about it apart:
+
+| | What it means | Status here |
+|---|---|---|
+| **Issued** | SPIRE issues each sandbox's supervisor an SVID named `spiffe://<trust-domain>/openshell/sandbox/<sandbox-id>`. The chart mounts the SPIFFE Workload API socket into the gateway and the supervisor pods (not into the Kata pod that runs the agent). | Verified: SPIRE holds one entry per supervisor pod, and the fleet kept running. |
+| **Used** | A provider profile with a `token_grant` makes the supervisor exchange its JWT-SVID for a short-lived token whenever the sandbox calls a chosen host, so the sandbox holds no stored secret for it. | Verified (below). |
+| **Presented to Risk Guard** | Whether Risk Guard receives and checks the certificate. | **No.** The supervisor calls Risk Guard with a gateway-minted token (bound to the sandbox and pod UIDs), and the proxy hop carries no certificate. Risk Guard shows the SPIFFE ID, labelled "assigned by SPIRE", and does not verify it. |
+
+**Used, shown end to end** (`scripts/aks/20-deploy-token-grant-demo.ps1`, `scripts/aks/run-token-agent.sh`): a token agent runs in a sandbox
+and calls two services, `alpha` and `beta`, with no credential of its own. The supervisor fetches a JWT-SVID, a token issuer checks it
+against SPIRE's published keys and returns a token for that service, and the supervisor attaches it. The service logs who it accepted:
+
+```text
+beta accepted request path=/records/7 aud="beta, account" scope="beta profile email"
+     client_id=spiffe://risk-guard.demo/openshell/sandbox/e71afc2c-7545-40a4-9735-b236ad3aa069
+```
+
+The same sandbox ID appears in Risk Guard's evidence for the `spiffe-token-agent` workload, so one name follows the sandbox from SPIRE
+through the token issuer and the service to the console. Risk Guard scores the same calls: reads of `/records` are allowed, and a call
+outside the task profile (`GET /admin/export`) was refused with `middleware_denied`. The agent uses no model, so it adds nothing to the
+hosted model's rate limit.
+
+Limits of this demonstration:
+
+* It uses OpenShell's own demo scripts (downloaded at the pinned commit, not copied) and a JWT issuer that trusts SPIRE's keys over plain
+  HTTP inside the cluster. Those keys are public, but an attacker who could alter that traffic could substitute their own; use the
+  chart's TLS options beyond a demo.
+* The provider profile omits `tls` because the gateway this cluster runs rejects `tls: none`, which OpenShell's current example uses.
+* The fleet's language-model agents do not use token grants; their model credential still comes from the `nvidia-nat` provider.
+
 ## OpenShell's own sandboxes: the tunnel gate
 
 OpenShell can chain a sandbox's policy-approved TLS egress through an operator-owned proxy (the chart's `upstreamProxy`, HTTP `CONNECT`).
@@ -123,6 +156,8 @@ On the AKS demo cluster (SPIRE 1.15, Envoy 1.36):
     (the options are a URL, Basic authentication and a CA bundle), so the tunnel gate still identifies a sandbox by pod address. This
     deployment does not turn the OpenShell SPIFFE support on.
   * Risk Guard and SPIRE share the cluster. A compromise of the cluster itself is out of scope.
+* **Not verified by Risk Guard:** a sandbox's SPIFFE identity (see above) is issued, used by OpenShell, and displayed by Risk Guard; Risk Guard
+  never sees the certificate.
 * **Not the same as NVIDIA Sentry.** Sentry puts the enforcement layer in a separate hardware trust domain (a BlueField DPU). This
   puts it on the network path in software. It improves on enforcement inside the workload's own host, and it is not equivalent to
   hardware isolation. See [positioning](positioning.md).

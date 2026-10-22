@@ -80,6 +80,8 @@ Three sources, never mixed up:
   calls are authenticated with a gateway-signed token for that sandbox.
 * **SPIFFE** (SPIRE) names workloads that are not OpenShell sandboxes, and the Envoy proxies that vouch for them. The identity is the
   verified certificate, never a header.
+* **A SPIFFE ID per sandbox** is issued by SPIRE through OpenShell's own support and used for provider token grants. Risk Guard records and
+  displays it, labelled "assigned"; it does not receive the certificate, so it does not rely on it.
 * **Pod address** names the sandbox behind a tunnel. OpenShell's proxy chaining sends no certificate, so the address is mapped to
   the sandbox through the supervisor pod's `openshell.ai/sandbox-id` label. It is only as strong as the network's refusal to
   forge source addresses.
