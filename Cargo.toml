@@ -32,7 +32,7 @@ openshell-prover = { git = "https://github.com/NVIDIA/OpenShell", rev = "55bf786
 openshell-supervisor-middleware = { git = "https://github.com/NVIDIA/OpenShell", rev = "55bf786453395f3fe1858a187152537b457de77d" }
 prost = "0.14"
 prost-types = "0.14"
-rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "aws_lc_rs"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "aws_lc_rs"] }
 regex = "1"
 reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls-native-roots-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
