@@ -25,6 +25,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import yaml
 
@@ -119,7 +120,7 @@ RISK_GUARD_FILL = {
 
 
 def read_docs(path):
-    text = open(path, encoding="utf-8").read()
+    text = Path(path).read_text(encoding="utf-8")
     if os.path.basename(path) == "risk-guard.yaml":
         for key, value in RISK_GUARD_FILL.items():
             text = text.replace(key, value)

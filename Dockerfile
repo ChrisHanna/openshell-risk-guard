@@ -7,7 +7,8 @@
 #   docker build -t openshell-risk-guard:local .
 
 # OpenShell's prebuilt Z3 needs glibc 2.38+ and libstdc++ 13+, so build and run on Debian 13 (trixie).
-FROM rust:1.95-trixie AS builder
+# Base images are pinned by digest so a rebuild uses the same bytes. To update one, pull the new tag, read its digest, change it here, and rebuild.
+FROM rust:1.95-trixie@sha256:f49565f188ee00bc2a18dd418183f2c5f23ef7d6e691890517ed341a598f67c3 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
@@ -24,16 +25,13 @@ RUN cargo build \
     --release \
     --bin openshell-risk-guard
 
-FROM debian:trixie-slim AS runtime
+RUN mkdir -p /out/var/lib/openshell-risk-guard
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid 65532 riskguard \
-    && useradd --uid 65532 --gid 65532 --no-create-home --shell /usr/sbin/nologin riskguard \
-    && mkdir -p /var/lib/openshell-risk-guard \
-    && chown -R 65532:65532 /var/lib/openshell-risk-guard
+# A distroless runtime: glibc, libstdc++ and CA certificates, with no shell, package manager, util-linux or login. The service needs
+# none of those (its probes run the binary itself), and every one of them is something to patch.
+FROM gcr.io/distroless/cc-debian13@sha256:83b9b50586253821cf63ffcec87d3d94265a093ad30da232039af962dd8f4edf AS runtime
 
+COPY --from=builder --chown=65532:65532 /out/var/lib/openshell-risk-guard /var/lib/openshell-risk-guard
 COPY --from=builder /workspace/openshell-risk-guard/target/release/openshell-risk-guard /usr/local/bin/openshell-risk-guard
 
 USER 65532:65532

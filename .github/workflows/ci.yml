@@ -90,6 +90,11 @@ jobs:
           exit $status
       - name: Python scripts compile
         run: python3 -m py_compile $(git ls-files 'scripts/*.py')
+      - name: Deployment profile and Kubernetes baseline checks
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/check-risk-guard-deployment.py
+          python3 -m unittest scripts/test_check_aks_profile.py
       - name: PowerShell scripts parse
         shell: pwsh
         run: |

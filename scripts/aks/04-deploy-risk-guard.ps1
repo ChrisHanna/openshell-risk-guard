@@ -18,7 +18,10 @@ param(
     [string]$ImageTag,
     [string]$BaselinePath,
     [string]$ApiSemanticsPath,
-    [switch]$RotateSecrets
+    [switch]$RotateSecrets,
+    # Deploy the image by digest (repo@sha256:...), resolved from the tag in the registry, so what runs is exactly what was released and a
+    # retagged image cannot replace it. The supported hardened deployment uses this.
+    [switch]$Hardened
 )
 . "$PSScriptRoot/common.ps1"
 Assert-Tools
@@ -29,6 +32,11 @@ $ns = Get-StateValue 'namespace' 'openshell'
 $tag = if ($ImageTag) { $ImageTag } else { Get-StateValue 'imageTag' }
 if (-not $tag) { throw 'No image tag recorded. Run 02-build-image.ps1 or pass -ImageTag.' }
 $image = "$($state.acr).azurecr.io/openshell-risk-guard:$tag"
+if ($Hardened) {
+    $digest = (Invoke-Native az @('acr', 'repository', 'show', '-n', $state.acr, '--image', "openshell-risk-guard:$tag", '--query', 'digest', '-o', 'tsv', '--only-show-errors') -Retries 3 | Select-Object -First 1).Trim()
+    if ($digest -notmatch '^sha256:[0-9a-f]{64}$') { throw "Could not resolve a digest for openshell-risk-guard:$tag in the registry." }
+    $image = "$($state.acr).azurecr.io/openshell-risk-guard@$digest"
+}
 if (-not $BaselinePath) { $BaselinePath = Join-Path $script:RepoRoot 'deploy/aks/baseline.json' }
 if (-not $ApiSemanticsPath) { $ApiSemanticsPath = Join-Path $script:RepoRoot 'config/api_semantics.yaml' }
 
@@ -135,6 +143,16 @@ $consoleEnv = ''
 if ($svidDomain -and (Get-StateValue 'sandboxSpiffe')) {
     $since = Get-StateValue 'sandboxSpiffeSinceMs' 0
     $consoleEnv = "          env:`n            - name: RISK_GUARD_SANDBOX_SPIFFE_TRUST_DOMAIN`n              value: $svidDomain`n            - name: RISK_GUARD_SANDBOX_SPIFFE_SINCE_MS`n              value: `"$since`""
+}
+# The hardened profile runs Risk Guard on the dedicated security node pool (deploy/aks/placement-profile.json; created by 21-harden-placement.ps1),
+# so a redeploy does not move it back next to the sandboxes.
+if ($Hardened) {
+    $placement = Get-Content (Join-Path $script:RepoRoot 'deploy/aks/placement-profile.json') -Raw | ConvertFrom-Json
+    $labelKey = ($placement.node_labels.PSObject.Properties | Select-Object -First 1).Name
+    $labelValue = ($placement.node_labels.PSObject.Properties | Select-Object -First 1).Value
+    $taintKey, $taintRest = $placement.node_taint -split '=', 2
+    $taintValue, $taintEffect = $taintRest -split ':', 2
+    $svid.podSpec += "`n      nodeSelector:`n        ${labelKey}: ${labelValue}`n      tolerations:`n        - key: ${taintKey}`n          operator: Equal`n          value: ${taintValue}`n          effect: ${taintEffect}"
 }
 $manifest = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/risk-guard.yaml') -Raw).Replace('__IMAGE__', $image).Replace('__CONSOLE_SIGNIN_ARGS__', $signIn).Replace('__SVID_ARGS__', $svid.args).Replace('__SVID_SERVICE_PORT__', $svid.servicePort).Replace('__SVID_CONTAINER_PORT__', $svid.containerPort).Replace('__SVID_MOUNT__', $svid.mount).Replace('__SVID_VOLUME__', $svid.volume).Replace('__SVID_POD_SPEC__', $svid.podSpec).Replace('__CONSOLE_ENV__', $consoleEnv)
 # Pod Security Admission: warn and audit against the Restricted standard, never enforce. SPIRE's node daemons (a privileged CSI driver, an agent with the host PID namespace) and the OpenShell gateway share this namespace and could not be admitted under an enforcing label; the exceptions are listed in deploy/aks/hardening-baseline.json.

@@ -1,0 +1,53 @@
+{
+  "name": "hardened",
+  "about": "The one supported production-shaped deployment on AKS. Every file under deploy/aks is either part of it or listed as demo-only; the deployment checker fails on a file that is neither, so nothing is silently in or out.",
+  "supported": [
+    "risk-guard.yaml",
+    "console-proxy-patch.yaml",
+    "sandbox-egress.yaml",
+    "egress-proxy.yaml",
+    "supervisor-fence.yaml",
+    "spire-values.yaml",
+    "gateway-extensions-values.yaml",
+    "gateway-spiffe-values.yaml",
+    "kata-deploy-values.yaml",
+    "sandbox-spiffe.yaml",
+    "placement-profile.json",
+    "hardening-baseline.json",
+    "hardened-profile.json",
+    "console-acme.sh",
+    "console-nginx.conf"
+  ],
+  "demo_only": [
+    "egress-demo.yaml",
+    "svid-demo.yaml",
+    "token-grant-demo.yaml",
+    "token-grant-profile.yaml",
+    "fixture.yaml",
+    "fleet.yaml",
+    "agent-sandbox-policy.yaml",
+    "agent-workflow.yml",
+    "baseline.json",
+    "sandbox-policy.yaml",
+    "entra-agent-provider.yaml",
+    "agents",
+    "fleet"
+  ],
+  "forbidden_in_supported": {
+    "args": [
+      "--allow-insecure-local-test",
+      "--allow-local-dev-principal"
+    ],
+    "text": [
+      ":latest",
+      "imagePullPolicy: Never",
+      "allow_insecure_transport: true",
+      "RISK_GUARD_ALLOW_LOCAL_DEV_PRINCIPAL"
+    ]
+  },
+  "single_writer": {
+    "deployment": "risk-guard",
+    "replicas": 1,
+    "strategy": "Recreate"
+  }
+}
