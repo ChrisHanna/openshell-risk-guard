@@ -53,7 +53,7 @@ Each record carries the sandbox name and ID, the URL, the method, and the OpenSh
 3. A short guide for vendors in both directions: *consume* the OCSF and OTLP output, and *extend* OpenShell by implementing the middleware or interceptor
    contract (Risk Guard is the worked example).
 
-## Reference SIEM for the demo (deployed on the cluster; gateway export not yet switched on)
+## Reference SIEM for the demo (deployed and receiving real events)
 
 `deploy/aks/siem/` and scripts `22-deploy-siem.ps1` and `23-enable-ocsf-export.ps1` build a demonstration pipeline: the gateway and supervisors send OCSF as OTLP to
 an OpenTelemetry Collector, which writes documents to a single-node OpenSearch, viewed in OpenSearch Dashboards. Placement and controls:
@@ -74,6 +74,23 @@ short-lived test pod arrived in the `ocsf-openshell` index as parsed documents (
 conflicted with running as non-root (disabled; the volume is writable through `fsGroup`), and Dashboards' default CPU limit was below its request.
 Still to do: index settings (a single node cannot hold a replica, so the index shows yellow; `time` is stored as a number, not a date), and switching the gateway export on
 (`23-enable-ocsf-export.ps1`).
+
+### Verified end to end (real events)
+
+After `23-enable-ocsf-export.ps1 -Apply` (the gateway restarted in about a minute and logged that OTLP export was enabled) and a new sandbox, a refused call arrived in
+the `ocsf-openshell` index within seconds. Within minutes the index held 63 documents across OCSF classes (Device Config State Change, Authentication, Network Activity, SSH
+Activity, HTTP Activity, Detection Finding). The ones for the refusal, from [`evidence/ocsf-in-opensearch-sample.jsonl`](evidence/ocsf-in-opensearch-sample.jsonl):
+
+| Time (UTC) | OCSF class | What it says |
+|---|---|---|
+| 07:07:55 | HTTP Activity, `firewall_rule.type: l7`, Allowed | `DELETE /customers/1` passed OpenShell's own policy |
+| 07:07:55 | HTTP Activity, `firewall_rule.type: middleware`, **Denied**, Medium | `status_detail: middleware_denied:risk-guard:behavioral_risk_restricted` |
+| 07:07:55 | Detection Finding, **High** | "External middleware finding" for the same sandbox |
+
+Events from other sandboxes (for example a fleet agent's `POST /v1/chat/completions`) arrive in the same index, so one query covers the whole fleet.
+
+Known rough edges, to fix next: the single-node index shows yellow (no replica is possible), `time` and `class_uid` are stored as floating-point numbers (parsed from JSON) rather than as a date
+and integers, and the field `status_detail` is analysed as text, so exact-match queries need its `.keyword` form. These matter before a Security Analytics rule is written on top.
 
 ## What this does not claim
 
