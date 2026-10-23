@@ -1,5 +1,5 @@
 # An egress proxy in the network path of OpenShell's sandboxes, which cuts off a sandbox whose workload Risk Guard has locked.
-# Rendered by scripts/aks/18-enable-sandbox-egress.ps1, which fills __TRUST_DOMAIN__.
+# Rendered by scripts/aks/18-enable-sandbox-egress.ps1, which fills __TRUST_DOMAIN__, __TUNNEL_MAX_SECONDS__ and __TUNNEL_IDLE_SECONDS__.
 #
 #   sandbox ──▶ supervisor (OpenShell policy, SSRF checks, Risk Guard's per-request check)
 #                  │ allowed TLS egress
@@ -84,6 +84,11 @@ data:
                   typed_config:
                     "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
                     stat_prefix: tunnels
+                    # Closes a stream that has carried no bytes in either direction for this long, so an abandoned tunnel does not hold a
+                    # slot for the whole cap. 0 turns it off. (Envoy's own default is five minutes, so it is always set explicitly: a cap
+                    # raised past that would otherwise be cut by the default.) A model call can be silent for a minute or more before its first
+                    # byte, so the default here is off. Set by 18-enable-sandbox-egress.ps1 -TunnelIdleSeconds.
+                    stream_idle_timeout: __TUNNEL_IDLE_SECONDS__s
                     # Only HTTP CONNECT is served. Anything else gets no route.
                     upgrade_configs:
                       - upgrade_type: CONNECT
@@ -98,11 +103,13 @@ data:
                               route:
                                 cluster: destination
                                 # A tunnel is checked when it is opened, so a workload quarantined later keeps the tunnels it has. This bounds
-                                # that: no tunnel lives longer than this, so quarantine takes full effect within it (and the supervisor's next
-                                # CONNECT is refused). Measured by scripts/conformance/quarantine_tunnel.py. Lower it to tighten the bound, at
-                                # the cost of more reconnects.
+                                # that: no tunnel lives longer than the cap, so a quarantine takes full effect within it (and the supervisor's next
+                                # CONNECT is refused). The cap IS the containment delay: a longer cap lets longer streams (server-sent events, long
+                                # WebSocket sessions) run uninterrupted but lengthens the time an open tunnel can outlive a quarantine. Clients that
+                                # reconnect carry on after a cut. Set by 18-enable-sandbox-egress.ps1 -TunnelMaxSeconds (default 120); measured by
+                                # scripts/conformance/quarantine_tunnel.py.
                                 max_stream_duration:
-                                  max_stream_duration: 120s
+                                  max_stream_duration: __TUNNEL_MAX_SECONDS__s
                                 upgrade_configs:
                                   - upgrade_type: CONNECT
                                     connect_config: {}

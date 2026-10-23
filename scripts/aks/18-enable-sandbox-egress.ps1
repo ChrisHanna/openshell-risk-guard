@@ -31,6 +31,12 @@ param(
     # so here Risk Guard's approved list, not the sandbox's own address validation, is what decides where a tunnel may go.
     [bool]$ConnectByHostname = $true,
     [string]$NoProxy = '.svc,.svc.cluster.local,10.0.0.0/8',
+    # The longest any tunnel may live. Tunnels are checked when they open, so this is also the longest an open tunnel can outlive a
+    # quarantine: 120 s means a quarantine is complete within two minutes, and a stream longer than that is cut (clients that reconnect carry on).
+    # Raising it lets longer streams run and lengthens the containment delay by the same amount.
+    [ValidateRange(10, 86400)][int]$TunnelMaxSeconds = 120,
+    # Close a tunnel idle (no bytes either way) this long. 0 = off (default); a model call can be silent for a minute or more.
+    [ValidateRange(0, 86400)][int]$TunnelIdleSeconds = 0,
     [switch]$Remove
 )
 . "$PSScriptRoot/common.ps1"
@@ -70,7 +76,11 @@ if ($Remove) {
 }
 
 Write-Step 'Deploying the sandbox egress proxy'
-Invoke-KubectlApply ((Get-Content (Join-Path $script:RepoRoot 'deploy/aks/sandbox-egress.yaml') -Raw).Replace('__TRUST_DOMAIN__', $trustDomain))
+if ($TunnelIdleSeconds -gt $TunnelMaxSeconds) { throw '-TunnelIdleSeconds cannot exceed -TunnelMaxSeconds.' }
+Write-Note "tunnels live at most $TunnelMaxSeconds s (idle limit: $(if ($TunnelIdleSeconds) { "$TunnelIdleSeconds s" } else { 'off' })); a quarantine is complete within the maximum"
+Invoke-KubectlApply ((Get-Content (Join-Path $script:RepoRoot 'deploy/aks/sandbox-egress.yaml') -Raw).Replace('__TRUST_DOMAIN__', $trustDomain).Replace('__TUNNEL_MAX_SECONDS__', "$TunnelMaxSeconds").Replace('__TUNNEL_IDLE_SECONDS__', "$TunnelIdleSeconds"))
+# Envoy reads its configuration once, at start, so a changed ConfigMap does nothing until the pods restart.
+Invoke-Native kubectl @('rollout', 'restart', 'deploy/sandbox-egress', '-n', $ns) | Out-Null
 Invoke-Native kubectl @('rollout', 'status', 'deploy/sandbox-egress', '-n', $ns, '--timeout=300s') | Out-Null
 
 Write-Step 'Fencing the supervisors (they can no longer bypass the proxy)'
@@ -80,7 +90,7 @@ if (Invoke-Native kubectl @('get', 'crd', 'ciliumnetworkpolicies.cilium.io', '-o
 } else { Write-Note 'Cilium is not installed: the supervisor fence was skipped, so a compromised supervisor could reach the internet directly.' }
 
 Write-Step 'Redeploying Risk Guard to answer its checks'
-Save-State @{ svidSandboxEgress = $true; svidTunnelRestrictionMode = $RestrictionMode }
+Save-State @{ svidSandboxEgress = $true; svidTunnelRestrictionMode = $RestrictionMode; tunnelMaxSeconds = $TunnelMaxSeconds; tunnelIdleSeconds = $TunnelIdleSeconds }
 $deployArgs = @{}
 if ($ImageTag) { $deployArgs.ImageTag = $ImageTag }
 try { & "$PSScriptRoot/04-deploy-risk-guard.ps1" @deployArgs }

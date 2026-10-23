@@ -138,7 +138,19 @@ separate trust domains.
   existing connection can outlive a quarantine is 120 s. Measured over two runs: a long-lived connection failed 111.5 s and
   81.4 s after quarantine, depending on when its tunnel had been opened (`conformance/quarantine-tunnel*.json`).
 * **What the client sees:** a refused new tunnel shows as a TLS handshake timeout after about 10 s, not an HTTP error.
-* A short lifetime also bounds every legitimate long stream to 120 s; raise it deliberately if a workload needs more.
+* **Long streams.** The cap applies to every tunnel, so a legitimate stream longer than the cap (server-sent events, a long WebSocket session) is cut too.
+  Clients that reconnect carry on: tested from a real sandbox, where an active connection was cut at 121 s and a fresh connection immediately after worked
+  ([`long-stream-default.json`](../conformance/long-stream-default.json)).
+* **Two settings** on `scripts/aks/18-enable-sandbox-egress.ps1`: `-TunnelMaxSeconds` (default 120) and `-TunnelIdleSeconds` (default 0, off).
+
+  | Setting | Effect | Cost |
+  |---|---|---|
+  | Maximum lifetime, N s | no tunnel lives longer than N s; a quarantine is complete within N s | a longer N lets longer streams run uninterrupted but lengthens the containment delay by the same amount |
+  | Idle limit, M s | a tunnel with no bytes either way for M s is closed (tested at 45 s: an idle connection was closed, an active one was not) | a model call can be silent for a minute or more before its first byte, so the default is off |
+
+  There is no way to cut one workload's open tunnels at the moment of quarantine with this proxy; that would need a different design. Envoy's route-level
+  `idle_timeout` is not applied to CONNECT tunnels (tested); the connection-manager `stream_idle_timeout` is what works.
+* Envoy reads its configuration only when it starts, so script 18 restarts the proxy pods after applying it.
 
 ## Deployed shape (AKS)
 

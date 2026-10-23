@@ -1,0 +1,24 @@
+{
+  "test": "long_lived_connection",
+  "run_at": "2026-10-23T05:24:09+00:00",
+  "configured": {
+    "max_stream_seconds": 120,
+    "idle_timeout_seconds": 0
+  },
+  "idle_wait_seconds": 75,
+  "active_connection": {
+    "requests_ok": 12,
+    "cut_after_seconds": 121.1
+  },
+  "idle_connection": {
+    "first_request_ok": true,
+    "usable_after_waiting": true
+  },
+  "reconnect_after_cut_ok": true,
+  "checks": {
+    "active connection ended near the configured maximum": true,
+    "a client that reconnects carries on": true,
+    "idle connection closed when an idle limit is set, kept when none is": true
+  },
+  "passed": true
+}
