@@ -77,7 +77,8 @@ if ($mtls) {
     # The forwarder checks Risk Guard's server certificate against the same CA the gateway uses.
     $ca = Join-Path ([IO.Path]::GetTempPath()) ("rg-ca-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.crt')
     try {
-        [IO.File]::WriteAllText($ca, (kubectl get configmap risk-guard-ca -n $ns -o 'jsonpath={.data.ca\.crt}'))
+        # kubectl prints the PEM one line at a time; joined with spaces (what PowerShell does to an array) it is no longer a certificate.
+        [IO.File]::WriteAllText($ca, ((kubectl get configmap risk-guard-ca -n $ns -o 'jsonpath={.data.ca\.crt}') -join "`n") + "`n")
         $cm = Invoke-Native kubectl @('create', 'configmap', 'risk-guard-ca', '-n', 'siem', "--from-file=ca.crt=$ca", '--dry-run=client', '-o', 'yaml')
         Invoke-KubectlApply ($cm -join "`n")
     } finally { Remove-Item -Force $ca -ErrorAction SilentlyContinue }
