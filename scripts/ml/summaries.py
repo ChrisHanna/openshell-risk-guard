@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from train import Envelope  # noqa: E402
 
 MIN_ROWS = 120          # about two hours of activity per workload before a baseline means anything
-FEATURES = ["total", "refused_calls", "refusal_ratio", "distinct_paths", "max_score"]
+FEATURES = ["total", "refused_calls", "refusal_ratio", "distinct_routes", "max_score"]
 
 
 def export(out_dir):

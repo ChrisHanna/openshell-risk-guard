@@ -33,6 +33,8 @@ Risk Guard emits OCSF events over OTLP/HTTP to the collector (`--ocsf-otlp-endpo
 
 OpenSearch needs one JSON type per key across all event kinds, so the summary fields are named `allowed_calls`, `refused_calls`, `total`, and so on; a test (`a_key_has_the_same_type_in_every_kind_of_event`) holds that. Events are rolled over by an ISM policy and kept 14 days. OpenShell's own events arrive through the same collector. See [SIEM guide](siem-guide.md) and [SIEM integration](siem-integration.md).
 
+**Following one call across both layers.** OpenShell's supervisor events carry no per-call id (their `metadata.uid` is random), so there is nothing exact to join on. A call is found in both layers by the sandbox (`container.uid`), method, host and path within a few seconds. Risk Guard's refusal events carry those fields in OpenShell's own shape (`http_request`, `dst_endpoint`) beside its own request id (`finding_info.uid`), and the "One call, both layers" search on the Agent activity dashboard shows both. The new fields appear once the image with this change is deployed; older events lack them.
+
 **Dashboards** (installed by `scripts/siem/install_content.py`, verified by `check_dashboards.py`): Fleet, One agent, Incidents, Control health, Sandbox activity and egress, Workloads, and a model-training view on synthetic data.
 
 ## 5. The SIEM talks back (signals)
@@ -48,13 +50,17 @@ OpenSearch alert (query monitor, throttled 10 min)
 
 The only action is `quarantine` with a ttl of 60–3600 s. Limits: 10 per minute, at most 5 active, idempotent by `signal_id`, a **dry-run** mode, and the source is overwritten with the verified SPIFFE ID. Every signal is stored (`siem_signals`, `workload_quarantine`). Direct OpenSearch-to-Risk-Guard traffic is blocked. Current deployment: dry-run. See [SIEM signals](siem-signals.md).
 
+**Watch-only monitors.** Besides the signal monitor, three monitors have no action, so they only raise an alert in OpenSearch Alerting for a person to read: an agent's refusal ratio jumps (half or more of 10+ calls in 5 minutes), an agent reaches a destination it had not used in the last day, and a sandbox that was making calls goes quiet for 10 minutes. Installed by `scripts/siem/install_content.py` (or `--watch`) and checked with a dry run. The quiet-sandbox monitor also fires when a sandbox simply finishes.
+
 ## 6. People changing the rules
 
 Loosening needs two people. Release of a quarantine, clearing a restriction, or turning the rule off is a **change request**: proposed by one operator, approved by a different one, expiring after 24 hours. A `--break-glass` path exists and is labelled in the record. CLI and `/api/changes`; there is no UI. See [two-person approval](two-person.md).
 
+**Baseline suggestions from history.** `scripts/siem/suggest_baselines.py` reads a week of route and tunnel summaries and, per task profile, proposes steady, never-refused GET/HEAD routes and egress hosts missing from the baseline, and rate limits far above what was observed. It never proposes a destructive method, anything refused even once, or a higher limit. It writes a proposed baseline with a blank `approved_by`, which `baseline-import` rejects, so a person must read the evidence, sign it and import it. On the current data it proposes no additions (the baselines already cover what is steady) and flags only the demo profile's rate limit as loose.
+
 ## 7. Shadow to enforce
 
-`scripts/promotion_gate.py` reads evidence from the SIEM against `deploy/aks/promotion-policy.json` and answers PROMOTE or HOLD. `scripts/aks/18-enable-sandbox-egress.ps1 -RestrictionMode enforce` refuses on HOLD unless `-OverrideGate "reason (20+ characters)"` is given, and the override is recorded. **Today the answer is HOLD**: thin traffic, four unreviewed would-refuse decisions (the agents' own calls to the hosted model), 14 middleware failures, no recent backup. See [promotion gate](promotion-gate.md).
+`scripts/promotion_gate.py` reads evidence from the SIEM against `deploy/aks/promotion-policy.json` and answers PROMOTE or HOLD. `scripts/aks/18-enable-sandbox-egress.ps1 -RestrictionMode enforce` refuses on HOLD unless `-OverrideGate "reason (20+ characters)"` is given, and the override is recorded. **Today the answer is HOLD**: thin traffic, four unreviewed would-refuse groups (agents whose workloads hold a latched restriction, so enforcement would cut even their calls to the hosted model; the model host itself is approved), 14 middleware failures, no recent backup. See [promotion gate](promotion-gate.md).
 
 ## 8. Attacking it, and keeping the results
 
@@ -66,7 +72,7 @@ See [red team](red-team.md) and [red-team agent](red-team-agent.md).
 
 ## 9. Models and anomaly detection
 
-Synthetic traces (`scripts/ml`) compare a per-agent envelope, Isolation Forest and OpenSearch anomaly detection per agent. The real-data path (`summaries.py`) needs at least 120 active minutes per workload, which the demo does not have yet. See [ML training](ml-training.md).
+Synthetic traces (`scripts/ml`) compare a per-agent envelope, Isolation Forest and OpenSearch anomaly detection per agent. The real-data path (`summaries.py`) needs at least 120 active minutes per workload. Two workloads (the repo-review demo pair) have that now and train on real summaries, flagging about 1 in 128 held-out minutes; the sporadic fleet agents have 10–22 minutes each and need longer runs. See [ML training](ml-training.md).
 
 ## 10. Deploying it
 

@@ -513,6 +513,9 @@ pub fn to_ocsf(
                 .cloned()
                 .unwrap_or_default(),
             );
+            // The same fields OpenShell's own HTTP events use, so one search on the sandbox, host and path finds both layers' record of a call.
+            event.insert("http_request".into(), json!({"http_method": method, "url": {"hostname": host, "path": path, "port": port}}));
+            event.insert("dst_endpoint".into(), json!({"domain": host, "port": port}));
             Value::Object(event)
         }
         Occurrence::Tunnel {
@@ -1010,6 +1013,20 @@ mod tests {
     /// OpenSearch fixes a field's type when it first sees it, and rejects a document that later uses the same name for another type. All of Risk Guard's events share
     /// `unmapped.risk_guard.*`, so a key must mean the same JSON type in every kind of event. (An activity summary once used `refused` as a count where tunnel events
     /// use it as a flag; the collector dropped every summary.)
+    /// OpenShell's supervisor has no per-call id, so a call is found in both layers by sandbox, method, host and path. A refusal must therefore carry the same field names OpenShell's
+    /// own HTTP events use.
+    #[test]
+    fn a_refusal_carries_the_fields_openshell_http_events_use_to_join_on() {
+        let event = to_ocsf(&decision(), &SandboxIdentity::default(), None, "test");
+        assert_eq!(event["container"]["uid"], "sbx-1");
+        let http = &event["unmapped"]["risk_guard"]["http"];
+        assert_eq!(event["http_request"]["http_method"], http["method"]);
+        assert_eq!(event["http_request"]["url"]["hostname"], http["host"]);
+        assert_eq!(event["http_request"]["url"]["path"], http["path"]);
+        assert_eq!(event["dst_endpoint"]["domain"], http["host"]);
+        assert_eq!(event["finding_info"]["uid"], "req-1");
+    }
+
     #[test]
     fn a_key_has_the_same_type_in_every_kind_of_event() {
         let sample = [

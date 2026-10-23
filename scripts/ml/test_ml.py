@@ -102,9 +102,9 @@ class RealSummaries(unittest.TestCase):
         out = []
         for n in range(count):
             total = 8 + (n % 5)
-            row = {"ts": n * 60_000, "workload": "agent-a", "total": total, "refused_calls": 0, "refusal_ratio": 0.0, "distinct_paths": 4, "max_score": 10}
+            row = {"ts": n * 60_000, "workload": "agent-a", "total": total, "refused_calls": 0, "refusal_ratio": 0.0, "distinct_routes": 4, "max_score": 10}
             if n == spike_at:
-                row.update(total=90, refused_calls=30, refusal_ratio=0.33, distinct_paths=40, max_score=100)
+                row.update(total=90, refused_calls=30, refusal_ratio=0.33, distinct_routes=40, max_score=100)
             out.append(row)
         return out
 

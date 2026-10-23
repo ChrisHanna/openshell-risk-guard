@@ -53,6 +53,8 @@ flowchart LR
 
 Running on the AKS demo cluster: both gates, OCSF events and summaries in OpenSearch, the dashboards, signals through the forwarder (in dry-run), backup and restore (2.4 s and 56 s), two-person approval by CLI, the promotion gate (currently HOLD), the fuzzer (0 of 387 through) and one adaptive red-team run (17 requests, none through).
 
+Also running: three watch-only monitors, a "one call, both layers" search, and baseline suggestions drawn from SIEM history (a person signs any change).
+
 Not yet: enforcement broadly switched on, Garak results, scheduled backups, a UI for approvals, signed images, hardware-backed trust. The full list is in [production gaps](production-gaps.md); the technical walk-through is in [how it works](how-it-works.md).
 
 ## Where things live in the repository

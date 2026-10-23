@@ -261,6 +261,9 @@ def build_activity_objects():
                      columns=("src_endpoint.ip", "http_request.url.path", "auth_protocol", "message")),
         saved_search("oa-search-calls", "Agent calls through Risk Guard", "Every request a supervisor asked Risk Guard about.", DECISIONS_ALL,
                      columns=("container.name", "http_request.http_method", "http_request.url.hostname", "http_request.url.path", "action")),
+        saved_search("oa-search-both", "One call, both layers", "OpenShell's record of each HTTP call beside Risk Guard's refusal of it. OpenShell's supervisor has no per-call id, so match on the sandbox (container.name), method, host and path; type a sandbox name or host in the search bar to follow one call.",
+                     'class_name:"HTTP Activity" or unmapped.risk_guard.gate:"middleware"',
+                     columns=("metadata.product.name", "container.name", "http_request.http_method", "http_request.url.hostname", "http_request.url.path", "action", "status_detail")),
         visualization("oa-model-calls", "Model calls", "metric", [COUNT], METRIC_PARAMS, MODEL_CALLS),
         visualization("oa-tool-calls", "Tool calls", "metric", [COUNT], METRIC_PARAMS, TOOL_CALLS),
         visualization("oa-decisions", "Decisions by Risk Guard", "metric", [COUNT], METRIC_PARAMS, DECISIONS_ALL),
@@ -298,7 +301,8 @@ def build_activity_objects():
         ("oa-decisions", "visualization", 24, 0, 12, 7), ("oa-sandboxes", "visualization", 36, 0, 12, 7),
         ("oa-allow-deny-time", "visualization", 0, 7, 28, 14), ("oa-model-time", "visualization", 28, 7, 20, 14),
         ("oa-per-sandbox", "visualization", 0, 21, 24, 14), ("oa-tool-destinations", "visualization", 24, 21, 24, 14),
-        ("oa-tool-routes", "visualization", 0, 35, 48, 13), ("oa-search-calls", "search", 0, 48, 48, 13)])
+        ("oa-tool-routes", "visualization", 0, 35, 48, 13), ("oa-search-calls", "search", 0, 48, 48, 13),
+        ("oa-search-both", "search", 0, 61, 48, 14)])
     egress = dashboard("oa-dashboard-egress", "Egress and policy: where agents tried to go",
                        "Destinations denied by policy, where connections were allowed, and names agents asked for that nobody has approved yet (candidates for a policy decision).", [
         ("oa-denied-dest", "visualization", 0, 0, 24, 14), ("oa-allowed-dest", "visualization", 24, 0, 24, 14),
@@ -746,12 +750,58 @@ def install_signals():
     print("alert monitor: created" if "_id" in result else "alert monitor NOT created: " + json.dumps(result)[:300])
 
 
+def _since(minutes):
+    return {"range": {"time": {"gte": "{{period_end}}||-%dm" % minutes, "lte": "{{period_end}}", "format": "epoch_millis"}}}
+
+
+# Monitors that only watch. They have no action, so they raise an alert in OpenSearch Alerting for a person to look at and never send a signal to Risk Guard (the
+# one monitor that does is install_signals). Each asks a question that Risk Guard's own per-minute summaries can answer.
+WATCH_MONITORS = {
+    "Watch: refusal ratio jumped (half or more of 10+ calls refused in 5 minutes, per agent)": {
+        "query": {"size": 0, "query": {"bool": {"filter": [
+            {"term": {RG_FIELD + "gate.keyword": "summary"}}, {"range": {RG_FIELD + "refusal_ratio": {"gte": 0.5}}}, {"range": {RG_FIELD + "total": {"gte": 10}}}, _since(5)]}},
+            "aggregations": {"by_agent": {"terms": {"field": RG_FIELD + "agent_id.keyword", "size": 5}}}},
+        "condition": "ctx.results[0].aggregations.by_agent.buckets.size() > 0", "severity": "2", "name": "An agent is being refused far more than usual"},
+    "Watch: an agent called a destination it had not called in the last day": {
+        "query": {"size": 0, "query": {"bool": {"filter": [{"term": {RG_FIELD + "gate.keyword": "route"}}, _since(24 * 60)]}},
+                  "aggregations": {"by_agent": {"terms": {"field": RG_FIELD + "agent_id.keyword", "size": 50}, "aggregations": {"by_host": {
+                      "terms": {"field": RG_FIELD + "host.keyword", "size": 100}, "aggregations": {
+                          "recent": {"filter": {"range": {"time": {"gte": "{{period_end}}||-10m", "format": "epoch_millis"}}}},
+                          "only_new": {"bucket_selector": {"buckets_path": {"total": "_count", "recent": "recent>_count"}, "script": "params.total == params.recent"}}}}}}}},
+        "condition": "for (a in ctx.results[0].aggregations.by_agent.buckets) { if (a.by_host.buckets.size() > 0) { return true; } } return false;",
+        "severity": "3", "name": "An agent reached a new destination"},
+    "Watch: a sandbox that was making calls has gone quiet for 10 minutes": {
+        "query": {"size": 0, "query": {"bool": {"filter": [{"term": {RG_FIELD + "gate.keyword": "summary"}}, _since(60)]}},
+                  "aggregations": {"by_sandbox": {"terms": {"field": "container.uid.keyword", "size": 50}, "aggregations": {
+                      "recent": {"filter": {"range": {"time": {"gte": "{{period_end}}||-10m", "format": "epoch_millis"}}}},
+                      "gone_quiet": {"bucket_selector": {"buckets_path": {"recent": "recent>_count"}, "script": "params.recent == 0"}}}}}},
+        "condition": "ctx.results[0].aggregations.by_sandbox.buckets.size() > 0", "severity": "3", "name": "A sandbox stopped sending calls"},
+}
+
+
+def install_watch_monitors():
+    for name, spec in WATCH_MONITORS.items():
+        found = opensearch("POST", "/_plugins/_alerting/monitors/_search", {"query": {"match_phrase": {"monitor.name": name}}})
+        for hit in (found.get("hits") or {}).get("hits") or []:
+            opensearch("DELETE", f"/_plugins/_alerting/monitors/{hit['_id']}")
+        body = {"type": "monitor", "name": name, "monitor_type": "query_level_monitor", "enabled": True,
+                "schedule": {"period": {"interval": 5, "unit": "MINUTES"}},
+                "inputs": [{"search": {"indices": [INDEX], "query": spec["query"]}}],
+                "triggers": [{"query_level_trigger": {"name": spec["name"], "severity": spec["severity"],
+                                                      "condition": {"script": {"source": spec["condition"], "lang": "painless"}}, "actions": []}}]}
+        created = opensearch("POST", "/_plugins/_alerting/monitors", body)
+        print(f"watch monitor '{name[:60]}': " + ("created" if "_id" in created else "NOT created: " + json.dumps(created)[:300]))
+
+
 def main():
     if "--signals" in sys.argv:
         install_signals()
         return
     if "--retention" in sys.argv:
         install_retention()
+        return
+    if "--watch" in sys.argv:
+        install_watch_monitors()
         return
     for old in OLD_DASHBOARDS:
         exec_in_pod(f"curl -s -X DELETE -u admin:$OPENSEARCH_PASSWORD -H 'osd-xsrf: true' 'http://localhost:5601/api/saved_objects/dashboard/{old}'")
@@ -763,6 +813,7 @@ def main():
     for name, status, _ in install_detectors():
         print(f"anomaly detector '{name}': {status}")
     print("alert monitor '%s': %s" % install_monitor())
+    install_watch_monitors()
     print("scheduled report '%s': %s" % install_report())
     sys.exit(1 if errors else 0)
 
