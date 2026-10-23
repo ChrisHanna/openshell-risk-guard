@@ -215,6 +215,7 @@ cargo run -- hardening-report \
 
 | Read | For |
 |---|---|
+| [Demo runbook](docs/demo-runbook.md) | Ten minutes in order: what to open, what to run, what to say, the questions to expect, and the rough edges to avoid. `scripts/demo/preflight.py` checks the deployment first |
 | [Who blocks, who recommends](docs/who-does-what.md) | One page: what can stop a call, what only advises, who decides what loosens, and the flow of one call |
 | [The story](docs/the-story.md) | How OpenShell, Risk Guard and OpenSearch fit together, why each is there, and where things live in the repository |
 | [How it works](docs/how-it-works.md) | The whole system on one page: decision path, state, identity, SIEM events and dashboards, signals back from the SIEM, two-person approval, promotion gate, red-team tests, deployment, and current limits |

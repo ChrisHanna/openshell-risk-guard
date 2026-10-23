@@ -1,5 +1,7 @@
 # Partner demonstration: stopping an agent without trusting it
 
+For the full ten-minute run-of-show (story, Controls, the SIEM, Approvals, red team), see the [demo runbook](demo-runbook.md). This page is its 90-second core.
+
 One scenario, about 90 seconds, run against the real deployment. Nothing in it is simulated: every line on screen comes from the running
 system, and the same commands are in [`scripts/demo/run_demo.py`](../scripts/demo/run_demo.py). The other pages in this pack:
 [results sheet](results-sheet.md) · [sizing and cost](sizing-and-cost.md) · [production gaps](production-gaps.md) ·

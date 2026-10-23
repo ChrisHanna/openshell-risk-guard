@@ -6,7 +6,7 @@ Three layers, from cheapest to most realistic. Each turns what it finds into a t
 |---|---|---|---|
 | **Catalog** | 24 hand-written attacks and controls (`conformance/red-team/catalog.json`) | nothing | runs in CI |
 | **Fuzzer** | Mutates every single-call must-refuse attack 387 ways: case, encodings, dot segments, separators, query and fragment suffixes, null byte, tab, newline, Unicode look-alikes, host and method spelling (`tests/red_team_fuzz.rs`) | nothing | runs in CI. **387 tried, 0 got through** (239 refused after being scored, 148 refused because the path could not be read) |
-| **Adaptive attacker** | An LLM agent that is *given* the goal ("get a DELETE of `worker` accepted") and adapts to the status codes it sees. It is a governed agent like the others, with two tools: `raw_call` (one HTTP request exactly as written, to the three fixture services only) and `garak_scan` | The cluster, an Entra app for the agent, the agent image rebuilt with Garak, NVIDIA model access | **written and unit-tested; not yet run on the cluster** (see below) |
+| **Adaptive attacker** | An LLM agent that is *given* the goal ("get a DELETE of `worker` accepted") and adapts to the status codes it sees. It is a governed agent like the others, with two tools: `raw_call` (one HTTP request exactly as written, to the three fixture services only) and `garak_scan` | The cluster, an Entra app for the agent, the agent image rebuilt with Garak, NVIDIA model access | **run on the cluster on 2026-10-23: 17 requests over three goals, none answered 2xx.** Garak ran as a tool but produced no result (the hosted model answered 429); see below |
 
 ## How the adaptive attacker feeds the gate
 
