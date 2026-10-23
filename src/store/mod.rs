@@ -23,6 +23,7 @@ mod adaptive;
 mod guardrails;
 mod identity;
 mod operations;
+mod replay;
 use identity::{AgentIdentity, resolve_identity};
 pub use operations::RestrictionTarget;
 

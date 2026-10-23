@@ -23,6 +23,7 @@ pub mod normalizer;
 mod operator_controls;
 pub mod operator_dashboard;
 pub mod pod_resolver;
+pub mod replay;
 pub mod sidecar;
 pub mod spiffe;
 pub mod store;

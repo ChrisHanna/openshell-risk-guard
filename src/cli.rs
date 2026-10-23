@@ -231,6 +231,26 @@ pub enum Commands {
         #[arg(long)]
         reason: String,
     },
+    /// Write one agent's scoring context (its history, baselines and guardrail revisions) as a portable replay bundle.
+    ReplayExport {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        agent_id: String,
+        /// Defaults to the agent's newest scoring context.
+        #[arg(long)]
+        context_id: Option<String>,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Replay a bundle from nothing and report whether the same decisions and reason codes come out. Exits non-zero if they do not.
+    ReplayVerify {
+        #[arg(long)]
+        bundle: PathBuf,
+        /// Replay even if the bundle says its history is incomplete (the result is then a best effort).
+        #[arg(long)]
+        allow_incomplete: bool,
+    },
     /// List the quarantined workloads.
     WorkloadQuarantineList {
         #[arg(long)]
@@ -1290,6 +1310,44 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                 now_unix_ms(),
             )?;
             Ok(serde_json::json!({"agent_id": agent_id, "status": if was { "released" } else { "was not quarantined" }}).to_string())
+        }
+
+        Commands::ReplayExport {
+            db,
+            agent_id,
+            context_id,
+            out,
+        } => {
+            let bundle = SqliteRiskStore::open(&db)?
+                .export_replay_bundle(&agent_id, context_id.as_deref())?;
+            std::fs::write(&out, serde_json::to_vec_pretty(&bundle)?).map_err(|error| {
+                RiskGuardError::Internal(format!("cannot write the bundle: {error}"))
+            })?;
+            Ok(serde_json::json!({
+                "bundle": out.display().to_string(), "events": bundle.events.len(), "history_complete": bundle.history.complete,
+                "problems": bundle.history.problems, "content_hash": bundle.content_hash,
+            })
+            .to_string())
+        }
+
+        Commands::ReplayVerify {
+            bundle,
+            allow_incomplete,
+        } => {
+            let bundle: crate::replay::ReplayBundle =
+                serde_json::from_slice(&std::fs::read(&bundle).map_err(|error| {
+                    RiskGuardError::Internal(format!("cannot read the bundle: {error}"))
+                })?)?;
+            let report = crate::replay::replay(&bundle, allow_incomplete)?;
+            let text = serde_json::to_string_pretty(&report)?;
+            if report.reproduced {
+                Ok(text)
+            } else {
+                Err(RiskGuardError::Internal(format!(
+                    "replay did not reproduce the recorded decisions:
+{text}"
+                )))
+            }
         }
 
         Commands::WorkloadQuarantineList { db } => Ok(serde_json::to_string_pretty(
