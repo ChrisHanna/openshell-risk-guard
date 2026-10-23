@@ -159,7 +159,7 @@ impl SqliteRiskStore {
     /// The cleared row is copied to `restriction_clearances` with the operator and
     /// reason. New requests in that scope are scored again from scratch; OpenShell
     /// policy, baselines and the original decision evidence are unchanged.
-    pub fn clear_restriction(
+    pub(crate) fn clear_restriction_unchecked(
         &self,
         target: RestrictionTarget<'_>,
         scope: &str,

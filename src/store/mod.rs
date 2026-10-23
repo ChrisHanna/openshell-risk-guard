@@ -20,6 +20,7 @@ use crate::types::{
 };
 
 mod adaptive;
+mod changes;
 mod guardrails;
 mod identity;
 mod operations;
@@ -129,6 +130,7 @@ impl SqliteRiskStore {
         ensure_latency_table(&conn)?;
         ensure_quarantine_tables(&conn)?;
         conn.execute_batch(SIDECAR_MIGRATION_SQL)?;
+        changes::ensure_change_tables(&conn)?;
 
         let read_conn = Connection::open(path_ref)?;
         read_conn.execute_batch(
@@ -167,6 +169,7 @@ impl SqliteRiskStore {
         ensure_latency_table(&conn)?;
         ensure_quarantine_tables(&conn)?;
         conn.execute_batch(SIDECAR_MIGRATION_SQL)?;
+        changes::ensure_change_tables(&conn)?;
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -676,7 +679,7 @@ impl SqliteRiskStore {
     }
 
     /// End a workload's quarantine. Returns whether it was quarantined.
-    pub fn release_workload(
+    pub(crate) fn release_workload_unchecked(
         &self,
         agent_id: &str,
         operator: &str,

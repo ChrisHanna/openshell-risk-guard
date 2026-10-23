@@ -280,6 +280,55 @@ pub enum Commands {
         operator: String,
         #[arg(long)]
         reason: String,
+        /// With two-person approval on, the only way to release without a second person. Recorded as break-glass in the audit trail.
+        #[arg(long)]
+        break_glass: bool,
+    },
+    /// Turn on two-person approval: releasing a quarantine and clearing a restriction then need a proposer and a different approver.
+    TwoPersonEnable {
+        #[arg(long)]
+        db: PathBuf,
+    },
+    /// Ask for a loosening (release_quarantine, clear_restriction, disable_two_person). Someone else must approve it.
+    ChangePropose {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        kind: String,
+        /// The workload (ignored for disable_two_person).
+        #[arg(long, default_value = "two-person-rule")]
+        agent_id: String,
+        /// For clear_restriction: the exact scope shown by `restriction-list`.
+        #[arg(long)]
+        scope: Option<String>,
+        #[arg(long)]
+        context_id: Option<String>,
+        #[arg(long)]
+        proposer: String,
+        #[arg(long)]
+        reason: String,
+    },
+    /// Approve or reject a request. Approving your own is refused.
+    ChangeDecide {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        decider: String,
+        #[arg(long, conflicts_with = "reject", required_unless_present = "reject")]
+        approve: bool,
+        #[arg(long)]
+        reject: bool,
+        #[arg(long)]
+        reason: String,
+    },
+    /// List change requests, newest first.
+    ChangeList {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
     },
     /// Write one agent's scoring context (its history, baselines and guardrail revisions) as a portable replay bundle.
     ReplayExport {
@@ -359,6 +408,9 @@ pub enum Commands {
         /// Why it was a false positive or no longer applies.
         #[arg(long)]
         reason: String,
+        /// With two-person approval on, the only way to clear without a second person. Recorded as break-glass in the audit trail.
+        #[arg(long)]
+        break_glass: bool,
     },
     /// Register a workload ID: an operator-assigned label for a logical agent workload, not a credential.
     /// Use --workspace to bind it only from sandboxes created in that OpenShell workspace.
@@ -1463,18 +1515,67 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             Ok(serde_json::json!({"agent_id": agent_id, "status": "quarantined"}).to_string())
         }
 
+        Commands::TwoPersonEnable { db } => {
+            SqliteRiskStore::open(&db)?.require_two_person(now_unix_ms())?;
+            Ok(serde_json::json!({"two_person_required": true}).to_string())
+        }
+
+        Commands::ChangePropose {
+            db,
+            kind,
+            agent_id,
+            scope,
+            context_id,
+            proposer,
+            reason,
+        } => {
+            let params = serde_json::json!({"scope": scope, "context_id": context_id});
+            let id = SqliteRiskStore::open(&db)?.propose_change(
+                &kind,
+                &agent_id,
+                &params,
+                &reason,
+                &proposer,
+                now_unix_ms(),
+            )?;
+            Ok(serde_json::json!({"id": id, "status": "pending", "needs": "approval by someone other than the proposer"}).to_string())
+        }
+
+        Commands::ChangeDecide {
+            db,
+            id,
+            decider,
+            approve,
+            reject: _,
+            reason,
+        } => {
+            let decision = SqliteRiskStore::open(&db)?.decide_change(
+                &id,
+                &decider,
+                approve,
+                &reason,
+                now_unix_ms(),
+            )?;
+            Ok(serde_json::to_string_pretty(&decision)?)
+        }
+
+        Commands::ChangeList { db, limit } => Ok(serde_json::to_string_pretty(
+            &SqliteRiskStore::open(&db)?.list_changes(limit, now_unix_ms())?,
+        )?),
+
         Commands::WorkloadRelease {
             db,
             agent_id,
             operator,
             reason,
+            break_glass,
         } => {
-            let was = SqliteRiskStore::open(&db)?.release_workload(
-                &agent_id,
-                &operator,
-                &reason,
-                now_unix_ms(),
-            )?;
+            let store = SqliteRiskStore::open(&db)?;
+            let was = if break_glass {
+                store.release_workload_break_glass(&agent_id, &operator, &reason, now_unix_ms())?
+            } else {
+                store.release_workload(&agent_id, &operator, &reason, now_unix_ms())?
+            };
             Ok(serde_json::json!({"agent_id": agent_id, "status": if was { "released" } else { "was not quarantined" }}).to_string())
         }
 
@@ -1547,19 +1648,25 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             scope,
             operator,
             reason,
+            break_glass,
         } => {
             let target = restriction_target(
                 agent_id.as_deref(),
                 sandbox_id.as_deref(),
                 context_id.as_deref(),
             )?;
-            let cleared = SqliteRiskStore::open(&db)?.clear_restriction(
-                target,
-                &scope,
-                &operator,
-                &reason,
-                now_unix_ms(),
-            )?;
+            let store = SqliteRiskStore::open(&db)?;
+            let cleared = if break_glass {
+                store.clear_restriction_break_glass(
+                    target,
+                    &scope,
+                    &operator,
+                    &reason,
+                    now_unix_ms(),
+                )?
+            } else {
+                store.clear_restriction(target, &scope, &operator, &reason, now_unix_ms())?
+            };
             Ok(serde_json::to_string_pretty(&cleared)?)
         }
 

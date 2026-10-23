@@ -34,6 +34,26 @@ pub(crate) struct OperatorControls {
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ProposeChangeRequest {
+    kind: String,
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    context_id: Option<String>,
+    reason: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DecideChangeRequest {
+    approve: bool,
+    reason: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ClearRestrictionRequest {
     scope: String,
     reason: String,
@@ -468,6 +488,61 @@ pub(crate) fn routes() -> Router<Arc<SqliteRiskStore>> {
                 }
             },
         ))
+        .route("/api/changes", get(
+            |State(store): State<Arc<SqliteRiskStore>>| async move {
+                match tokio::task::spawn_blocking(move || store.list_changes(100, now_ms())).await {
+                    Ok(Ok(view)) => Json(view).into_response(),
+                    Ok(Err(error)) => error_response(error),
+                    Err(error) => error_response(RiskGuardError::Internal(error.to_string())),
+                }
+            },
+        ).post(
+            |State(store): State<Arc<SqliteRiskStore>>,
+             Extension(controls): Extension<OperatorControls>,
+             headers: HeaderMap,
+             payload: std::result::Result<Json<ProposeChangeRequest>, axum::extract::rejection::JsonRejection>| async move {
+                let actor = match controls.authorize(&headers).await { Ok(actor) => actor, Err(response) => return response };
+                let req = match payload {
+                    Ok(Json(req)) => req,
+                    Err(error) => return (error.status(), Json(json!({"error": error.body_text()}))).into_response(),
+                };
+                match tokio::task::spawn_blocking(move || {
+                    let params = json!({"scope": req.scope, "context_id": req.context_id});
+                    store.propose_change(
+                        &req.kind,
+                        req.agent_id.as_deref().unwrap_or("two-person-rule"),
+                        &params,
+                        &req.reason,
+                        &actor,
+                        now_ms(),
+                    )
+                }).await {
+                    Ok(Ok(id)) => (StatusCode::CREATED, Json(json!({"id": id, "status": "pending"}))).into_response(),
+                    Ok(Err(error)) => error_response(error),
+                    Err(error) => error_response(RiskGuardError::Internal(error.to_string())),
+                }
+            },
+        ))
+        .route("/api/changes/{id}/decide", post(
+            |State(store): State<Arc<SqliteRiskStore>>,
+             Extension(controls): Extension<OperatorControls>,
+             AgentPath(id): AgentPath<String>,
+             headers: HeaderMap,
+             payload: std::result::Result<Json<DecideChangeRequest>, axum::extract::rejection::JsonRejection>| async move {
+                let actor = match controls.authorize(&headers).await { Ok(actor) => actor, Err(response) => return response };
+                let req = match payload {
+                    Ok(Json(req)) => req,
+                    Err(error) => return (error.status(), Json(json!({"error": error.body_text()}))).into_response(),
+                };
+                match tokio::task::spawn_blocking(move || {
+                    store.decide_change(&id, &actor, req.approve, &req.reason, now_ms())
+                }).await {
+                    Ok(Ok(view)) => Json(view).into_response(),
+                    Ok(Err(error)) => error_response(error),
+                    Err(error) => error_response(RiskGuardError::Internal(error.to_string())),
+                }
+            },
+        ))
         .route("/api/agents/{agent_id}/restrictions/clear", post(
             |State(store): State<Arc<SqliteRiskStore>>,
              Extension(controls): Extension<OperatorControls>,
@@ -690,6 +765,60 @@ mod tests {
         assert_eq!(result, StatusCode::NOT_FOUND);
         let (_, status) = request(&origin, "GET", "/api/operator/status", None, None, "").await;
         assert_eq!(status["enabled"], false);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn the_console_refuses_a_direct_release_and_one_token_approving_its_own_request() {
+        let store = store();
+        store.register_agent("agent-q", "Quarantined bot").unwrap();
+        store
+            .quarantine_workload("agent-q", "alice", "suspicious", 1)
+            .unwrap();
+        store.require_two_person(2).unwrap();
+        let token = "e".repeat(64);
+        let (origin, server) =
+            start(OperatorControls::from_token(&token), Arc::clone(&store)).await;
+
+        let (status, listed) = request(&origin, "GET", "/api/changes", None, None, "").await;
+        assert_eq!(
+            (status, listed["two_person_required"].clone()),
+            (StatusCode::OK, json!(true))
+        );
+
+        // Proposing needs the operator token like any change.
+        let body = r#"{"kind":"release_quarantine","agent_id":"agent-q","reason":"false alarm"}"#;
+        let (status, _) = request(&origin, "POST", "/api/changes", Some(&origin), None, body).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let (status, proposed) = request(
+            &origin,
+            "POST",
+            "/api/changes",
+            Some(&origin),
+            Some(&token),
+            body,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{proposed}");
+        let id = proposed["id"].as_str().unwrap().to_string();
+
+        // The token is one operator, so it cannot approve what it proposed: the quarantine stays.
+        let (status, refused) = request(
+            &origin,
+            "POST",
+            &format!("/api/changes/{id}/decide"),
+            Some(&origin),
+            Some(&token),
+            r#"{"approve":true,"reason":"me again"}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+        assert!(
+            !store.list_quarantined().unwrap()["quarantined"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
         server.abort();
     }
 
