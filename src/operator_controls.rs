@@ -42,6 +42,12 @@ struct ProposeChangeRequest {
     scope: Option<String>,
     #[serde(default)]
     context_id: Option<String>,
+    /// For `baseline_update`: the task profile whose baseline changes.
+    #[serde(default)]
+    task_profile: Option<String>,
+    /// For `baseline_update`: the changes asked for (`add_action_classes`, `add_egress_hosts`, `tighten_rate`) and the evidence behind them, which is kept with the request.
+    #[serde(default)]
+    params: Option<serde_json::Value>,
     reason: String,
 }
 
@@ -507,10 +513,18 @@ pub(crate) fn routes() -> Router<Arc<SqliteRiskStore>> {
                     Err(error) => return (error.status(), Json(json!({"error": error.body_text()}))).into_response(),
                 };
                 match tokio::task::spawn_blocking(move || {
-                    let params = json!({"scope": req.scope, "context_id": req.context_id});
+                    let params = if req.kind == "baseline_update" {
+                        req.params.clone().unwrap_or_else(|| json!({}))
+                    } else {
+                        json!({"scope": req.scope, "context_id": req.context_id})
+                    };
                     store.propose_change(
                         &req.kind,
-                        req.agent_id.as_deref().unwrap_or("two-person-rule"),
+                        if req.kind == "baseline_update" {
+                            req.task_profile.as_deref().unwrap_or_default()
+                        } else {
+                            req.agent_id.as_deref().unwrap_or("two-person-rule")
+                        },
                         &params,
                         &req.reason,
                         &actor,
@@ -538,6 +552,26 @@ pub(crate) fn routes() -> Router<Arc<SqliteRiskStore>> {
                     store.decide_change(&id, &actor, req.approve, &req.reason, now_ms())
                 }).await {
                     Ok(Ok(view)) => Json(view).into_response(),
+                    Ok(Err(error)) => error_response(error),
+                    Err(error) => error_response(RiskGuardError::Internal(error.to_string())),
+                }
+            },
+        ))
+        .route("/api/baseline-suggestions", get(
+            |State(store): State<Arc<SqliteRiskStore>>| async move {
+                let now = now_ms();
+                match tokio::task::spawn_blocking(move || store.suggest_baseline_changes(now - 7 * 24 * 3_600_000, now)).await {
+                    Ok(Ok(view)) => Json(view).into_response(),
+                    Ok(Err(error)) => error_response(error),
+                    Err(error) => error_response(RiskGuardError::Internal(error.to_string())),
+                }
+            },
+        ))
+        .route("/api/baselines/{task_profile}", get(
+            |State(store): State<Arc<SqliteRiskStore>>, AgentPath(profile): AgentPath<String>| async move {
+                match tokio::task::spawn_blocking(move || crate::types::RiskStore::get_baseline(&*store, &profile)).await {
+                    Ok(Ok(Some(baseline))) => Json(baseline).into_response(),
+                    Ok(Ok(None)) => (StatusCode::NOT_FOUND, Json(json!({"error": "no such baseline"}))).into_response(),
                     Ok(Err(error)) => error_response(error),
                     Err(error) => error_response(RiskGuardError::Internal(error.to_string())),
                 }

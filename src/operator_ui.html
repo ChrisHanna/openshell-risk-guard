@@ -1321,6 +1321,21 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
 .detail-fold[open] { padding-bottom: 14px; }
 #audit-raw { margin-top: 18px; }
 #audit-raw > summary { cursor: pointer; color: var(--text-secondary); margin-bottom: 10px; }
+
+.appr-section { margin: 22px 0 0; }
+.appr-section h2 { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
+.appr-card { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-code); padding: 14px 16px; margin: 0 0 10px; }
+.appr-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline; }
+.appr-title { font-weight: 600; }
+.appr-meta { color: var(--text-secondary); font-size: 13px; }
+.appr-change { margin: 8px 0 0; padding: 0; list-style: none; font-size: 13px; }
+.appr-change li { padding: 2px 0; }
+.appr-change code, .appr-card code { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; }
+.appr-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+.appr-actions input[type=text] { flex: 1 1 240px; min-width: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-app); color: var(--text-primary); }
+.appr-error { color: var(--crit); font-size: 13px; margin-top: 6px; }
+.appr-status { display: inline-block; padding: 1px 8px; border: 1px solid var(--border); border-radius: 10px; font-size: 12px; }
+.appr-pick { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: 13px; }
 </style>
 </head>
 <body class="signed-out">
@@ -1375,6 +1390,13 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
             <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="19" cy="18" r="2"/><path d="M7 12h6M13 12l4-5M13 12l4 5"/></svg>
             <span>How it works</span>
           </span>
+        </button>
+        <button type="button" class="nav-item" id="nav-approvals-btn">
+          <span class="nav-item-left">
+            <svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg>
+            <span>Approvals</span>
+          </span>
+          <span class="nav-counter" id="side-approvals-count">0</span>
         </button>
       </div>
 
@@ -1519,6 +1541,29 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
         <p class="quiet-note" style="margin:10px 14px"><span id="directory-count" role="status"></span></p>
       </section>
       <p class="quiet-note" id="inventory-scope">Recorded totals from the loaded inventory.</p>
+    </main>
+
+    <main class="content-wrap view-hidden" id="approvals-view" aria-label="Approvals">
+      <div class="page-heading">
+        <div>
+          <h1>Approvals</h1>
+          <p class="fleet-verdict">Anything that loosens protection needs two people: one proposes, a different one approves. Tightening never waits.</p>
+          <p class="quiet-note" id="appr-mode" style="margin:4px 0 0"></p>
+        </div>
+      </div>
+      <section class="appr-section" aria-labelledby="appr-pending-h">
+        <h2 id="appr-pending-h">Waiting for a decision</h2>
+        <div id="appr-pending"></div>
+      </section>
+      <section class="appr-section" aria-labelledby="appr-suggest-h">
+        <h2 id="appr-suggest-h">Suggested baseline changes</h2>
+        <p class="quiet-note" id="appr-suggest-note" style="margin:0 0 8px"></p>
+        <div id="appr-suggest"></div>
+      </section>
+      <section class="appr-section" aria-labelledby="appr-history-h">
+        <h2 id="appr-history-h">Recent decisions</h2>
+        <div id="appr-history"></div>
+      </section>
     </main>
 
     <main class="content-wrap view-hidden" id="how-view" data-level="plain" aria-label="How Risk Guard works with OpenShell">
@@ -2885,11 +2930,13 @@ function switchMainView(view, scrollToTop = false) {
   activeTopView = view;
   $("nav-fleet-btn").classList.toggle("active", view === "fleet");
   $("nav-directory-btn").classList.toggle("active", view === "directory" || view === "agent");
+  $("nav-approvals-btn").classList.toggle("active", view === "approvals");
   $("nav-how-btn").classList.toggle("active", view === "how");
   $("nav-agent-btn").classList.toggle("active", view === "agent");
   for (const [id, isCurrent] of [
     ["nav-fleet-btn", view === "fleet"],
     ["nav-directory-btn", view === "directory"],
+    ["nav-approvals-btn", view === "approvals"],
     ["nav-how-btn", view === "how"],
     ["nav-agent-btn", view === "agent"]
   ]) {
@@ -2897,14 +2944,17 @@ function switchMainView(view, scrollToTop = false) {
     else $(id).removeAttribute("aria-current");
   }
   $("nav-agent-lbl").textContent = view === "fleet" || view === "directory" ? "Fleet overview"
-    : view === "how" ? "How it works"
+    : view === "approvals" ? "Approvals"
+          : view === "how" ? "How it works"
       : (currentAgentData?.agent ? agentName(currentAgentData.agent) || currentAgentData.agent.agent_id : "Agent workspace");
   // "directory" is the workloads section of the Fleet page, so it shows that page and scrolls to the section.
   $("fleet-view").classList.toggle("view-hidden", view !== "fleet" && view !== "directory");
+  $("approvals-view").classList.toggle("view-hidden", view !== "approvals");
   $("how-view").classList.toggle("view-hidden", view !== "how");
   $("agent-detail").classList.toggle("view-hidden", view !== "agent");
   $("agent-detail").hidden = view !== "agent" || !currentAgentData;
   if (view === "agent") switchAgentSubTab(activeAgentTab);
+  if (view === "approvals") void loadApprovals();
   if (view === "how") { renderHowLive(); if (cachedStateData) void loadHowExample(cachedStateData); }
   if (view === "directory") $("directory-section").scrollIntoView({ block: "start", behavior: "instant" });
   else if (scrollToTop) window.scrollTo({ top: 0, behavior: "instant" });
@@ -2943,7 +2993,7 @@ function openAuditModal(contextLabel) {
   }
   modal.hidden = false;
   document.body.style.overflow = "hidden";
-  for (const id of ["fleet-view", "how-view", "agent-detail", "agent-loading"]) $(id).inert = true;
+  for (const id of ["fleet-view", "how-view", "approvals-view", "agent-detail", "agent-loading"]) $(id).inert = true;
   document.querySelector(".top-header").inert = true;
   document.querySelector(".sidebar").inert = true;
   if (isOpening) $("close-audit-modal-btn").focus();
@@ -2952,7 +3002,7 @@ function openAuditModal(contextLabel) {
 function closeAuditModal() {
   $("audit-modal").hidden = true;
   document.body.style.overflow = "";
-  for (const id of ["fleet-view", "how-view", "agent-detail", "agent-loading"]) $(id).inert = false;
+  for (const id of ["fleet-view", "how-view", "approvals-view", "agent-detail", "agent-loading"]) $(id).inert = false;
   document.querySelector(".top-header").inert = false;
   document.querySelector(".sidebar").inert = false;
   if (selected?.kind === "sandbox") {
@@ -7321,6 +7371,167 @@ function renderHowLive() {
 }
 
 buildHow();
+
+// ---- Approvals: two-person changes and suggested baseline changes ---------------------------------------------------------------------------------------------
+const APPR_KINDS = {
+  release_quarantine: "Release a quarantine", clear_restriction: "Clear a restriction",
+  disable_two_person: "Turn off two-person approval", baseline_update: "Change a baseline"
+};
+let apprError = {};
+let apprBusy = false;
+
+function apprEl(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (key === "class") node.className = value;
+    else if (key === "text") node.textContent = value;
+    else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+    else node.setAttribute(key, value);
+  }
+  for (const child of children.flat()) if (child != null) node.append(child);
+  return node;
+}
+
+function apprHeaders() {
+  const base = { "Content-Type": "application/json" };
+  return operatorToken ? { ...base, Authorization: `Bearer ${operatorToken}` } : authHeaders(base);
+}
+
+function apprAge(ms) {
+  const minutes = Math.max(0, Math.round((Date.now() - ms) / 60000));
+  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 1440) return `${Math.round(minutes / 60)} h ago`;
+  return `${Math.round(minutes / 1440)} d ago`;
+}
+
+function apprChange(change) {
+  const p = change.params || {};
+  const lines = [];
+  for (const route of p.add_action_classes || []) lines.push(apprEl("li", {}, "Allow ", apprEl("code", { text: route })));
+  for (const host of p.add_egress_hosts || []) lines.push(apprEl("li", {}, "Allow tunnels to ", apprEl("code", { text: host })));
+  for (const [name, value] of Object.entries(p.tighten_rate || {})) lines.push(apprEl("li", {}, "Lower ", apprEl("code", { text: name }), ` to ${value}`));
+  if (change.kind === "release_quarantine") lines.push(apprEl("li", { text: `Let ${change.target} make calls again.` }));
+  if (change.kind === "clear_restriction") lines.push(apprEl("li", {}, "Clear the lock ", apprEl("code", { text: p.scope || "" }), ` on ${change.target}.`));
+  if (change.kind === "disable_two_person") lines.push(apprEl("li", { text: "Anyone could then release or clear without a second person." }));
+  return apprEl("ul", { class: "appr-change" }, lines);
+}
+
+function apprCard(change, canAct) {
+  const pending = change.status === "pending";
+  const reason = apprEl("input", { type: "text", maxlength: "1000", placeholder: "Why you approve or reject (required)", "aria-label": "Reason for your decision" });
+  const error = apprEl("div", { class: "appr-error", role: "alert" });
+  error.textContent = apprError[change.id] || "";
+  const decide = async approve => {
+    if (apprBusy) return;
+    const text = reason.value.trim();
+    if (!text) { apprError[change.id] = "Enter a reason first."; error.textContent = apprError[change.id]; reason.focus(); return; }
+    apprBusy = true;
+    try {
+      const result = await guardrailJson(`/api/changes/${encodeURIComponent(change.id)}/decide`, {
+        method: "POST", headers: apprHeaders(), body: JSON.stringify({ approve, reason: text })
+      });
+      delete apprError[change.id];
+      apprNotice = approve ? `Outcome: ${result.outcome}` : "Rejected. Nothing changed.";
+    } catch (e) { apprError[change.id] = e.message; }
+    apprBusy = false;
+    await loadApprovals();
+  };
+  const head = apprEl("div", { class: "appr-head" },
+    apprEl("span", { class: "appr-title", text: `${APPR_KINDS[change.kind] || change.kind}: ${change.target}` }),
+    apprEl("span", { class: "appr-meta", text: `proposed by ${change.proposer}, ${apprAge(change.proposed_at_ms)}` + (pending ? `, expires in ${Math.max(0, Math.round((change.expires_at_ms - Date.now()) / 3600000))} h` : "") }));
+  const card = apprEl("div", { class: "appr-card" }, head, apprEl("div", { class: "appr-meta", text: `Reason: ${change.reason}` }), apprChange(change));
+  if (pending) {
+    const approve = apprEl("button", { type: "button", class: "btn btn-primary", text: "Approve", onclick: () => decide(true) });
+    const reject = apprEl("button", { type: "button", class: "btn", text: "Reject", onclick: () => decide(false) });
+    if (!canAct) { approve.disabled = true; reject.disabled = true; }
+    card.append(apprEl("div", { class: "appr-actions" }, reason, approve, reject));
+    if (!canAct) card.append(apprEl("div", { class: "appr-meta", text: "Sign in as an administrator (Administrator sign-in) to decide. You cannot approve your own proposal." }));
+  } else {
+    const done = apprEl("div", { class: "appr-meta" }, apprEl("span", { class: "appr-status", text: change.status }),
+      ` ${change.decided_by ? "decided by " + change.decided_by : ""}${change.outcome ? " — " + change.outcome : ""}${change.decision_reason ? " (" + change.decision_reason + ")" : ""}`);
+    card.append(done);
+    if (change.kind === "baseline_update" && change.status === "executed") {
+      card.append(apprEl("div", { class: "appr-meta" }, "A redeploy re-imports the baseline from the repository. To keep this change, ",
+        apprEl("a", { href: `/api/baselines/${encodeURIComponent(change.target)}`, target: "_blank", rel: "noopener", text: "download the baseline" }), " and commit it."));
+    }
+  }
+  card.append(error);
+  return card;
+}
+
+let apprNotice = "";
+
+function apprSuggestions(data, canAct) {
+  const holder = $("appr-suggest");
+  holder.replaceChildren();
+  const profiles = (data?.profiles || []);
+  let shown = 0;
+  for (const profile of profiles) {
+    const adds = profile.add_action_classes || [];
+    const skipped = profile.not_suggested || [];
+    if (!adds.length && !skipped.length) continue;
+    shown++;
+    const boxes = adds.map(route => {
+      const box = apprEl("input", { type: "checkbox", checked: "checked", "aria-label": `Include ${route.action_class}` });
+      box.dataset.route = route.action_class;
+      return apprEl("label", { class: "appr-pick" }, box, apprEl("code", { text: route.action_class }), apprEl("span", { class: "appr-meta", text: `${route.calls} calls over ${route.hours} h, none refused` }));
+    });
+    const reason = apprEl("input", { type: "text", maxlength: "1000", placeholder: "Why these are safe to allow (required)", "aria-label": "Reason for the proposal" });
+    const error = apprEl("div", { class: "appr-error", role: "alert" });
+    const propose = apprEl("button", { type: "button", class: "btn btn-primary", text: "Propose for approval", onclick: async () => {
+      const picked = boxes.map(b => b.querySelector("input")).filter(i => i.checked).map(i => i.dataset.route);
+      if (!picked.length) { error.textContent = "Pick at least one route."; return; }
+      if (!reason.value.trim()) { error.textContent = "Enter a reason first."; reason.focus(); return; }
+      if (apprBusy) return;
+      apprBusy = true;
+      try {
+        await guardrailJson("/api/changes", { method: "POST", headers: apprHeaders(), body: JSON.stringify({
+          kind: "baseline_update", task_profile: profile.task_profile, reason: reason.value.trim(),
+          params: { add_action_classes: picked, evidence: { source: data.source, window_days: 7, routes: adds.filter(r => picked.includes(r.action_class)) } } }) });
+        apprNotice = `Proposed ${picked.length} route(s) for ${profile.task_profile}. A different administrator can now approve it.`;
+      } catch (e) { error.textContent = e.message; }
+      apprBusy = false;
+      if (!error.textContent) await loadApprovals();
+    } });
+    if (!canAct) propose.disabled = true;
+    const card = apprEl("div", { class: "appr-card" },
+      apprEl("div", { class: "appr-head" }, apprEl("span", { class: "appr-title", text: profile.task_profile }), apprEl("span", { class: "appr-meta", text: `baseline ${profile.baseline_version}` })),
+      adds.length ? apprEl("div", {}, boxes, apprEl("div", { class: "appr-actions" }, reason, propose)) : apprEl("div", { class: "appr-meta", text: "Nothing steady enough to suggest yet." }),
+      error);
+    if (skipped.length) {
+      card.append(apprEl("details", {}, apprEl("summary", { class: "appr-meta", text: `${skipped.length} not suggested, and why` }),
+        apprEl("ul", { class: "appr-change" }, skipped.slice(0, 20).map(r => apprEl("li", {}, apprEl("code", { text: r.action_class }), ` — ${r.why_not}`)))));
+    }
+    holder.append(card);
+  }
+  if (!shown) holder.append(apprEl("div", { class: "appr-meta", text: "No routes outside the baselines have been seen yet." }));
+}
+
+async function loadApprovals() {
+  const note = $("appr-suggest-note");
+  try {
+    const [changes, suggestions] = await Promise.all([guardrailJson("/api/changes"), guardrailJson("/api/baseline-suggestions")]);
+    const canAct = Boolean(operatorToken);
+    const list = changes.changes || [];
+    const pending = list.filter(c => c.status === "pending");
+    $("side-approvals-count").textContent = String(pending.length);
+    $("appr-mode").textContent = changes.two_person_required
+      ? "Two-person approval is on: releasing a quarantine or clearing a lock needs a proposal and a different approver."
+      : "Two-person approval is off for quarantines and locks. Baseline changes always need a second person.";
+    const pendingBox = $("appr-pending");
+    pendingBox.replaceChildren(...(pending.length ? pending.map(c => apprCard(c, canAct)) : [apprEl("div", { class: "appr-meta", text: apprNotice || "Nothing is waiting." })]));
+    if (pending.length && apprNotice) pendingBox.prepend(apprEl("div", { class: "appr-meta", text: apprNotice }));
+    apprNotice = "";
+    $("appr-history").replaceChildren(...list.filter(c => c.status !== "pending").slice(0, 20).map(c => apprCard(c, canAct)));
+    note.textContent = `Computed from this service's own decision history over ${7} days (needs ${suggestions.needs?.calls} calls over ${suggestions.needs?.hours} hours, none refused, reads only). It never needs the SIEM. Nothing changes until one person proposes and a different one approves.`;
+    apprSuggestions(suggestions, canAct);
+  } catch (e) {
+    $("appr-pending").replaceChildren(apprEl("div", { class: "appr-error", text: e.message }));
+  }
+}
+
+$("nav-approvals-btn").addEventListener("click", () => switchMainView("approvals", true));
+setInterval(() => { if (!document.hidden && activeTopView === "approvals") void loadApprovals(); }, 30000);
 $("nav-how-btn").addEventListener("click", () => switchMainView("how", true));
 
 // ---- Audit evidence summary -------------------------------------------------------------------------------

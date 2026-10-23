@@ -18,11 +18,15 @@ use serde_json::Value;
 
 const TWO_PERSON: &str = "two_person_required";
 const EXPIRY_MS: i64 = 24 * 60 * 60 * 1000;
-const KINDS: [&str; 3] = [
+const KINDS: [&str; 4] = [
     "release_quarantine",
     "clear_restriction",
     "disable_two_person",
+    "baseline_update",
 ];
+/// A baseline change may add at most this many routes or hosts at once, so a request stays reviewable.
+const MAX_BASELINE_ADDITIONS: usize = 50;
+const RATE_SETTINGS: [&str; 2] = ["max_req_1m_p95", "max_req_1m_p99"];
 
 pub(super) fn ensure_change_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -53,6 +57,80 @@ fn person(value: &str, name: &str) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// The strings under `params[key]`, which must be an array of short non-empty strings.
+fn string_list(params: &Value, key: &str) -> Result<Vec<String>> {
+    let Some(value) = params.get(key).filter(|v| !v.is_null()) else {
+        return Ok(Vec::new());
+    };
+    let items = value
+        .as_array()
+        .ok_or_else(|| RiskGuardError::InvalidArgument(format!("params.{key} must be a list")))?;
+    if items.len() > MAX_BASELINE_ADDITIONS {
+        return Err(RiskGuardError::InvalidArgument(format!(
+            "params.{key} may hold at most {MAX_BASELINE_ADDITIONS} entries"
+        )));
+    }
+    items
+        .iter()
+        .map(|item| {
+            let text = item.as_str().map(str::trim).unwrap_or_default();
+            if text.is_empty() || text.len() > 200 || text.chars().any(char::is_control) {
+                return Err(RiskGuardError::InvalidArgument(format!(
+                    "params.{key} entries must be 1..200 characters without control characters"
+                )));
+            }
+            Ok(text.to_string())
+        })
+        .collect()
+}
+
+/// A baseline change as asked for, checked for shape. It can add routes that only read (GET or HEAD), add egress hosts, and lower the rate limits. Nothing else is
+/// expressible, so a request can never remove a deny-list entry, add a destructive route or raise a limit.
+struct BaselineChange {
+    routes: Vec<String>,
+    hosts: Vec<String>,
+    rates: Vec<(String, u32)>,
+}
+
+fn parse_baseline_change(params: &Value) -> Result<BaselineChange> {
+    let routes = string_list(params, "add_action_classes")?;
+    for route in &routes {
+        let method = route.split_whitespace().next().unwrap_or_default();
+        if !matches!(method, "GET" | "HEAD") || !route.contains(' ') {
+            return Err(RiskGuardError::InvalidArgument(format!(
+                "'{route}': a baseline change may only add routes that read (GET or HEAD); add anything else deliberately, by importing a baseline"
+            )));
+        }
+    }
+    let hosts = string_list(params, "add_egress_hosts")?;
+    let mut rates = Vec::new();
+    if let Some(object) = params.get("tighten_rate").and_then(Value::as_object) {
+        for (name, value) in object {
+            let number = value
+                .as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .filter(|n| *n > 0);
+            if !RATE_SETTINGS.contains(&name.as_str()) || number.is_none() {
+                return Err(RiskGuardError::InvalidArgument(format!(
+                    "params.tighten_rate.{name} must be one of {} with a positive whole number",
+                    RATE_SETTINGS.join(", ")
+                )));
+            }
+            rates.push((name.clone(), number.unwrap_or_default()));
+        }
+    }
+    if routes.is_empty() && hosts.is_empty() && rates.is_empty() {
+        return Err(RiskGuardError::InvalidArgument(
+            "a baseline change must add a route, add an egress host or lower a rate limit".into(),
+        ));
+    }
+    Ok(BaselineChange {
+        routes,
+        hosts,
+        rates,
+    })
 }
 
 fn same_person(a: &str, b: &str) -> bool {
@@ -212,6 +290,14 @@ impl SqliteRiskStore {
                     ));
                 }
             }
+            "baseline_update" => {
+                parse_baseline_change(params)?;
+                if self.get_baseline(target)?.is_none() {
+                    return Err(RiskGuardError::InvalidArgument(format!(
+                        "there is no baseline for task profile '{target}'"
+                    )));
+                }
+            }
             _ => {
                 if !self.two_person_required()? {
                     return Err(RiskGuardError::InvalidArgument(
@@ -329,6 +415,7 @@ impl SqliteRiskStore {
                         now_ms,
                     )
                     .map(|_| "cleared".to_string()),
+                "baseline_update" => self.apply_baseline_update(&target, &params, &who, id),
                 _ => self
                     .lock_conn()?
                     .execute(
@@ -351,6 +438,62 @@ impl SqliteRiskStore {
         Ok(
             serde_json::json!({"id": id, "kind": kind, "target": target, "proposer": proposer, "decided_by": decider, "approved": approve, "outcome": outcome}),
         )
+    }
+
+    /// Carry out an approved baseline change on the baseline as it is now (not as it was when the request was made), as a new version. Sandboxes already running keep the
+    /// baseline they were started with; new ones use this one.
+    fn apply_baseline_update(
+        &self,
+        task_profile: &str,
+        params: &Value,
+        approved_by: &str,
+        change_id: &str,
+    ) -> Result<String> {
+        let change = parse_baseline_change(params)?;
+        let mut baseline = self.get_baseline(task_profile)?.ok_or_else(|| {
+            RiskGuardError::InvalidArgument(format!("there is no baseline for '{task_profile}'"))
+        })?;
+        let (mut routes, mut hosts, mut rates) = (0, 0, 0);
+        for route in change.routes {
+            routes += usize::from(baseline.allowed_action_classes.insert(route));
+        }
+        for host in change.hosts {
+            hosts += usize::from(baseline.approved_egress_hosts.insert(host));
+        }
+        for (name, value) in change.rates {
+            // Lowering only: a request that would raise a limit changes nothing.
+            let slot = if name == "max_req_1m_p95" {
+                &mut baseline.max_req_1m_p95
+            } else {
+                &mut baseline.max_req_1m_p99
+            };
+            if value < *slot {
+                *slot = value;
+                rates += 1;
+            }
+        }
+        if routes + hosts + rates == 0 {
+            return Err(RiskGuardError::InvalidArgument(
+                "nothing to change: the baseline already has these entries and limits".into(),
+            ));
+        }
+        baseline
+            .validate_egress_hosts()
+            .map_err(RiskGuardError::InvalidArgument)?;
+        let base = baseline
+            .version
+            .split("+c")
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        baseline.version = format!("{base}+c{}", &change_id[..change_id.len().min(8)]);
+        baseline.approved_by = approved_by.to_string();
+        let hash = self.store_baseline(&baseline)?;
+        Ok(format!(
+            "baseline {task_profile} stored as {}: {routes} route(s), {hosts} host(s), {rates} limit(s) changed (hash {})",
+            baseline.version,
+            &hash[..12]
+        ))
     }
 
     /// Requests, newest first. Pending ones past their expiry are shown as expired.
@@ -378,5 +521,117 @@ impl SqliteRiskStore {
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(serde_json::json!({ "changes": rows, "two_person_required": required }))
+    }
+}
+
+/// What a route needs before Risk Guard suggests it: enough calls, spread over enough hours that it is a habit and not a burst.
+const SUGGEST_MIN_CALLS: i64 = 20;
+const SUGGEST_MIN_HOURS: i64 = 3;
+
+/// `GET /repos/{owner}/{repo}` and `GET /repos/{org}/{name}` are the same route: compare with the placeholder names removed.
+fn route_shape(action_class: &str) -> String {
+    let mut out = String::with_capacity(action_class.len());
+    let mut inside = false;
+    for ch in action_class.trim().chars() {
+        match ch {
+            '{' => {
+                inside = true;
+                out.push_str("{}");
+            }
+            '}' => inside = false,
+            _ if !inside => out.push(ch),
+            _ => {}
+        }
+    }
+    out
+}
+
+impl SqliteRiskStore {
+    /// Routes each task profile has used steadily, never been refused on, and does not list in its baseline, from this service's own decision history. It never reads the SIEM, so
+    /// it works when the SIEM is down. It suggests only; a person proposes the change and a second person approves it.
+    pub fn suggest_baseline_changes(&self, since_ms: i64, now_ms: i64) -> Result<Value> {
+        let profiles: Vec<String> = {
+            let conn = self.lock_read_conn()?;
+            let mut stmt =
+                conn.prepare("SELECT DISTINCT task_profile FROM epochs ORDER BY task_profile")?;
+            stmt.query_map([], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<_, _>>()?
+        };
+        let mut out = Vec::new();
+        for profile in profiles {
+            let Some(baseline) = self.get_baseline(&profile)? else {
+                continue;
+            };
+            let known: BTreeSet<String> = baseline
+                .allowed_action_classes
+                .iter()
+                .map(|c| route_shape(c))
+                .collect();
+            let rows: Vec<(String, String, i64, i64, i64, i64)> = {
+                let conn = self.lock_read_conn()?;
+                let mut stmt = conn.prepare(
+                    "SELECT json_extract(d.normalized_request_json, '$.action_class'),
+                            json_extract(d.normalized_request_json, '$.method'),
+                            COUNT(*),
+                            SUM(CASE WHEN d.outcome = 'deny' THEN 1 ELSE 0 END),
+                            COUNT(DISTINCT d.created_at_ms / 3600000),
+                            MAX(COALESCE(json_extract(d.normalized_request_json, '$.high_impact'), 0))
+                       FROM decisions d JOIN epochs e ON e.epoch_id = d.epoch_id
+                      WHERE e.task_profile = ?1 AND d.created_at_ms >= ?2
+                      GROUP BY 1, 2",
+                )?;
+                stmt.query_map(params![profile, since_ms], |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                        row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                })?
+                .collect::<std::result::Result<_, _>>()?
+            };
+            let (mut add, mut skip) = (Vec::new(), Vec::new());
+            for (action_class, method, calls, refused, hours, high_impact) in rows {
+                if action_class.is_empty()
+                    || action_class.ends_with(" unknown")
+                    || known.contains(&route_shape(&action_class))
+                {
+                    continue;
+                }
+                let why = if refused > 0 {
+                    Some(format!("refused {refused} time(s)"))
+                } else if !matches!(method.to_ascii_uppercase().as_str(), "GET" | "HEAD") {
+                    Some("not a read; add it deliberately by importing a baseline".to_string())
+                } else if high_impact != 0 {
+                    Some("marked high impact".to_string())
+                } else if calls < SUGGEST_MIN_CALLS || hours < SUGGEST_MIN_HOURS {
+                    Some(format!(
+                        "not steady enough yet ({calls} calls in {hours} hour(s); needs {SUGGEST_MIN_CALLS} in {SUGGEST_MIN_HOURS})"
+                    ))
+                } else {
+                    None
+                };
+                let entry = serde_json::json!({"action_class": action_class, "calls": calls, "hours": hours, "refused": refused});
+                match why {
+                    None => add.push(entry),
+                    Some(why) => {
+                        let mut entry = entry;
+                        entry["why_not"] = Value::String(why);
+                        skip.push(entry);
+                    }
+                }
+            }
+            out.push(serde_json::json!({
+                "task_profile": profile, "baseline_version": baseline.version,
+                "add_action_classes": add, "not_suggested": skip,
+            }));
+        }
+        Ok(serde_json::json!({
+            "profiles": out, "since_ms": since_ms, "generated_at_ms": now_ms,
+            "needs": {"calls": SUGGEST_MIN_CALLS, "hours": SUGGEST_MIN_HOURS},
+            "source": "this service's own decision history",
+        }))
     }
 }

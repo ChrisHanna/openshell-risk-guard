@@ -13,6 +13,8 @@ are in OpenSearch, which Risk Guard's own scoring does not see. This reads it an
   * routes and egress hosts that were used steadily, never refused, and are not in the baseline (candidates to add);
   * rate limits far above anything observed (candidates to tighten).
 
+(The console's Approvals page now computes route suggestions from Risk Guard's own history, with no SIEM. This script is for egress hosts and rate limits, which only the SIEM has; its output can be proposed through `POST /api/changes`.)
+
 What it will not suggest, however often it was seen: a route with a destructive method (only GET and HEAD are ever proposed), anything that was refused even once, or any raising of a
 rate limit. Those need a person and, to loosen, two people. The proposed baseline file has an empty `approved_by`, which `baseline-import` rejects, so nothing can be imported by
 accident: a reviewer reads the evidence, fills in their name, and imports it through the same path as any baseline change.

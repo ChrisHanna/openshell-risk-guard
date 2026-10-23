@@ -387,3 +387,246 @@ fn break_glass_works_and_is_labelled_in_the_audit_trail() {
         "{operator} / {reason}"
     );
 }
+
+fn change(
+    store: &SqliteRiskStore,
+    params: serde_json::Value,
+    who: &str,
+) -> Result<String, RiskGuardError> {
+    store.propose_change(
+        "baseline_update",
+        "repo-triage-readonly",
+        &params,
+        "steady for a week",
+        who,
+        START,
+    )
+}
+
+#[test]
+fn a_baseline_change_takes_a_second_person_even_when_the_rule_is_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(&dir);
+    assert!(!store.two_person_required().unwrap());
+    let id = change(&store, serde_json::json!({"add_action_classes": ["GET /repos/{owner}/{repo}/labels"], "add_egress_hosts": ["api.example.com"]}), "alice").unwrap();
+
+    let own = store
+        .decide_change(&id, "alice", true, "me too", START + 1)
+        .unwrap_err();
+    assert!(
+        denied(own),
+        "the proposer cannot approve their own baseline change"
+    );
+    let before = store.get_baseline("repo-triage-readonly").unwrap().unwrap();
+    assert!(
+        !before
+            .allowed_action_classes
+            .contains("GET /repos/{owner}/{repo}/labels")
+    );
+
+    let result = store
+        .decide_change(&id, "bob", true, "evidence reviewed", START + 2)
+        .unwrap();
+    assert!(
+        result["outcome"].as_str().unwrap().starts_with("executed"),
+        "{result}"
+    );
+    let after = store.get_baseline("repo-triage-readonly").unwrap().unwrap();
+    assert!(
+        after
+            .allowed_action_classes
+            .contains("GET /repos/{owner}/{repo}/labels")
+    );
+    assert!(after.approved_egress_hosts.contains("api.example.com"));
+    assert_eq!(
+        after.approved_by, "alice+bob",
+        "both people are named on the baseline"
+    );
+    assert!(after.version.contains("+c"), "{}", after.version);
+    assert_ne!(after.version, before.version);
+}
+
+#[test]
+fn a_baseline_change_can_only_add_reads_hosts_and_lower_limits() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(&dir);
+    for bad in [
+        serde_json::json!({"add_action_classes": ["DELETE /repos/{owner}/{repo}"]}),
+        serde_json::json!({"add_action_classes": ["POST /repos/{owner}/{repo}/issues"]}),
+        serde_json::json!({"add_action_classes": ["/no/method"]}),
+        serde_json::json!({"tighten_rate": {"max_distinct_resources_15m_p95": 3}}),
+        serde_json::json!({"tighten_rate": {"max_req_1m_p95": 0}}),
+        serde_json::json!({"tighten_rate": "lower"}),
+        serde_json::json!({}),
+    ] {
+        assert!(
+            matches!(
+                change(&store, bad.clone(), "alice"),
+                Err(RiskGuardError::InvalidArgument(_))
+            ),
+            "{bad} should be refused when proposed"
+        );
+    }
+    let unknown = store.propose_change(
+        "baseline_update",
+        "no-such-profile",
+        &serde_json::json!({"add_egress_hosts": ["a.example.com"]}),
+        "x",
+        "alice",
+        START,
+    );
+    assert!(matches!(unknown, Err(RiskGuardError::InvalidArgument(_))));
+}
+
+#[test]
+fn a_baseline_change_never_raises_a_limit_and_a_noop_is_reported_as_failed() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(&dir);
+    let now = store.get_baseline("repo-triage-readonly").unwrap().unwrap();
+    let raise = serde_json::json!({"tighten_rate": {"max_req_1m_p95": now.max_req_1m_p95 + 100}});
+    let id = change(&store, raise, "alice").unwrap();
+    let result = store
+        .decide_change(&id, "bob", true, "ok", START + 1)
+        .unwrap();
+    assert!(
+        result["outcome"].as_str().unwrap().starts_with("failed"),
+        "{result}"
+    );
+    let after = store.get_baseline("repo-triage-readonly").unwrap().unwrap();
+    assert_eq!(
+        after.max_req_1m_p95, now.max_req_1m_p95,
+        "a limit is never raised through a change request"
+    );
+
+    let lower = serde_json::json!({"tighten_rate": {"max_req_1m_p95": now.max_req_1m_p95 - 1}});
+    let id = store
+        .propose_change(
+            "baseline_update",
+            "repo-triage-readonly",
+            &lower,
+            "tighter",
+            "alice",
+            START + 10,
+        )
+        .unwrap();
+    store
+        .decide_change(&id, "bob", true, "ok", START + 11)
+        .unwrap();
+    assert_eq!(
+        store
+            .get_baseline("repo-triage-readonly")
+            .unwrap()
+            .unwrap()
+            .max_req_1m_p95,
+        now.max_req_1m_p95 - 1
+    );
+}
+
+#[test]
+fn a_rejected_baseline_change_leaves_the_baseline_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(&dir);
+    let before = store.get_baseline("repo-triage-readonly").unwrap().unwrap();
+    let id = change(
+        &store,
+        serde_json::json!({"add_egress_hosts": ["api.example.com"]}),
+        "alice",
+    )
+    .unwrap();
+    store
+        .decide_change(&id, "bob", false, "not convinced", START + 1)
+        .unwrap();
+    assert_eq!(
+        store.get_baseline("repo-triage-readonly").unwrap().unwrap(),
+        before
+    );
+}
+
+fn send_path(store: &SqliteRiskStore, id: &str, method: &str, path: &str, at: i64) {
+    let request = CanonicalNormalizer::new_default(b"two-person-test-key")
+        .normalize(&RawRequestInput {
+            request_id: id.into(),
+            sandbox_id: "sbx-1".into(),
+            sandbox_name: "sbx-1".into(),
+            workspace: "default".into(),
+            scheme: "https".into(),
+            host: "api.github.local".into(),
+            port: 18443,
+            method: method.into(),
+            path: path.into(),
+            binary_path: Some("/usr/bin/curl".into()),
+            pid: None,
+            ancestors: vec![],
+            timestamp_ms: at,
+        })
+        .unwrap();
+    store
+        .evaluate_authenticated(
+            &request,
+            &InteractionRiskDetector::new_default(),
+            "gateway",
+            true,
+        )
+        .unwrap();
+}
+
+#[test]
+fn suggestions_come_from_the_services_own_history_and_only_for_steady_unrefused_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(&dir);
+    let hour = 3_600_000;
+    // A read the baseline does not list, used 24 times over four hours.
+    for n in 0..24 {
+        send_path(
+            &store,
+            &format!("steady-{n}"),
+            "GET",
+            "/repos/org/docs/issues/7/comments",
+            START + (n % 4) * hour + n,
+        );
+    }
+    // A write the baseline does not list, in one burst: never suggested, whatever its count.
+    for n in 0..24 {
+        send_path(
+            &store,
+            &format!("burst-{n}"),
+            "POST",
+            "/repos/org/docs/issues",
+            START + n,
+        );
+    }
+    let view = store
+        .suggest_baseline_changes(START - 1, START + 5 * hour)
+        .unwrap();
+    let profile = view["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["task_profile"] == "repo-triage-readonly")
+        .expect("the profile is listed");
+    let add: Vec<String> = profile["add_action_classes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["action_class"].as_str().unwrap().to_string())
+        .collect();
+    let skipped: Vec<String> = profile["not_suggested"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| format!("{} {}", r["action_class"], r["why_not"]))
+        .collect();
+    println!("add: {add:?}\nskipped: {skipped:?}");
+    assert!(
+        add.iter().any(|r| r.contains("issues/**")),
+        "a steady read is suggested: {add:?} / {skipped:?}"
+    );
+    assert!(
+        !add.iter().any(|r| r.contains("POST")),
+        "a write is never suggested: {add:?}"
+    );
+    assert!(
+        skipped.iter().any(|r| r.contains("POST")),
+        "it is listed with the reason it was left out: {skipped:?}"
+    );
+}
