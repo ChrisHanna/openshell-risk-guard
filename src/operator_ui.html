@@ -1353,6 +1353,7 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
 .ctl-badge.off, .ctl-badge.no_list, .ctl-badge.not_built, .ctl-badge.unknown { color: var(--text-muted); }
 .ctl-state-not_enough_data { color: var(--warn-text); font-weight: 600; }
 .ctl-state-not_built { color: var(--text-muted); font-weight: 600; }
+.ctl-home { margin: 6px 0 0; font-size: 12px; color: var(--warn-text); }
 .ctl-profiles { margin: 6px 0 0; padding: 0; list-style: none; font-size: 12px; }
 .ctl-legend { display: flex; gap: 14px; flex-wrap: wrap; margin: 14px 0 0; font-size: 13px; color: var(--text-secondary); }
 @media (max-width: 900px) { .ctl-row { grid-template-columns: 1fr; gap: 6px; } }
@@ -1616,13 +1617,44 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
         <div>
           <h1>How it works</h1>
           <p class="fleet-verdict">OpenShell decides what an agent <em>may</em> reach. Risk Guard decides whether <em>this</em> call, from <em>this</em> workload, right now, looks like its normal behavior. It can only say no.</p>
-          <p class="quiet-note" style="margin:4px 0 0">Risk Guard adds one layer on top of OpenShell. It never widens what OpenShell allows.</p>
+          <p class="quiet-note" style="margin:4px 0 0">Risk Guard adds one layer on top of OpenShell. It never widens what OpenShell allows. OpenSearch keeps the record and can ask Risk Guard to tighten.</p>
         </div>
         <div class="how-toggle" role="group" aria-label="Level of detail">
           <button type="button" data-level="plain" aria-pressed="true">Plain</button>
           <button type="button" data-level="hood" aria-pressed="false">Under the hood</button>
         </div>
       </div>
+
+      <section class="panel" id="how-three">
+        <div class="panel-header">
+          <div class="panel-title-group">
+            <h2>Three systems, one loop</h2>
+            <p>Only the first two can stop a call. The third remembers, and can ask the second to tighten.</p>
+          </div>
+        </div>
+        <div class="panel-body how-cards">
+          <div class="how-card">
+            <h3>OpenShell <span class="badge badge-neutral">permits</span></h3>
+            <p class="plain">Runs each agent in a sandbox and refuses anything its policy does not allow: files, programs, network destinations and routes. This is the floor. It does not depend on any learning.</p>
+            <p class="hood">Landlock and seccomp confinement (a sandbox that cannot get Landlock does not start), plus network policy in the supervisor. A network endpoint can run in <code>audit</code> (log and allow) or <code>enforce</code>.</p>
+          </div>
+          <div class="how-card">
+            <h3>Risk Guard <span class="badge badge-neutral">judges</span></h3>
+            <p class="plain">For a call OpenShell allowed, asks whether it is normal for this workload right now. It can only narrow OpenShell's answer, and it follows a workload from one sandbox to the next. A control is <strong>enforcing</strong> (blocks) or <strong>watching</strong> (records what it would block and lets the call through).</p>
+            <p class="hood">Rules from lists a person approved, a behavioral score that cannot refuse until a task profile has learned enough (20 sessions, 200 requests), latched restrictions, and quarantine. Fails closed.</p>
+          </div>
+          <div class="how-card">
+            <h3>OpenSearch <span class="badge badge-neutral">remembers</span></h3>
+            <p class="plain">Keeps what both layers saw, draws the dashboards and raises alerts. It blocks nothing itself. An alert can ask Risk Guard to quarantine a workload for a limited time; it can only tighten, never loosen.</p>
+            <p class="hood">Risk Guard sends OCSF events, including per-minute summaries, through an OpenTelemetry collector. A signal goes through a forwarder with its own SPIFFE identity over mutual TLS. Today signals are recorded only (dry run).</p>
+          </div>
+          <div class="how-card">
+            <h3>Until Risk Guard has learned enough</h3>
+            <p class="plain">OpenShell's policy and the lists people approved are what protect an agent. Learned controls say how much data they still need, and until they have it they only watch. Nothing loosens without two people.</p>
+            <p><button type="button" class="btn btn-primary" id="how-go-controls">See every control</button> <button type="button" class="btn" id="how-go-approvals">Approvals</button></p>
+          </div>
+        </div>
+      </section>
 
       <section class="panel">
         <div class="panel-header">
@@ -7583,7 +7615,7 @@ async function loadApprovals() {
 
 // ---- Controls: every control in the same words ----------------------------------------------------------------------------------------------------------------
 const CTL_GROUPS = [
-  ["openshell", "The floor: OpenShell", "Enforced by OpenShell itself, before Risk Guard sees the call. It does not depend on any learning."],
+  ["openshell", "The floor: OpenShell", "Enforced by OpenShell itself, before Risk Guard sees the call: the network policy and the filesystem confinement. It does not depend on any learning."],
   ["rule", "Rules a person set", "They match lists that people approved. They do not learn. Each is enforcing (blocks) or watching (records what it would block)."],
   ["learned", "Learned behavior", "These need history. Until a task profile has enough, they only watch, and the rules and OpenShell's policy above are what protect it."],
   ["people", "People and the SIEM", "Quarantine stops a workload. The SIEM can only ask for one; it can never loosen anything."]
@@ -7607,6 +7639,7 @@ function ctlEvidence(e) {
 function ctlRow(c) {
   const badge = apprEl("span", { class: `ctl-badge ${c.mode}`, text: CTL_MODE_LABEL[c.mode] || c.mode });
   const nameCell = apprEl("div", {}, apprEl("div", { class: "ctl-name", text: c.name }), apprEl("div", { class: "ctl-what", text: c.what }));
+  if (c.recommended_home) nameCell.append(apprEl("div", { class: "ctl-home", text: "Better home: " + c.recommended_home }));
   const profiles = (c.profiles || []);
   if (profiles.length) {
     const list = apprEl("ul", { class: "ctl-profiles" }, profiles.map(p => {
@@ -7642,6 +7675,8 @@ async function loadControls() {
 }
 
 $("nav-controls-btn").addEventListener("click", () => switchMainView("controls", true));
+$("how-go-controls").addEventListener("click", () => switchMainView("controls", true));
+$("how-go-approvals").addEventListener("click", () => switchMainView("approvals", true));
 setInterval(() => { if (!document.hidden && activeTopView === "controls") void loadControls(); }, 30000);
 $("nav-approvals-btn").addEventListener("click", () => switchMainView("approvals", true));
 setInterval(() => { if (!document.hidden && activeTopView === "approvals") void loadApprovals(); }, 30000);

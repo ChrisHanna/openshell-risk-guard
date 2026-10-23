@@ -26,7 +26,7 @@ Open these tabs in this order, so you only ever move right:
 2. Console: **Fleet overview**
 3. Console: **Controls**
 4. A terminal in the repository, font large, running `run_demo.py --pause`
-5. OpenSearch Dashboards: **Fleet**, then **One agent**, then **Risk Guard: quarantine and signals**
+5. OpenSearch Dashboards: **0. Start here**, then **One agent**, then **Risk Guard: quarantine and signals**
 6. Console: **Approvals**
 7. `docs/red-team-agent.md` (the results table)
 
@@ -39,7 +39,7 @@ Open these tabs in this order, so you only ever move right:
 | 1:45 | **Controls** | Read the top box, then the badges | "Every control, same words: enforcing blocks, watching only records. And look at the box at the top: until a workload has learned enough, OpenShell's policy and the lists a person approved are what protect it. Learned behavior says 'not enough data yet' and only watches." | Honesty about learning; no confusing mechanisms |
 | 3:00 | Terminal, acts 1 and 2 | Enter, Enter | "A routine read returns 200 in a few milliseconds. The same agent tries a DELETE: refused with a reason, and the destination's own counter shows it never arrived." | Enforcement, not a log line |
 | 4:15 | Terminal, act 3 | Enter | "An operator quarantines the workload. A connection that worked a moment ago now times out." | Containment |
-| 5:15 | OpenSearch: Fleet, then One agent | Pick the agent with refusals; open the "One call, both layers" search | "Same events, in the SIEM: what each agent did and what was refused. OpenShell's record and Risk Guard's refusal side by side. They share the sandbox, method, host and path; an exact call id would need a small OpenShell change." | Evidence and correlation, stated honestly |
+| 5:15 | OpenSearch: **0. Start here**, then One agent | On Start here, point at the three lanes and the "who stopped calls" chart; then pick the agent with refusals on One agent and open the "One call, both layers" search | "Same events, in the SIEM: what each agent did and what was refused. OpenShell's record and Risk Guard's refusal side by side. They share the sandbox, method, host and path; an exact call id would need a small OpenShell change." | Evidence and correlation, stated honestly |
 | 6:30 | OpenSearch: quarantine and signals | Run `python scripts/siem/signal_demo.py --list` | "An OpenSearch alert can ask Risk Guard to quarantine. It goes through a forwarder with its own identity over mutual TLS, and can only tighten. It is in dry-run today: recorded, nothing changes." | Feedback loop, bounded |
 | 7:30 | Console, **Approvals** | Tick the suggested route, give a reason, Propose. Then try to approve it | "Risk Guard suggests from its own history: this agent reads `pulls` steadily and was never refused. Proposing is one person. Approving takes a different person; watch it refuse me approving my own." | Two-person rule, working |
 | 8:45 | `red-team-agent.md` | Point at the results | "We attack it continuously: 387 mutations of the must-refuse calls, none got through, and an adaptive agent made 17 more attempts, none got through. Garak did not produce a result: the hosted model was rate limiting. Anything that does get through becomes a failing test." | Evidence, and a stated gap |

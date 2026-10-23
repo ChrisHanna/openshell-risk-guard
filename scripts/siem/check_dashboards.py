@@ -41,6 +41,8 @@ def translate(aggs):
         params = agg["params"]
         if agg["type"] == "terms":
             body = {"terms": {"field": params["field"], "size": params.get("size", 5)}}
+        elif agg["type"] == "filters":
+            body = {"filters": {"filters": {f["label"]: {"query_string": {"query": f["input"]["query"]}} for f in params["filters"]}}}
         elif agg["type"] == "date_histogram":
             body = {"date_histogram": {"field": params["field"], "fixed_interval": "1h", "min_doc_count": 1}}
         else:
@@ -54,8 +56,11 @@ def walk(buckets_node, depth=0):
     """Summarise the first few buckets of the outermost aggregation."""
     for key, value in buckets_node.items():
         if isinstance(value, dict) and "buckets" in value:
-            rows = value["buckets"][:4]
-            return [str(b.get("key_as_string", b.get("key"))) + f"={b['doc_count']}" for b in rows], len(value["buckets"])
+            raw = value["buckets"]
+            if isinstance(raw, dict):
+                raw = [dict(v, key=k) for k, v in raw.items()]
+            rows = raw[:4]
+            return [str(b.get("key_as_string", b.get("key"))) + f"={b['doc_count']}" for b in rows], len(raw)
     return None, 0
 
 

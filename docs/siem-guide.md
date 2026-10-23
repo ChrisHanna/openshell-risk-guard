@@ -30,6 +30,8 @@ It is safe to run again; it updates what it made and skips what exists. It runs 
 
 ## The dashboards, organised around agents
 
+**Start with `0. Start here: OpenShell, Risk Guard, OpenSearch`.** It shows the three systems side by side, left to right: what OpenShell denied, what Risk Guard refused (and why), and what OpenSearch holds, with one chart that splits "who stopped calls" between the layers and the "One call, both layers" search underneath. Every other dashboard links back to it.
+
 Each starts with the same navigation bar. The questions they answer, in the order an operator asks them:
 
 | Dashboard | The question | What is on it |

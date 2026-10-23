@@ -360,7 +360,7 @@ RGF = "unmapped.risk_guard."
 
 OLD_DASHBOARDS = ["rg-dashboard-overview", "rg2-dashboard-decisions", "rg2-dashboard-signals", "wl-dashboard", "oa-dashboard-control"]
 
-NAV = ("**Agents:** [Fleet](#/view/ag-fleet) · [One agent](#/view/ag-agent) · [Incidents](#/view/ag-incidents) · [Control health](#/view/ag-health) "
+NAV = ("**Start here:** [Three systems](#/view/h3-start) &nbsp;|&nbsp; **Agents:** [Fleet](#/view/ag-fleet) · [One agent](#/view/ag-agent) · [Incidents](#/view/ag-incidents) · [Control health](#/view/ag-health) "
        "&nbsp;|&nbsp; **Sandboxes (OpenShell events):** [Calls](#/view/oa-dashboard-activity) · [Egress and policy](#/view/oa-dashboard-egress)")
 
 
@@ -491,6 +491,52 @@ def build_agent_dashboards():
     return objects + [fleet, one, incidents, health]
 
 
+# --- Start here: the three systems side by side -----------------------------------------------------------------------------------------------------------------
+OS_L7_DENIED = 'firewall_rule.type:"l7" and action:"Denied"'
+OS_ANY_DENIED = '(class_name:"Network Activity" and action:"Denied") or (firewall_rule.type:"l7" and action:"Denied")'
+
+
+def filters_agg(agg_id, pairs):
+    """Several named queries as the series of one chart: how a count splits between layers, which no single field can say."""
+    return {"id": agg_id, "enabled": True, "type": "filters", "schema": "group",
+            "params": {"filters": [{"input": {"query": q, "language": "kuery"}, "label": label} for label, q in pairs]}}
+
+
+def build_layers_objects():
+    intro = markdown("h3-intro", "How to read this page",
+                     "**Read left to right: the path of one call.** **OpenShell** permits (its policy). **Risk Guard** judges, and can only narrow OpenShell's answer. "
+                     "**OpenSearch** remembers: it blocks nothing, and its alerts can only ask Risk Guard to tighten. Only the first two can stop a call.  \n" + NAV)
+    lane_os = markdown("h3-lane-os", "OpenShell", "### OpenShell: permits\nRefuses what its policy does not allow, before Risk Guard sees the call. Needs no learning.")
+    lane_rg = markdown("h3-lane-rg", "Risk Guard", "### Risk Guard: judges\nRefuses a call that is not normal for this workload. Some controls only *watch*: see Controls in the console.")
+    lane_sx = markdown("h3-lane-sx", "OpenSearch", "### OpenSearch: remembers\nStores what both layers saw. Blocks nothing; an alert can ask Risk Guard to tighten.")
+    objects = [
+        intro, lane_os, lane_rg, lane_sx,
+        visualization("h3-os-net", "Connections OpenShell denied", "metric", [COUNT], METRIC_PARAMS, NET_DENIED),
+        visualization("h3-os-l7", "Requests OpenShell's L7 policy denied", "metric", [COUNT], METRIC_PARAMS, OS_L7_DENIED),
+        visualization("h3-rg-refused", "Calls Risk Guard refused", "metric", [COUNT], METRIC_PARAMS, RG_MIDDLEWARE),
+        visualization("h3-rg-tunnel", "Tunnels Risk Guard flagged (refused or would refuse)", "metric", [COUNT], METRIC_PARAMS, RG_TUNNEL),
+        visualization("h3-sx-events", "Events stored", "metric", [COUNT], METRIC_PARAMS),
+        visualization("h3-sx-signals", "Signals received from the SIEM", "metric", [COUNT], METRIC_PARAMS, RG_SIGNAL),
+        visualization("h3-rg-reasons", "Why Risk Guard refused", "table",
+                      [COUNT, terms("2", "unmapped.risk_guard.reason_code.keyword", "bucket", 8)], TABLE_PARAMS, RG_MIDDLEWARE),
+        visualization("h3-sx-sources", "Where the events come from", "pie",
+                      [COUNT, terms("2", "metadata.product.name.keyword", "segment", 6)], PIE_PARAMS),
+        visualization("h3-who", "Who stopped calls, over time", "histogram",
+                      [COUNT, TIME_BUCKET, filters_agg("3", [("OpenShell refused", OS_ANY_DENIED), ("Risk Guard refused", RG_MIDDLEWARE),
+                                                             ("Risk Guard tunnel gate flagged", RG_TUNNEL)])], BAR_PARAMS),
+    ]
+    board = dashboard("h3-start", "0. Start here: OpenShell, Risk Guard, OpenSearch",
+                      "The three systems side by side, left to right: what OpenShell denied, what Risk Guard refused, and what OpenSearch holds. Start here, then follow the links.", [
+        ("h3-intro", "visualization", 0, 0, 48, 6),
+        ("h3-lane-os", "visualization", 0, 6, 16, 5), ("h3-lane-rg", "visualization", 16, 6, 16, 5), ("h3-lane-sx", "visualization", 32, 6, 16, 5),
+        ("h3-os-net", "visualization", 0, 11, 16, 6), ("h3-rg-refused", "visualization", 16, 11, 16, 6), ("h3-sx-events", "visualization", 32, 11, 16, 6),
+        ("h3-os-l7", "visualization", 0, 17, 16, 6), ("h3-rg-tunnel", "visualization", 16, 17, 16, 6), ("h3-sx-signals", "visualization", 32, 17, 16, 6),
+        ("oa-denied-dest", "visualization", 0, 23, 16, 13), ("h3-rg-reasons", "visualization", 16, 23, 16, 13), ("h3-sx-sources", "visualization", 32, 23, 16, 13),
+        ("h3-who", "visualization", 0, 36, 48, 14),
+        ("oa-search-both", "search", 0, 50, 48, 13)], time_from="now-24h")
+    return objects + [board]
+
+
 def build_objects():
     objects = [{
         "id": PATTERN_ID, "type": "index-pattern", "migrationVersion": {"index-pattern": "7.6.0"}, "references": [],
@@ -528,7 +574,7 @@ def build_objects():
                        "version": 1, "timeRestore": True, "timeTo": "now", "timeFrom": "now-24h",
                        "refreshInterval": {"pause": False, "value": 30000},
                        "kibanaSavedObjectMeta": {"searchSourceJSON": json.dumps({"query": {"language": "kuery", "query": ""}, "filter": []})}}})
-    return objects + build_risk_guard_objects() + build_activity_objects() + build_workload_objects() + build_agent_dashboards() + build_synthetic_objects()
+    return objects + build_risk_guard_objects() + build_activity_objects() + build_workload_objects() + build_agent_dashboards() + build_layers_objects() + build_synthetic_objects()
 
 
 def feature(name, field="metadata.uid.keyword"):

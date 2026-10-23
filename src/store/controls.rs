@@ -198,9 +198,15 @@ impl SqliteRiskStore {
         let unknown_start = json!({"state": "not_applicable", "note": "No running Risk Guard has recorded how it was started against this database, so its mode here is not known."});
         let mut controls: Vec<Value> = Vec::new();
         controls.push(json!({
-            "id": "openshell_policy", "source": "openshell", "name": "OpenShell policy", "mode": "enforcing",
-            "what": "The floor. Files, processes, network destinations and HTTP routes the policy does not allow are refused before Risk Guard sees them. It does not depend on any learning.",
+            "id": "openshell_network_policy", "source": "openshell", "name": "OpenShell network policy", "mode": "enforcing",
+            "what": "Refuses hosts, methods and routes the sandbox's policy does not allow, endpoint by endpoint (enforce blocks; audit only logs). The policies deployed here set enforce. This is the floor and it does not depend on any learning.",
             "evidence": {"note": "OpenShell enforces this itself; its refusals are in the SIEM's OpenShell events."},
+            "data": {"state": "ok", "note": "Needs no data."},
+        }));
+        controls.push(json!({
+            "id": "openshell_filesystem", "source": "openshell", "name": "OpenShell filesystem and process confinement (Landlock)", "mode": "enforcing",
+            "what": "Limits which files and programs a sandbox can touch. OpenShell requires Landlock: a sandbox on a kernel without it does not start, so there is no weaker mode to fall back on. Risk Guard does not see file access; it only shows the filesystem policy.",
+            "evidence": {"note": "No file-access events appear in the SIEM today."},
             "data": {"state": "ok", "note": "Needs no data."},
         }));
         for (rule, name, what) in RULES {
@@ -257,6 +263,17 @@ impl SqliteRiskStore {
                 "what": "After a refused action a workload is restricted. At the tunnel gate this either only records that it would cut the workload's connections (watching) or does cut them, including to the model (enforcing).",
                 "evidence": {"note": "Counted in the SIEM as tunnel_would_refuse."}, "data": if started_known { json!({"state": "ok", "note": "Needs no history."}) } else { unknown_start.clone() },
             }));
+        }
+        // The deny list and the approved routes are method-and-path lists, which OpenShell's own policy can express (allow and deny rules per endpoint), reviewed and prover-checked.
+        for control in &mut controls {
+            if matches!(
+                control["id"].as_str(),
+                Some(RULE_FORBIDDEN_ACTION | RULE_UNAPPROVED_ACTION)
+            ) {
+                control["recommended_home"] = json!(
+                    "OpenShell policy can hold this list too, and is the better home for it. It is kept here for now so it can run in watching mode and follow a workload between sandboxes."
+                );
+            }
         }
         let mature = profiles
             .iter()

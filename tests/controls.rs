@@ -128,11 +128,12 @@ fn every_control_uses_the_same_words_and_says_whether_it_has_its_data() {
         );
     }
     assert_eq!(
-        control(&view, "openshell_policy")["mode"],
+        control(&view, "openshell_network_policy")["mode"],
         "enforcing",
         "the floor is always listed first and does not depend on learning"
     );
-    assert_eq!(view["controls"][0]["id"], "openshell_policy");
+    assert_eq!(view["controls"][0]["id"], "openshell_network_policy");
+    assert_eq!(view["controls"][1]["id"], "openshell_filesystem");
 }
 
 #[test]
