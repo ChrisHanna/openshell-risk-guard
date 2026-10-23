@@ -38,6 +38,10 @@ pub const RULE_UNAPPROVED_RESOURCE: &str = "unapproved_resource";
 /// Rule for a tunnel to a destination the task's approved-egress list does not contain. Enforced at the network path, not in scoring; set it
 /// in the profile's `rule_modes` (it is not one of the console's configurable rules). Default: shadow.
 pub const RULE_EGRESS_DESTINATION: &str = "egress_destination";
+/// The tunnel gate's cross-check that a sandbox which has been reporting requests has not gone quiet while still opening tunnels, which is what
+/// a supervisor that stopped calling Risk Guard (crashed, misconfigured, or compromised) looks like from the network path. Like the egress rule it
+/// is set in the profile's `rule_modes`, and defaults to shadow: it is recorded, not enforced, until an operator promotes it.
+pub const RULE_SUPERVISOR_SILENT: &str = "supervisor_silent";
 /// The rules an operator can run in shadow or enforce mode, in display order.
 pub const CONFIGURABLE_RULES: [&str; 3] = [
     RULE_UNFAMILIAR_HIGH_IMPACT,
@@ -465,6 +469,8 @@ pub struct NetworkState {
     pub quarantined: bool,
     /// The workload holds at least one strict-epoch restriction (some scope is latched). Scoped, so blunt as a network signal.
     pub restricted: bool,
+    /// When Risk Guard last recorded a request decision for this sandbox's active epoch (its own clock), if it ever has.
+    pub last_decision_ms: Option<i64>,
 }
 
 /// Everything needed to attach a freshly created sandbox to a workload.
@@ -560,6 +566,17 @@ pub trait RiskStore: Send + Sync {
         Ok(())
     }
     /// The baseline profile a sandbox's active epoch is pinned to; `None` if it has no active epoch.
+    /// Record that a sandbox opened a tunnel after its supervisor had gone quiet. Best effort evidence for an operator; the default does nothing.
+    fn record_supervisor_silence(
+        &self,
+        _sandbox_id: &str,
+        _destination: &str,
+        _silent_ms: i64,
+        _mode: &str,
+        _now_ms: i64,
+    ) -> Result<()> {
+        Ok(())
+    }
     fn sandbox_baseline(&self, _sandbox_id: &str) -> Result<Option<BaselineProfile>> {
         Ok(None)
     }

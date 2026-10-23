@@ -28,8 +28,8 @@ use tonic::codegen::{Body, BoxFuture, StdError, http};
 use crate::pod_resolver::PodResolver;
 use crate::spiffe::{SpiffeId, SvidEnroller, SvidPolicy, peer_from_metadata};
 use crate::types::{
-    DecisionOutcome, NativeObservationSource, RULE_EGRESS_DESTINATION, RawRequestInput,
-    RequestNormalizer, RiskDetector, RiskStore, RuleMode,
+    DecisionOutcome, NativeObservationSource, RULE_EGRESS_DESTINATION, RULE_SUPERVISOR_SILENT,
+    RawRequestInput, RequestNormalizer, RiskDetector, RiskStore, RuleMode,
 };
 
 #[derive(Clone, PartialEq, prost::Message)]
@@ -172,6 +172,18 @@ fn host_and_port(host: &str, scheme: &str) -> (String, u16) {
     }
 }
 
+/// How long a sandbox that has been reporting requests may go quiet before its next tunnel is flagged. Agents work in bursts with pauses
+/// between model calls, so this is generous: ten minutes.
+const DEFAULT_SILENCE_MS: i64 = 600_000;
+
+fn now_unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
+        })
+}
+
 /// Answers Envoy `Check` calls from trusted proxies by scoring the request as the downstream workload.
 #[derive(Clone)]
 pub struct ExtAuthzService {
@@ -185,6 +197,8 @@ pub struct ExtAuthzService {
     tunnels: Option<Arc<dyn PodResolver>>,
     /// What happens to a sandbox whose workload holds a strict-epoch restriction. Quarantine is always enforced.
     restriction_mode: TunnelMode,
+    /// How long a sandbox that has been reporting requests may go without one before opening a tunnel counts as a silent supervisor. 0 turns the check off.
+    silence_ms: i64,
 }
 
 /// Whether a signal blocks the tunnel (`Enforce`) or is only recorded as what would have been blocked (`Shadow`).
@@ -221,6 +235,7 @@ impl ExtAuthzService {
             proxies: Arc::new(proxies),
             tunnels: None,
             restriction_mode: TunnelMode::Shadow,
+            silence_ms: DEFAULT_SILENCE_MS,
         })
     }
 
@@ -233,6 +248,14 @@ impl ExtAuthzService {
 
     /// Set what a latched restriction does to a sandbox's tunnels. The default is shadow: it is recorded, not enforced, because a
     /// restriction is scoped to one kind of request and is a blunt signal to cut a whole sandbox's network on.
+    /// How long a sandbox that has been reporting requests may go quiet before its next tunnel is treated as coming from a silent supervisor
+    /// (`Duration::ZERO` turns the check off).
+    #[must_use]
+    pub fn with_silence_threshold(mut self, threshold: std::time::Duration) -> Self {
+        self.silence_ms = i64::try_from(threshold.as_millis()).unwrap_or(i64::MAX);
+        self
+    }
+
     #[must_use]
     pub fn with_restriction_mode(mut self, mode: TunnelMode) -> Self {
         self.restriction_mode = mode;
@@ -287,12 +310,46 @@ impl ExtAuthzService {
             )
         });
 
+        // A sandbox that has reported requests before, and then stops while still opening tunnels, has a supervisor that has gone quiet (it
+        // crashed, lost its middleware setting, or is being kept from reporting). A sandbox that never reported is left alone: its policy
+        // may not inspect requests at all. Risk Guard's own clock is used, never the supervisor's.
+        let now_ms = now_unix_ms();
+        let silence_mode = baseline.as_ref().map_or(RuleMode::Shadow, |baseline| {
+            baseline.rule_mode(RULE_SUPERVISOR_SILENT)
+        });
+        let silent_for_ms = state
+            .as_ref()
+            .and_then(|state| state.last_decision_ms)
+            .map(|last| now_ms.saturating_sub(last))
+            .filter(|gap| {
+                self.silence_ms > 0 && *gap > self.silence_ms && silence_mode != RuleMode::Off
+            });
+        if let Some(gap) = silent_for_ms {
+            let store = Arc::clone(&self.store);
+            let id = sandbox_id.clone();
+            let target = destination.to_string();
+            let mode = if silence_mode == RuleMode::Enforce {
+                "enforce"
+            } else {
+                "shadow"
+            };
+            // Evidence for an operator; a failure to write it must not change the answer.
+            let _ = tokio::task::spawn_blocking(move || {
+                store.record_supervisor_silence(&id, &target, gap, mode, now_ms)
+            })
+            .await;
+        }
+
         let (verdict, reason) = match state {
             None => ("deny", "Risk Guard has no record of this sandbox"),
             Some(state) if state.quarantined => ("deny", "the sandbox's workload is quarantined"),
             Some(_) if egress == Some((RuleMode::Enforce, false)) => (
                 "deny",
                 "the destination is not approved for this sandbox's task",
+            ),
+            Some(_) if silent_for_ms.is_some() && silence_mode == RuleMode::Enforce => (
+                "deny",
+                "the sandbox's supervisor has stopped reporting requests",
             ),
             Some(state)
                 if egress == Some((RuleMode::Shadow, false))
@@ -309,6 +366,10 @@ impl ExtAuthzService {
             Some(state) if state.restricted => (
                 "allow",
                 "shadow: the workload holds a latched restriction, which would block this tunnel in enforce mode",
+            ),
+            Some(_) if silent_for_ms.is_some() => (
+                "allow",
+                "shadow: the sandbox's supervisor has stopped reporting requests, which would block this tunnel in enforce mode",
             ),
             Some(_) => ("allow", ""),
         };

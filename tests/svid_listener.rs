@@ -1107,3 +1107,145 @@ async fn a_claimed_identity_cannot_change_whose_tunnel_it_is_and_only_listed_pro
     assert_eq!(error.code(), Code::PermissionDenied);
     running.stop.notify_one();
 }
+
+/// One routine read recorded for a sandbox at a given time.
+fn report_request(store: &SqliteRiskStore, sandbox: &str, id: &str, at_ms: i64) {
+    use openshell_risk_guard::types::RawRequestInput;
+
+    let request = CanonicalNormalizer::new_default(&[9u8; 32])
+        .normalize(&RawRequestInput {
+            request_id: id.into(),
+            sandbox_id: sandbox.into(),
+            sandbox_name: sandbox.into(),
+            workspace: "default".into(),
+            scheme: "https".into(),
+            host: "api.github.local".into(),
+            port: 443,
+            method: "GET".into(),
+            path: "/repos/org/docs-site/issues".into(),
+            binary_path: None,
+            pid: None,
+            ancestors: vec![],
+            timestamp_ms: at_ms,
+        })
+        .unwrap();
+    store
+        .evaluate_authenticated(
+            &request,
+            &InteractionRiskDetector::new_default(),
+            "svid-gateway",
+            false,
+        )
+        .unwrap();
+}
+
+/// The silent-supervisor check: a sandbox that has been reporting requests and then goes quiet while still opening tunnels is flagged
+/// (recorded in shadow, refused when the rule enforces). A sandbox that is reporting, and one that never reported, are left alone.
+#[tokio::test]
+async fn a_sandbox_whose_supervisor_has_gone_quiet_is_flagged_and_a_healthy_one_is_not() {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let authority = Authority::new();
+    let proxy_id = "spiffe://example.org/ns/edge/sa/sandbox-egress";
+    let table: Arc<dyn PodResolver> = Arc::new(StaticPodResolver(
+        [
+            ("10.1.0.1".parse().unwrap(), "sbx-healthy".to_string()),
+            ("10.1.0.2".parse().unwrap(), "sbx-silent".to_string()),
+            ("10.1.0.3".parse().unwrap(), "sbx-unreported".to_string()),
+            (
+                "10.1.0.4".parse().unwrap(),
+                "sbx-silent-enforced".to_string(),
+            ),
+            (
+                "10.1.0.5".parse().unwrap(),
+                "sbx-healthy-enforced".to_string(),
+            ),
+        ]
+        .into(),
+    ));
+    let running = start_full(
+        &authority,
+        &[TRUST_DOMAIN],
+        &[proxy_id],
+        Some((table, TunnelMode::Shadow)),
+    )
+    .await;
+    for (sandbox, agent) in [
+        ("sbx-healthy", "w-healthy"),
+        ("sbx-silent", "w-silent"),
+        ("sbx-unreported", "w-unreported"),
+    ] {
+        enrol_sandbox(&running.store, sandbox, Some(agent));
+    }
+    report_request(&running.store, "sbx-healthy", "h1", now - 20_000);
+    report_request(&running.store, "sbx-silent", "s1", now - 20 * 60_000);
+    let (cert, key) = authority.svid(&[proxy_id]);
+    let channel = connect(&running, Some((&cert, &key))).await.unwrap();
+
+    // Shadow (the default): every tunnel is carried, and only the silent sandbox is recorded.
+    for source in ["10.1.0.1", "10.1.0.2", "10.1.0.3"] {
+        let carried = tunnel_check(channel.clone(), source).await;
+        assert!(
+            carried.ok_response.is_some(),
+            "{source} is carried in shadow mode: {carried:?}"
+        );
+    }
+    let flagged = running.store.list_supervisor_silence(10).unwrap();
+    let rows = flagged["supervisor_silence"].as_array().unwrap();
+    assert_eq!(
+        rows.len(),
+        1,
+        "only the silent sandbox is flagged: {flagged}"
+    );
+    assert_eq!(rows[0]["sandbox_id"], "sbx-silent");
+    assert_eq!(rows[0]["rule_mode"], "shadow");
+    assert!(rows[0]["silent_for_ms"].as_i64().unwrap() >= 19 * 60_000);
+
+    // A second tunnel from the same sandbox right away does not add a second row.
+    let _ = tunnel_check(channel.clone(), "10.1.0.2").await;
+    assert_eq!(
+        running.store.list_supervisor_silence(10).unwrap()["supervisor_silence"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // When the task profile enforces the rule, the silent sandbox is refused and the healthy one is still carried.
+    let mut baseline = running
+        .store
+        .get_baseline(&build_standard_corpus().default_baseline.task_profile)
+        .unwrap()
+        .unwrap();
+    baseline.rule_modes.insert(
+        "supervisor_silent".to_string(),
+        openshell_risk_guard::types::RuleMode::Enforce,
+    );
+    running.store.store_baseline(&baseline).unwrap();
+    for (sandbox, agent) in [
+        ("sbx-silent-enforced", "w-silent-enf"),
+        ("sbx-healthy-enforced", "w-healthy-enf"),
+    ] {
+        enrol_sandbox(&running.store, sandbox, Some(agent));
+    }
+    report_request(
+        &running.store,
+        "sbx-silent-enforced",
+        "se1",
+        now - 20 * 60_000,
+    );
+    report_request(&running.store, "sbx-healthy-enforced", "he1", now - 10_000);
+    let refused = tunnel_check(channel.clone(), "10.1.0.4").await;
+    assert!(
+        refused.denied_response.is_some(),
+        "a silent supervisor's tunnel is refused when the rule enforces: {refused:?}"
+    );
+    let carried = tunnel_check(channel.clone(), "10.1.0.5").await;
+    assert!(
+        carried.ok_response.is_some(),
+        "a reporting sandbox is still carried: {carried:?}"
+    );
+    running.stop.notify_one();
+}

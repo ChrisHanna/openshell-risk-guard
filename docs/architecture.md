@@ -152,6 +152,20 @@ separate trust domains.
   `idle_timeout` is not applied to CONNECT tunnels (tested); the connection-manager `stream_idle_timeout` is what works.
 * Envoy reads its configuration only when it starts, so script 18 restarts the proxy pods after applying it.
 
+## The silent-supervisor check
+
+Gates 1 and 2 depend on the supervisor calling Risk Guard. A supervisor that stops (it crashed, lost its middleware setting, or is being kept quiet by an
+attacker) leaves no per-request evidence, but the tunnel gate sees its tunnels. So the tunnel gate cross-checks: a sandbox that **has** been reporting
+requests and then goes quiet for longer than a threshold (`--tunnel-silence-seconds`, default 600) while still opening tunnels is flagged.
+
+* **Shadow by default.** The flag is recorded (`supervisor-silence-list`, one row per sandbox per five minutes) and the tunnel is carried. Setting the profile's
+  `supervisor_silent` rule to `enforce` refuses such tunnels with the reason "the sandbox's supervisor has stopped reporting requests"; `off` disables it.
+* **Uses Risk Guard's own clock**, never a timestamp the supervisor supplies.
+* **Leaves alone** a sandbox that never reported (its policy may not inspect requests at all) and one that is reporting. Tested for all three, in shadow and in enforce.
+* **What it does not do.** A supervisor that is compromised and keeps sending harmless requests to look alive is not caught: this raises the cost of staying
+  silent, it does not remove the bypass. Treat the flag as evidence of a dormant or broken supervisor, and watch the shadow rows for false positives
+  before enforcing (a sandbox that makes long pauses between model calls can trip a ten-minute threshold).
+
 ## Deployed shape (AKS)
 
 One cluster, two node pools: the Kata node runs the sandboxes (as micro-VMs), the supervisors and Risk Guard; the ordinary pool runs

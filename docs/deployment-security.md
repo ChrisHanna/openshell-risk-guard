@@ -47,6 +47,7 @@ Solid lines are enforced paths. The dotted lines are the two things the design d
 | Can it… | Result | Evidence |
 |---|---|---|
 | Stop asking Risk Guard | **Yes.** Gates 1 and 2 (per-request scoring) depend on the supervisor calling Risk Guard; a supervisor that does not is not scored | stated limit, [architecture](architecture.md) |
+| Stop reporting and keep using the network | Detected, not prevented: the tunnel gate flags a sandbox that reported before and has been quiet for ten minutes while opening tunnels (recorded in shadow; refused if the `supervisor_silent` rule is enforced). A supervisor that keeps sending harmless requests to look alive is not caught | `a_sandbox_whose_supervisor_has_gone_quiet_is_flagged_and_a_healthy_one_is_not` |
 | Reach the internet, metadata, the Kubernetes API, the SPIRE server, or Risk Guard's identity port directly | No, after the Cilium fence (`supervisor-fence.yaml`). Before the fence it could reach all of them | `egress-bypass-before-fence.json` vs `egress-bypass-after-fence.json` |
 | Reach an in-cluster plain-HTTP service directly | **Yes.** A supervisor legitimately forwards the agent's requests to those, so network policy cannot tell it from a bypass. One destructive request reached the destination in the test | the `documented` case in the after-fence report |
 | Send HTTPS traffic out | Only through the tunnel proxy, which asks Risk Guard; refused for unknown sandboxes, quarantined workloads and (when enforcing) unapproved hosts | `svid_listener` tests; `egress_bypass.py` |

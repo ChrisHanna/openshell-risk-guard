@@ -534,10 +534,63 @@ impl SqliteRiskStore {
             )?,
             None => false,
         };
+        let last_decision_ms: Option<i64> = conn.query_row(
+            "SELECT MAX(created_at_ms) FROM decisions WHERE epoch_id = ?1",
+            params![epoch.epoch_id],
+            |row| row.get(0),
+        )?;
         Ok(Some(NetworkState {
             quarantined,
             restricted,
+            last_decision_ms,
         }))
+    }
+
+    /// Note that a sandbox opened a tunnel while its supervisor was silent. At most one row per sandbox every five minutes, so a quiet
+    /// supervisor that opens many tunnels does not turn this into a write on every connection.
+    pub fn record_supervisor_silence(
+        &self,
+        sandbox_id: &str,
+        destination: &str,
+        silent_ms: i64,
+        mode: &str,
+        now_ms: i64,
+    ) -> Result<()> {
+        let mut conn = self.lock_conn()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let recent: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM supervisor_silence_events WHERE sandbox_id = ?1 AND at_ms > ?2)",
+            params![sandbox_id, now_ms - 300_000],
+            |row| row.get(0),
+        )?;
+        if !recent {
+            tx.execute(
+                "INSERT INTO supervisor_silence_events (sandbox_id, destination, silent_ms, mode, at_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![sandbox_id, destination, silent_ms, mode, now_ms],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Tunnels opened by sandboxes whose supervisors had gone quiet, newest first.
+    pub fn list_supervisor_silence(&self, limit: usize) -> Result<serde_json::Value> {
+        let conn = self.lock_read_conn()?;
+        let mut statement = conn.prepare(
+            "SELECT sandbox_id, destination, silent_ms, mode, at_ms FROM supervisor_silence_events ORDER BY at_ms DESC LIMIT ?1",
+        )?;
+        let rows = statement
+            .query_map(params![i64::try_from(limit).unwrap_or(100)], |row| {
+                Ok(serde_json::json!({
+                    "sandbox_id": row.get::<_, String>(0)?,
+                    "destination": row.get::<_, String>(1)?,
+                    "silent_for_ms": row.get::<_, i64>(2)?,
+                    "rule_mode": row.get::<_, String>(3)?,
+                    "at_ms": row.get::<_, i64>(4)?,
+                }))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(serde_json::json!({ "supervisor_silence": rows }))
     }
 
     /// Quarantine a workload: from now on the network path refuses its sandboxes any tunnel. Recorded with who and why.
@@ -991,6 +1044,24 @@ impl RiskStore for SqliteRiskStore {
     fn sandbox_baseline(&self, sandbox_id: &str) -> Result<Option<BaselineProfile>> {
         SqliteRiskStore::sandbox_baseline(self, sandbox_id)
     }
+
+    fn record_supervisor_silence(
+        &self,
+        sandbox_id: &str,
+        destination: &str,
+        silent_ms: i64,
+        mode: &str,
+        now_ms: i64,
+    ) -> Result<()> {
+        SqliteRiskStore::record_supervisor_silence(
+            self,
+            sandbox_id,
+            destination,
+            silent_ms,
+            mode,
+            now_ms,
+        )
+    }
 }
 
 /// Databases created before the identity provider was recorded get the column added in place.
@@ -1036,7 +1107,16 @@ fn ensure_quarantine_tables(conn: &Connection) -> Result<()> {
             operator TEXT NOT NULL,
             reason TEXT NOT NULL,
             at_ms INTEGER NOT NULL
-         )",
+         );
+         CREATE TABLE IF NOT EXISTS supervisor_silence_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sandbox_id TEXT NOT NULL,
+            destination TEXT NOT NULL,
+            silent_ms INTEGER NOT NULL,
+            mode TEXT NOT NULL,
+            at_ms INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_supervisor_silence_sandbox ON supervisor_silence_events (sandbox_id, at_ms)",
     )?;
     Ok(())
 }

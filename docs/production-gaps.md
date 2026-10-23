@@ -18,7 +18,7 @@ what is already in place. Nothing here is hidden elsewhere: this is the list.
 
 | # | Gap | Detail |
 |---|---|---|
-| 7 | A compromised supervisor can stop calling Risk Guard | Per-request scoring then does not happen. The tunnel gate and network fence still limit it, but it can reach in-cluster HTTP services directly |
+| 7 | A compromised supervisor can stop calling Risk Guard | Per-request scoring then does not happen. The tunnel gate flags a sandbox that goes quiet (shadow by default; an attacker who keeps sending harmless requests is not caught), the network fence still limits it, but it can reach in-cluster HTTP services directly |
 | 8 | The tunnel gate sees a destination, not a path | A TLS-intercepting proxy would show paths but would hold the credentials; designed, not built |
 | 9 | Kubernetes administrators are out of scope | They can change anything; only the organisation can address that (RBAC, just-in-time access, audit logs) |
 | 10 | Node pools are not separate trust domains | Security services run on their own nodes, but share one control plane with the sandboxes |

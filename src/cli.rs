@@ -148,6 +148,14 @@ pub enum Commands {
             default_value = "shadow"
         )]
         tunnel_restriction_mode: String,
+        /// How long, in seconds, a sandbox that has been reporting requests may go quiet before its next tunnel is flagged as coming from a
+        /// silent supervisor (recorded, not blocked, unless the profile sets the `supervisor_silent` rule to enforce). 0 turns it off.
+        #[arg(
+            long = "tunnel-silence-seconds",
+            env = "RISK_GUARD_TUNNEL_SILENCE_SECONDS",
+            default_value_t = 600
+        )]
+        tunnel_silence_seconds: u64,
     },
     /// Evaluate one request as the workload that owns an X.509-SVID, against a running SVID listener, and print the decision.
     SvidProbe {
@@ -250,6 +258,13 @@ pub enum Commands {
         /// Replay even if the bundle says its history is incomplete (the result is then a best effort).
         #[arg(long)]
         allow_incomplete: bool,
+    },
+    /// List tunnels opened by sandboxes whose supervisors had gone quiet (the silent-supervisor check), newest first.
+    SupervisorSilenceList {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
     },
     /// List the quarantined workloads.
     WorkloadQuarantineList {
@@ -598,6 +613,7 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             svid_proxy_ids,
             tunnel_pod_namespace,
             tunnel_restriction_mode,
+            tunnel_silence_seconds,
         } => {
             if public_key_pem.is_none() && !allow_insecure_local_test {
                 return Err(RiskGuardError::InvalidArgument(
@@ -754,6 +770,9 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                             )));
                         }
                     });
+                    service = service.with_silence_threshold(std::time::Duration::from_secs(
+                        tunnel_silence_seconds,
+                    ));
                     if let Some(namespace) = &tunnel_pod_namespace {
                         service = service.with_tunnel_resolver(Arc::new(
                             crate::pod_resolver::KubePodResolver::in_cluster(namespace)?,
@@ -1349,6 +1368,10 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                 )))
             }
         }
+
+        Commands::SupervisorSilenceList { db, limit } => Ok(serde_json::to_string_pretty(
+            &SqliteRiskStore::open(&db)?.list_supervisor_silence(limit)?,
+        )?),
 
         Commands::WorkloadQuarantineList { db } => Ok(serde_json::to_string_pretty(
             &SqliteRiskStore::open(&db)?.list_quarantined()?,
