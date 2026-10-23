@@ -17,6 +17,7 @@ spec:
       port: 50061
       targetPort: grpc-extension
 __SVID_SERVICE_PORT__
+__SIGNALS_SERVICE_PORT__
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -166,10 +167,12 @@ __SVID_POD_SPEC__
             # gateway authenticated. OpenShell's unauthenticated local-dev user is never accepted.
             - --workload-from-principal
 __SVID_ARGS__
+__SIGNALS_ARGS__
           ports:
             - name: grpc-extension
               containerPort: 50061
 __SVID_CONTAINER_PORT__
+__SIGNALS_CONTAINER_PORT__
           # Kubernetes' built-in gRPC probe cannot speak TLS and this listener is TLS-only, so the probe is the
           # binary itself: `health-check` calls grpc.health.v1 over TLS and succeeds only when the decision
           # store answers (NOT_SERVING means evaluations are already failing closed).
@@ -187,6 +190,7 @@ __SVID_CONTAINER_PORT__
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 3
+__SIGNALS_ENV__
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532

@@ -15,8 +15,8 @@ use crate::error::{Result, RiskGuardError};
 use crate::types::{
     BaselineProfile, BindingAudit, DecisionOutcome, DetectorContext, EnforcementMode, EpochRecord,
     HardeningCandidate, NativeObservationSource, NetworkState, NormalizedRequest,
-    REASON_BEHAVIORAL_RISK_RESTRICTED, RatchetAction, RiskDetector, RiskEvaluation, RiskStore,
-    SandboxBinding, SignalContribution, WindowSnapshot,
+    REASON_BEHAVIORAL_RISK_RESTRICTED, REASON_WORKLOAD_QUARANTINED, RatchetAction, RiskDetector,
+    RiskEvaluation, RiskStore, SandboxBinding, SignalContribution, WindowSnapshot,
 };
 
 mod adaptive;
@@ -24,8 +24,10 @@ mod guardrails;
 mod identity;
 mod operations;
 mod replay;
+mod signals;
 use identity::{AgentIdentity, resolve_identity};
 pub use operations::RestrictionTarget;
+pub use signals::{SignalOutcome, SignalPolicy, SignalRequest};
 
 const INITIAL_MIGRATION_SQL: &str = include_str!("../../migrations/0001_initial.sql");
 const AGENT_MIGRATION_SQL: &str = include_str!("../../migrations/0002_agent_identity.sql");
@@ -528,8 +530,8 @@ impl SqliteRiskStore {
         )?;
         let quarantined = match &identity {
             Some(identity) => conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM workload_quarantine WHERE agent_id = ?1)",
-                params![identity.agent_id],
+                "SELECT EXISTS(SELECT 1 FROM workload_quarantine WHERE agent_id = ?1 AND (expires_at_ms IS NULL OR expires_at_ms > ?2))",
+                params![identity.agent_id, now_wall_ms()],
                 |row| row.get(0),
             )?,
             None => false,
@@ -661,15 +663,17 @@ impl SqliteRiskStore {
     pub fn list_quarantined(&self) -> Result<serde_json::Value> {
         let conn = self.lock_read_conn()?;
         let mut stmt = conn.prepare(
-            "SELECT agent_id, reason, operator, quarantined_at_ms FROM workload_quarantine ORDER BY quarantined_at_ms DESC",
+            "SELECT agent_id, reason, operator, quarantined_at_ms, expires_at_ms FROM workload_quarantine
+             WHERE expires_at_ms IS NULL OR expires_at_ms > ?1 ORDER BY quarantined_at_ms DESC",
         )?;
         let rows = stmt
-            .query_map([], |row| {
+            .query_map(params![now_wall_ms()], |row| {
                 Ok(serde_json::json!({
                     "agent_id": row.get::<_, String>(0)?,
                     "reason": row.get::<_, String>(1)?,
                     "operator": row.get::<_, String>(2)?,
                     "quarantined_at_ms": row.get::<_, i64>(3)?,
+                    "expires_at_ms": row.get::<_, Option<i64>>(4)?,
                 }))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -1092,6 +1096,13 @@ fn sandbox_spiffe_trust_domain_from_env() -> Option<String> {
 }
 
 /// Workloads an operator has quarantined (their sandboxes get no network tunnels), and the audit of who did what and why.
+/// Wall-clock milliseconds, for expiries that are read outside a decision.
+pub(crate) fn now_wall_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
 fn ensure_quarantine_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS workload_quarantine (
@@ -1116,8 +1127,36 @@ fn ensure_quarantine_tables(conn: &Connection) -> Result<()> {
             mode TEXT NOT NULL,
             at_ms INTEGER NOT NULL
          );
-         CREATE INDEX IF NOT EXISTS idx_supervisor_silence_sandbox ON supervisor_silence_events (sandbox_id, at_ms)",
+         CREATE INDEX IF NOT EXISTS idx_supervisor_silence_sandbox ON supervisor_silence_events (sandbox_id, at_ms);
+         CREATE TABLE IF NOT EXISTS siem_signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            signal_id TEXT NOT NULL,
+            received_at_ms INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            alert_id TEXT,
+            agent_id TEXT,
+            sandbox_id TEXT,
+            action TEXT NOT NULL,
+            ttl_seconds INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            expires_at_ms INTEGER
+         );
+         CREATE INDEX IF NOT EXISTS idx_siem_signals_id ON siem_signals (signal_id);
+         CREATE INDEX IF NOT EXISTS idx_siem_signals_time ON siem_signals (received_at_ms)",
     )?;
+    // A quarantine set by a signal expires; one set by an operator does not (NULL). Added to databases created before signals existed.
+    let has_expiry: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('workload_quarantine') WHERE name = 'expires_at_ms')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_expiry {
+        conn.execute(
+            "ALTER TABLE workload_quarantine ADD COLUMN expires_at_ms INTEGER",
+            [],
+        )?;
+    }
     Ok(())
 }
 
@@ -1360,6 +1399,54 @@ impl SqliteRiskStore {
                 epoch_id: epoch.epoch_id,
                 request_id: req.request_id.clone(),
             });
+        }
+
+        // 2b. A quarantined workload gets no request through, at this gate as well as at the network gate. Recorded as a decision like any other.
+        if let Some(identity) = &identity {
+            let quarantined: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM workload_quarantine WHERE agent_id = ?1 AND (expires_at_ms IS NULL OR expires_at_ms > ?2))",
+                params![identity.agent_id, req.timestamp_ms],
+                |row| row.get(0),
+            )?;
+            if quarantined {
+                let state_sequence = epoch.next_sequence;
+                let next_sequence_i64 =
+                    i64::try_from(state_sequence.saturating_add(1)).map_err(|_| {
+                        RiskGuardError::Storage("epoch.next_sequence overflow".to_string())
+                    })?;
+                tx.execute(
+                    "UPDATE epochs SET next_sequence = ?1 WHERE epoch_id = ?2",
+                    params![next_sequence_i64, epoch.epoch_id],
+                )?;
+                let eval = RiskEvaluation {
+                    request_id: req.request_id.clone(),
+                    sandbox_id: req.sandbox_id.clone(),
+                    epoch_id: epoch.epoch_id.clone(),
+                    mode: epoch.mode,
+                    outcome: DecisionOutcome::Deny,
+                    reason_code: REASON_WORKLOAD_QUARANTINED.to_string(),
+                    risk_score: 100,
+                    threshold: 70,
+                    ratchet_action: RatchetAction::None,
+                    signals: vec![SignalContribution {
+                        feature: "quarantine".to_string(),
+                        observed_summary: identity.agent_id.clone(),
+                        baseline_summary: "workload is quarantined".to_string(),
+                        contribution: 100,
+                        support: "workload_quarantine".to_string(),
+                    }],
+                    missing_context: Vec::new(),
+                    baseline_maturity: load_baseline_for_epoch(&tx, &epoch)?.maturity(),
+                    baseline_hash: epoch.baseline_hash.clone(),
+                    detector_version: detector.detector_version().to_string(),
+                    state_sequence,
+                    decision_timestamp_ms: req.timestamp_ms,
+                };
+                insert_decision_row(&tx, &epoch.epoch_id, req, &eval)?;
+                insert_identity(&tx, req, &epoch, Some(identity))?;
+                tx.commit()?;
+                return Ok(eval);
+            }
         }
 
         let saved_guardrails = identity

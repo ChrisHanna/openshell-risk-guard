@@ -39,6 +39,8 @@ pub struct Cli {
 }
 
 /// Supported subcommands for `openshell-risk-guard`.
+// One value is built per process start, so the size of the largest variant (`Serve`, with its many options) costs nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum Commands {
     /// Start the unified SupervisorMiddleware + GatewayInterceptor gRPC server.
@@ -156,6 +158,36 @@ pub enum Commands {
             default_value_t = 600
         )]
         tunnel_silence_seconds: u64,
+        /// Address for the signals listener, through which a SIEM can ask Risk Guard to quarantine a workload for a while (tighten only).
+        /// Off unless given. Needs `--signals-token-file` or the RISK_GUARD_SIGNALS_TOKEN environment variable.
+        #[arg(long = "signals-listen", env = "RISK_GUARD_SIGNALS_LISTEN")]
+        signals_listen: Option<SocketAddr>,
+        /// Absolute path of the provisioned file holding the signals token (64 hex characters, mode 0600). Not the operator token.
+        #[arg(long = "signals-token-file", env = "RISK_GUARD_SIGNALS_TOKEN_FILE")]
+        signals_token_file: Option<PathBuf>,
+        /// Record every signal and answer it, but quarantine nothing. Start here, then turn it off.
+        #[arg(long = "signals-dry-run", env = "RISK_GUARD_SIGNALS_DRY_RUN")]
+        signals_dry_run: bool,
+        /// At most this many signals applied per minute.
+        #[arg(
+            long = "signals-max-per-minute",
+            env = "RISK_GUARD_SIGNALS_MAX_PER_MINUTE",
+            default_value_t = 10
+        )]
+        signals_max_per_minute: u32,
+        /// At most this many workloads held in quarantine by signals at once.
+        #[arg(
+            long = "signals-max-active",
+            env = "RISK_GUARD_SIGNALS_MAX_ACTIVE",
+            default_value_t = 5
+        )]
+        signals_max_active: u32,
+        /// Allow the signals listener off loopback over plain HTTP (fence it with a network policy; see docs/siem-signals.md).
+        #[arg(
+            long = "signals-allow-plaintext",
+            env = "RISK_GUARD_SIGNALS_ALLOW_PLAINTEXT"
+        )]
+        signals_allow_plaintext: bool,
     },
     /// Evaluate one request as the workload that owns an X.509-SVID, against a running SVID listener, and print the decision.
     SvidProbe {
@@ -614,6 +646,12 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             tunnel_pod_namespace,
             tunnel_restriction_mode,
             tunnel_silence_seconds,
+            signals_listen,
+            signals_token_file,
+            signals_dry_run,
+            signals_max_per_minute,
+            signals_max_active,
+            signals_allow_plaintext,
         } => {
             if public_key_pem.is_none() && !allow_insecure_local_test {
                 return Err(RiskGuardError::InvalidArgument(
@@ -692,6 +730,39 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             let detector = Arc::new(InteractionRiskDetector::new_default());
             let hardening = Arc::new(ProverHardeningEngine::new());
             let health = crate::sidecar::HealthServer::new(Arc::clone(&store));
+
+            match (signals_listen, signals_token_file.as_deref()) {
+                (Some(signals_addr), token_file) => {
+                    let policy = crate::store::SignalPolicy {
+                        dry_run: signals_dry_run,
+                        max_per_minute: signals_max_per_minute,
+                        max_active: signals_max_active,
+                        ..Default::default()
+                    };
+                    let state = match token_file {
+                        Some(file) => crate::signals::SignalsState::from_token_file(
+                            Arc::clone(&store),
+                            file,
+                            policy,
+                        )?,
+                        None => crate::signals::SignalsState::from_env(Arc::clone(&store), policy)?,
+                    };
+                    tokio::spawn(async move {
+                        if let Err(error) =
+                            crate::signals::serve(signals_addr, state, signals_allow_plaintext)
+                                .await
+                        {
+                            tracing::error!(%error, "the signals listener stopped");
+                        }
+                    });
+                }
+                (None, None) => {}
+                (None, Some(_)) => {
+                    return Err(RiskGuardError::InvalidArgument(
+                        "--signals-token-file has no effect without --signals-listen".into(),
+                    ));
+                }
+            }
 
             // Decision time is accumulated in memory and flushed to SQLite every 30 seconds, off the request path.
             let latency = Arc::new(crate::latency::LatencyRecorder::default());

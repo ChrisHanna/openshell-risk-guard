@@ -223,7 +223,73 @@ def install_report():
     return name, "created" if "created" in out else "NOT created: " + out[:200]
 
 
+SIGNALS_URL = "http://risk-guard.openshell.svc.cluster.local:50063/v1/signals"
+CHANNEL = "risk-guard-signals"
+SIGNAL_MONITOR = "Repeated refusals: 3 or more in 5 minutes, per sandbox (asks Risk Guard to quarantine)"
+
+
+def signals_token():
+    out = subprocess.run(["kubectl", "get", "secret", "siem-signals-token", "-n", "openshell", "-o", "jsonpath={.data.token}"],
+                         capture_output=True)
+    import base64
+    token = base64.b64decode(out.stdout).decode().strip()
+    if len(token) != 64:
+        raise SystemExit("Secret siem-signals-token not found; run scripts/aks/25-enable-signals.ps1 first.")
+    return token
+
+
+def install_signals():
+    """The webhook channel that carries a signal to Risk Guard, and the alert that sends one. The token goes straight from the Secret into
+    OpenSearch's (admin-only) notification settings and is never printed."""
+    found = opensearch("GET", f"/_plugins/_notifications/configs?config_type=webhook&text_query={CHANNEL}")
+    configs = found.get("config_list") or []
+    channel_body = {"config": {"name": CHANNEL, "description": "Asks Risk Guard to quarantine a workload for a while (tighten only).",
+                               "config_type": "webhook", "is_enabled": True,
+                               "webhook": {"url": SIGNALS_URL, "header_params": {"Content-Type": "application/json",
+                                                                                 "Authorization": "Bearer " + signals_token()}}}}
+    if configs:
+        channel_id = configs[0]["config_id"]
+        opensearch("PUT", f"/_plugins/_notifications/configs/{channel_id}", channel_body)
+        print(f"webhook channel '{CHANNEL}': updated")
+    else:
+        created = opensearch("POST", "/_plugins/_notifications/configs", channel_body)
+        channel_id = created.get("config_id")
+        if not channel_id:
+            raise SystemExit("channel NOT created: " + json.dumps(created)[:300])
+        print(f"webhook channel '{CHANNEL}': created")
+
+    message = json.dumps({
+        "signal_id": "opensearch-{{ctx.alert.id}}", "source": "opensearch-alerting", "alert_id": "{{ctx.alert.id}}",
+        "sandbox_id": "{{ctx.alert.agg_alert_content.bucket_keys}}", "action": "quarantine", "ttl_seconds": 600,
+        "reason": "three or more Risk Guard refusals for one sandbox in five minutes"})
+    body = {"type": "monitor", "name": SIGNAL_MONITOR, "monitor_type": "bucket_level_monitor", "enabled": True,
+            "schedule": {"period": {"interval": 1, "unit": "MINUTES"}},
+            "inputs": [{"search": {"indices": [INDEX], "query": {"size": 0, "query": {"bool": {"filter": [
+                {"wildcard": {"status_detail.keyword": "middleware_denied*"}},
+                {"range": {"time": {"gte": "{{period_end}}||-5m", "lte": "{{period_end}}", "format": "epoch_millis"}}}]}},
+                "aggregations": {"composite_agg": {"composite": {"sources": [{"sandbox": {"terms": {"field": "container.uid.keyword"}}}]}}}}}}],
+            "triggers": [{"bucket_level_trigger": {
+                "name": "A sandbox keeps being refused", "severity": "1",
+                "condition": {"buckets_path": {"_count": "_count"}, "parent_bucket_path": "composite_agg",
+                              "script": {"source": "params._count >= 3", "lang": "painless"}},
+                "actions": [{"name": "Ask Risk Guard to quarantine", "destination_id": channel_id,
+                             "subject_template": {"source": "Risk Guard signal", "lang": "mustache"},
+                             "message_template": {"source": message, "lang": "mustache"},
+                             "action_execution_policy": {"action_execution_scope": {"per_alert": {"actionable_alerts": ["NEW"]}}}}]}}]}
+    existing = opensearch("POST", "/_plugins/_alerting/monitors/_search", {"query": {"match_phrase": {"monitor.name": "Repeated refusals"}}})
+    hits = (existing.get("hits") or {}).get("hits") or []
+    if hits:
+        result = opensearch("PUT", f"/_plugins/_alerting/monitors/{hits[0]['_id']}", body)
+        print("alert monitor: updated" if "_id" in result else "alert monitor NOT updated: " + json.dumps(result)[:300])
+    else:
+        result = opensearch("POST", "/_plugins/_alerting/monitors", body)
+        print("alert monitor: created" if "_id" in result else "alert monitor NOT created: " + json.dumps(result)[:300])
+
+
 def main():
+    if "--signals" in sys.argv:
+        install_signals()
+        return
     imported = dashboards_import("\n".join(json.dumps(o) for o in build_objects()) + "\n")
     errors = imported.get("errors") or []
     print(f"dashboard objects: {imported.get('successCount', 0)} imported, {len(errors)} errors")

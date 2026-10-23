@@ -21,6 +21,9 @@ pub const REASON_BEHAVIORAL_RISK_DENIED: &str = "behavioral_risk_denied";
 /// blocks a subsequent request on the same scope.
 pub const REASON_BEHAVIORAL_RISK_RESTRICTED: &str = "behavioral_risk_restricted";
 
+/// Stable machine-readable reason code when an operator (or a SIEM signal) has quarantined the workload: every request is refused, whatever it is.
+pub const REASON_WORKLOAD_QUARANTINED: &str = "workload_quarantined";
+
 /// Stable machine-readable reason code for Layer A task-constraint denials.
 pub const REASON_TASK_CONSTRAINT_DENIED: &str = "task_constraint_denied";
 

@@ -127,6 +127,15 @@ impl OperatorControls {
 
     #[cfg(unix)]
     fn from_unix_private_file(path: &Path) -> Result<Self> {
+        Ok(Self::from_token(&read_private_token(path, true)?))
+    }
+}
+
+/// Read a 64-hex-character token from a private file (absolute path, 0600, not a symlink, directory not writable by others).
+/// With `create`, a missing file is created with a fresh random token; without it, a missing file is an error (a provisioned secret).
+#[cfg(unix)]
+pub(crate) fn read_private_token(path: &Path, create: bool) -> Result<String> {
+    {
         if !path.is_absolute() {
             return Err(RiskGuardError::InvalidArgument(
                 "operator token file must be an absolute private runtime path".into(),
@@ -146,15 +155,17 @@ impl OperatorControls {
                     "operator token directory must not be writable by other users".into(),
                 ));
             }
-            let mut options = OpenOptions::new();
-            options.write(true).create_new(true).mode(0o600);
-            match options.open(path) {
-                Ok(mut file) => write_new_token(&mut file)?,
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(error) => {
-                    return Err(RiskGuardError::InvalidArgument(format!(
-                        "cannot create operator token file: {error}"
-                    )));
+            if create {
+                let mut options = OpenOptions::new();
+                options.write(true).create_new(true).mode(0o600);
+                match options.open(path) {
+                    Ok(mut file) => write_new_token(&mut file)?,
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(error) => {
+                        return Err(RiskGuardError::InvalidArgument(format!(
+                            "cannot create operator token file: {error}"
+                        )));
+                    }
                 }
             }
         }
@@ -187,9 +198,11 @@ impl OperatorControls {
                 "operator token file must contain exactly 64 hexadecimal characters".into(),
             ));
         }
-        Ok(Self::from_token(token))
+        Ok(token.to_string())
     }
+}
 
+impl OperatorControls {
     /// Allow a change, and return who is making it for the audit record.
     async fn authorize(&self, headers: &HeaderMap) -> std::result::Result<String, Response> {
         // A signed-in account is the normal path: a bearer token (not a cookie), so no cross-site request can carry it.

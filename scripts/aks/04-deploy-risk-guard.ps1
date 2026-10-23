@@ -154,7 +154,18 @@ if ($Hardened) {
     $taintValue, $taintEffect = $taintRest -split ':', 2
     $svid.podSpec += "`n      nodeSelector:`n        ${labelKey}: ${labelValue}`n      tolerations:`n        - key: ${taintKey}`n          operator: Equal`n          value: ${taintValue}`n          effect: ${taintEffect}"
 }
-$manifest = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/risk-guard.yaml') -Raw).Replace('__IMAGE__', $image).Replace('__CONSOLE_SIGNIN_ARGS__', $signIn).Replace('__SVID_ARGS__', $svid.args).Replace('__SVID_SERVICE_PORT__', $svid.servicePort).Replace('__SVID_CONTAINER_PORT__', $svid.containerPort).Replace('__SVID_MOUNT__', $svid.mount).Replace('__SVID_VOLUME__', $svid.volume).Replace('__SVID_POD_SPEC__', $svid.podSpec).Replace('__CONSOLE_ENV__', $consoleEnv)
+# Signals (25-enable-signals.ps1): a SIEM may ask Risk Guard to quarantine a workload for a while. A separate port with its own token, reached only from the SIEM
+# namespace (see deploy/aks/siem/signals-egress.yaml), and a Secret that arrives as an environment variable.
+$signals = @{ args = ''; servicePort = ''; containerPort = ''; env = '' }
+if (Get-StateValue 'signalsEnabled') {
+    $signals.args = "            - --signals-listen=0.0.0.0:50063`n            - --signals-allow-plaintext"
+    if (Get-StateValue 'signalsDryRun') { $signals.args += "`n            - --signals-dry-run" }
+    $signals.servicePort = "    - name: signals`n      port: 50063`n      targetPort: signals"
+    $signals.containerPort = "            - name: signals`n              containerPort: 50063"
+    $signals.env = "          env:`n            - name: RISK_GUARD_SIGNALS_TOKEN`n              valueFrom:`n                secretKeyRef: {name: siem-signals-token, key: token}"
+    Write-Note "signals listener on :50063 ($(if (Get-StateValue 'signalsDryRun') { 'dry run: records, changes nothing' } else { 'enforcing' }))"
+}
+$manifest = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/risk-guard.yaml') -Raw).Replace('__IMAGE__', $image).Replace('__CONSOLE_SIGNIN_ARGS__', $signIn).Replace('__SVID_ARGS__', $svid.args).Replace('__SVID_SERVICE_PORT__', $svid.servicePort).Replace('__SVID_CONTAINER_PORT__', $svid.containerPort).Replace('__SVID_MOUNT__', $svid.mount).Replace('__SVID_VOLUME__', $svid.volume).Replace('__SVID_POD_SPEC__', $svid.podSpec).Replace('__CONSOLE_ENV__', $consoleEnv).Replace('__SIGNALS_ARGS__', $signals.args).Replace('__SIGNALS_SERVICE_PORT__', $signals.servicePort).Replace('__SIGNALS_CONTAINER_PORT__', $signals.containerPort).Replace('__SIGNALS_ENV__', $signals.env)
 # Pod Security Admission: warn and audit against the Restricted standard, never enforce. SPIRE's node daemons (a privileged CSI driver, an agent with the host PID namespace) and the OpenShell gateway share this namespace and could not be admitted under an enforcing label; the exceptions are listed in deploy/aks/hardening-baseline.json.
 Invoke-Native kubectl @('label', 'namespace', $ns, 'pod-security.kubernetes.io/warn=restricted', 'pod-security.kubernetes.io/audit=restricted', '--overwrite') | Out-Null
 Invoke-KubectlApply $manifest

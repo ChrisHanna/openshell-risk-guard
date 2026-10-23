@@ -134,6 +134,10 @@ separate trust domains.
 ## Quarantine: what is guaranteed, and when
 
 * **New tunnels:** refused immediately once the operator quarantine is written (Risk Guard re-reads it on every check).
+* **Requests through the supervisor middleware (gate 1):** refused as well, with reason code `workload_quarantined`, and recorded as a decision like any other. Until
+  this was added, quarantine held only at the tunnel gate; a quarantined workload's requests that went through OpenShell's own proxy were still scored normally.
+  Test: `a_quarantined_workload_is_refused_at_the_middleware_gate_and_allowed_again_on_release`.
+* **A quarantine set by a signal (see [siem-signals.md](siem-signals.md)) ends by itself** after its time-to-live; an operator's has no end until released.
 * **Tunnels already open:** not cut at that instant. Envoy ends every tunnel after `max_stream_duration` (120 s), so the longest an
   existing connection can outlive a quarantine is 120 s. Measured over two runs: a long-lived connection failed 111.5 s and
   81.4 s after quarantine, depending on when its tunnel had been opened (`conformance/quarantine-tunnel*.json`).

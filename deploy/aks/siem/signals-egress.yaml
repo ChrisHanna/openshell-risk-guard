@@ -1,0 +1,28 @@
+# DEMO ONLY. Lets the SIEM's OpenSearch call Risk Guard's signals port (50063), and fences that port so nothing else in the cluster can.
+# The first policy lets OpenSearch (which sends the alert webhook) out to Risk Guard only. The second restricts Risk Guard's port 50063 to OpenSearch while
+# leaving the ports it already served (50061 gRPC, 50062 SPIFFE, and 8080/8443 for the public console's proxy) open to everyone who could reach them before: a NetworkPolicy that selects a pod isolates
+# it, so the old ports must be listed. Applied by scripts/aks/25-enable-signals.ps1.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: opensearch-to-risk-guard-signals, namespace: siem}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: opensearch}}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: openshell}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: risk-guard}}
+      ports: [{protocol: TCP, port: 50063}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: risk-guard-signals-fence, namespace: openshell}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: risk-guard}}
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{protocol: TCP, port: 50061}, {protocol: TCP, port: 50062}, {protocol: TCP, port: 8080}, {protocol: TCP, port: 8443}]
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: siem}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: opensearch}}
+      ports: [{protocol: TCP, port: 50063}]

@@ -856,6 +856,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_quarantined_workload_is_refused_at_the_middleware_gate_and_allowed_again_on_release()
+    {
+        let (service, issuer, store) = setup_service();
+        store
+            .register_agent("quarantine-agent", "Approved reviewer")
+            .unwrap();
+        store
+            .create_agent_run(
+                "quarantine-agent",
+                "quarantine-run",
+                "revision-1",
+                TEST_TASK_PROFILE,
+                EnforcementMode::Enforce,
+            )
+            .unwrap();
+        store
+            .bind_agent_run("quarantine-run", TEST_SANDBOX_ID, TEST_GATEWAY_ID)
+            .unwrap();
+        let ask = |id: &str| {
+            build_signed_eval_request(
+                &issuer,
+                TEST_SANDBOX_ID,
+                TEST_SANDBOX_ID,
+                id,
+                "GET",
+                "/repos/org/docs-site/issues",
+            )
+        };
+        let before = service
+            .evaluate_http_request(ask("before"))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(before.decision, Decision::Allow as i32);
+
+        store
+            .quarantine_workload("quarantine-agent", "siem", "test", now_unix_ms())
+            .unwrap();
+        let during = service
+            .evaluate_http_request(ask("during"))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(during.decision, Decision::Deny as i32);
+        assert_eq!(
+            during.reason_code,
+            crate::types::REASON_WORKLOAD_QUARANTINED
+        );
+
+        assert!(
+            store
+                .release_workload("quarantine-agent", "siem", "test", now_unix_ms())
+                .unwrap()
+        );
+        let after = service
+            .evaluate_http_request(ask("after"))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(after.decision, Decision::Allow as i32);
+    }
+
+    #[tokio::test]
     async fn evaluate_http_request_allows_benign_denies_cross_repo_delete_and_latches_restriction()
     {
         let (service, issuer, _) = setup_service();

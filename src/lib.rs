@@ -25,6 +25,7 @@ pub mod operator_dashboard;
 pub mod pod_resolver;
 pub mod replay;
 pub mod sidecar;
+pub mod signals;
 pub mod spiffe;
 pub mod store;
 pub mod types;
