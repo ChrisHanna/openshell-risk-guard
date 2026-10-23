@@ -40,6 +40,18 @@ jobs:
         run: cargo build --locked --all-targets
       - name: Test
         run: cargo test --locked --no-fail-fast
+      # The attack catalog (conformance/red-team/catalog.json) replayed against the real decision path. It runs inside `cargo test` too; this step exists to
+      # keep its report and to make a failure here unmistakable. The build fails if an attack that must be refused gets through, if a benign control is
+      # refused, or if a documented gap changes without the documentation.
+      - name: Red-team gate
+        run: RED_TEAM_REPORT="$PWD/red-team-report.json" cargo test --locked --test red_team_gate -- --nocapture
+      - name: Keep the red-team report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: red-team-report
+          path: red-team-report.json
+          if-no-files-found: warn
 
   lint:
     name: Format and clippy
