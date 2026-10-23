@@ -1,0 +1,13 @@
+{
+  "candidate": "tunnel-restriction-mode: shadow -> enforce",
+  "window_hours": 24,
+  "min_span_hours": 24,
+  "min_tunnels_per_agent": 20,
+  "max_silence_minutes": 180,
+  "max_middleware_failures": 3,
+  "require_backup_within_hours": 24,
+  "require_red_team_pass": true,
+  "red_team_max_age_hours": 168,
+  "revert_command": "scripts/aks/18-enable-sandbox-egress.ps1 -RestrictionMode shadow",
+  "reviewed": []
+}

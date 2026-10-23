@@ -45,6 +45,7 @@ if ($Backup -or $DiskSnapshot) {
     Write-Note ("took {0:N1} s; verifying the copy on disk" -f $took)
     Invoke-InPod @('backup-verify', "--file=$data/backups/$name") | Out-Null
     Write-Note 'checksum and integrity check pass'
+    Save-State @{ lastBackupAtMs = [int64][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); lastBackupName = $name }
 }
 
 if ($DiskSnapshot) {

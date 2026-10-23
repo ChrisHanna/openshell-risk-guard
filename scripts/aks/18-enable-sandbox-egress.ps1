@@ -37,6 +37,9 @@ param(
     [ValidateRange(10, 86400)][int]$TunnelMaxSeconds = 120,
     # Close a tunnel idle (no bytes either way) this long. 0 = off (default); a model call can be silent for a minute or more.
     [ValidateRange(0, 86400)][int]$TunnelIdleSeconds = 0,
+    # Moving from shadow to enforce is gated on evidence (scripts/promotion_gate.py: enough traffic observed, nothing unreviewed that would be refused, the control healthy, a recent
+    # backup, the attack catalog passing). If the gate says hold, pass a written reason to go ahead anyway; the reason is recorded in the state file and printed.
+    [string]$OverrideGate,
     [switch]$Remove
 )
 . "$PSScriptRoot/common.ps1"
@@ -73,6 +76,18 @@ if ($Remove) {
     Invoke-Native kubectl @('delete', 'ciliumnetworkpolicy', 'supervisor-egress-fence', '-n', $ns, '--ignore-not-found') -AllowFailure | Out-Null
     Write-Note 'Re-run 04-deploy-risk-guard.ps1 to drop the proxy trust and the pod-reading service account.'
     return
+}
+
+if ($RestrictionMode -eq 'enforce' -and (Get-StateValue 'svidTunnelRestrictionMode' 'shadow') -ne 'enforce') {
+    Write-Step 'Promotion gate: shadow to enforce'
+    python (Join-Path $script:RepoRoot 'scripts/promotion_gate.py')
+    if ($LASTEXITCODE -ne 0) {
+        if (-not $OverrideGate -or $OverrideGate.Trim().Length -lt 20) {
+            throw 'The promotion gate says HOLD. Fix what it lists, or pass -OverrideGate "<why this is safe, at least 20 characters>" to go ahead; the reason is recorded.'
+        }
+        Write-Host "OVERRIDING THE GATE: $OverrideGate" -ForegroundColor Yellow
+        Save-State @{ promotionGateOverride = $OverrideGate; promotionGateOverrideAt = (Get-Date).ToUniversalTime().ToString('o') }
+    }
 }
 
 Write-Step 'Deploying the sandbox egress proxy'
