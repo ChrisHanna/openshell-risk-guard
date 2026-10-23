@@ -92,6 +92,28 @@ Events from other sandboxes (for example a fleet agent's `POST /v1/chat/completi
 Known rough edges, to fix next: the single-node index shows yellow (no replica is possible), `time` and `class_uid` are stored as floating-point numbers (parsed from JSON) rather than as a date
 and integers, and the field `status_detail` is analysed as text, so exact-match queries need its `.keyword` form. These matter before a Security Analytics rule is written on top.
 
+### Public access for the demo (`24-expose-siem.ps1`)
+
+For the interview the Dashboards can be published on the internet: nginx terminating HTTPS with a Let's Encrypt certificate (the same pattern as the Risk Guard console),
+a rate-limited sign-in (six attempts a minute per address after a small burst), and two accounts. The hostname is not recorded in this repository.
+
+| Account | What it can do | Checked from outside |
+|---|---|---|
+| `admin` | everything | logs in |
+| `viewer` (for interviewers) | read the `ocsf-*` indices and use Discover and dashboards | logs in; reading works; writing an index, reading the security API and listing other indices are refused; a wrong password gets 401 |
+
+Both passwords are generated into Secrets and never printed or committed. **This is a deliberate demo exposure, accepted by the owner of this subscription:**
+
+* The address is public from the moment the certificate is issued (certificate-transparency logs advertise it). Internet scanners probed it within a minute, and every probe was
+  answered with 401, which is the only protection besides the passwords and the rate limit.
+* The data includes sandbox names, URLs and resource names from the demo agents.
+* There is no second factor and no source-address restriction. Do not leave it up after the demo: `scripts/aks/24-expose-siem.ps1 -Remove` takes the address down,
+  and `scripts/aks/22-deploy-siem.ps1 -Remove` deletes the whole SIEM.
+
+Two problems found and fixed while enabling it: a helper that sent request bodies to OpenSearch through a PowerShell pipe silently failed (the script now stops if the read-only account does
+not exist, before anything is made public), and OpenSearch refused the OCSF `time` as a date because JSON numbers arrive as floating point (the collector now converts `time` and the id
+fields to integers, and an index template maps `time` as a date and sets no replica).
+
 ## What this does not claim
 
 No commercial SIEM has been tested. The statement is: the OCSF output of a real sandbox contains Risk Guard's refusals, verified on this cluster.

@@ -1,0 +1,165 @@
+# DEMO ONLY. A public HTTPS front door for the demo SIEM's Dashboards, built the same way as the Risk Guard console's: nginx terminates TLS and a lego sidecar keeps a
+# Let's Encrypt certificate. Rendered by scripts/aks/24-expose-siem.ps1, which fills __FQDN__, __DNS_LABEL__, __ACME_EMAIL__, __ACME_SERVER__, __NGINX_IMAGE__ and
+# __LEGO_IMAGE__. Access is by OpenSearch login only (an admin account, and a read-only `viewer`), so this is as strong as those passwords plus the rate limit below.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: siem-edge, namespace: siem}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: siem-acme, namespace: siem}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 1Gi}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: siem-edge-nginx, namespace: siem}
+data:
+  nginx.conf: |
+    pid /tmp/nginx.pid;
+    error_log /dev/stderr warn;
+    events { worker_connections 512; }
+    http {
+      access_log /dev/stdout;
+      client_body_temp_path /tmp/client_body;
+      proxy_temp_path /tmp/proxy;
+      fastcgi_temp_path /tmp/fastcgi;
+      uwsgi_temp_path /tmp/uwsgi;
+      scgi_temp_path /tmp/scgi;
+      server_tokens off;
+      limit_req_zone $binary_remote_addr zone=general:10m rate=30r/s;
+      # Password guessing: six sign-in attempts a minute per address, after a small burst.
+      limit_req_zone $binary_remote_addr zone=login:1m rate=6r/m;
+      map $server_name $siem_cert { default /acme/live/tls.crt; }
+      map $server_name $siem_key { default /acme/live/tls.key; }
+      server {
+        listen 8080;
+        location /.well-known/acme-challenge/ { root /acme/webroot; default_type text/plain; }
+        location / { return 301 https://__FQDN__$request_uri; }
+      }
+      server {
+        listen 8443 ssl;
+        ssl_certificate $siem_cert;
+        ssl_certificate_key $siem_key;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-Frame-Options SAMEORIGIN always;
+        add_header Referrer-Policy no-referrer always;
+        limit_req zone=general burst=60 nodelay;
+        client_max_body_size 5m;
+        location = /auth/login {
+          limit_req zone=login burst=5 nodelay;
+          proxy_pass http://dashboards-opensearch-dashboards.siem.svc.cluster.local:5601;
+          proxy_set_header Host $host;
+          proxy_set_header X-Forwarded-Proto https;
+          proxy_set_header X-Forwarded-For $remote_addr;
+          proxy_http_version 1.1;
+        }
+        location / {
+          proxy_pass http://dashboards-opensearch-dashboards.siem.svc.cluster.local:5601;
+          proxy_set_header Host $host;
+          proxy_set_header X-Forwarded-Proto https;
+          proxy_set_header X-Forwarded-For $remote_addr;
+          proxy_http_version 1.1;
+          proxy_read_timeout 120s;
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: siem-edge, namespace: siem}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app.kubernetes.io/name: siem-edge}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: siem-edge}}
+    spec:
+      serviceAccountName: siem-edge
+      automountServiceAccountToken: false
+      nodeSelector: {workload-class: siem}
+      tolerations:
+        - {key: workload-class, operator: Equal, value: siem, effect: NoSchedule}
+      securityContext: {fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: nginx
+          image: __NGINX_IMAGE__
+          command: ["nginx", "-g", "daemon off;", "-c", "/etc/siem-edge/nginx.conf"]
+          ports: [{name: http, containerPort: 8080}, {name: https, containerPort: 8443}]
+          readinessProbe: {tcpSocket: {port: http}, periodSeconds: 10}
+          securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, readOnlyRootFilesystem: true, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          resources: {requests: {cpu: 25m, memory: 32Mi}, limits: {memory: 128Mi}}
+          volumeMounts:
+            - {name: conf, mountPath: /etc/siem-edge, readOnly: true}
+            - {name: acme, mountPath: /acme, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+        - name: acme
+          image: __LEGO_IMAGE__
+          command: ["/bin/sh", "/etc/console-acme/console-acme.sh"]
+          env:
+            - {name: DOMAIN, value: "__FQDN__"}
+            - {name: EMAIL, value: "__ACME_EMAIL__"}
+            - {name: ACME_SERVER, value: "__ACME_SERVER__"}
+          securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, readOnlyRootFilesystem: true, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {memory: 128Mi}}
+          volumeMounts:
+            - {name: acme-script, mountPath: /etc/console-acme, readOnly: true}
+            - {name: acme, mountPath: /acme}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: conf, configMap: {name: siem-edge-nginx}}
+        - {name: acme-script, configMap: {name: siem-edge-acme}}
+        - {name: acme, persistentVolumeClaim: {claimName: siem-acme}}
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: siem-edge
+  namespace: siem
+  annotations: {service.beta.kubernetes.io/azure-dns-label-name: "__DNS_LABEL__"}
+spec:
+  type: LoadBalancer
+  # Local keeps the visitor's address, so the rate limit counts real addresses. Port 80 must be open for Let's Encrypt to validate the name.
+  externalTrafficPolicy: Local
+  selector: {app.kubernetes.io/name: siem-edge}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+    - {name: https, port: 443, targetPort: https}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: edge-ingress, namespace: siem}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: siem-edge}}
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{protocol: TCP, port: 8080}, {protocol: TCP, port: 8443}]
+---
+# The edge reaches Dashboards, and the internet on 443 (Let's Encrypt), but not the cluster's private ranges or the cloud metadata address.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: edge-egress, namespace: siem}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: siem-edge}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: opensearch-dashboards}}}]
+      ports: [{protocol: TCP, port: 5601}]
+    - to:
+        - ipBlock: {cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.169.254/32]}
+      ports: [{protocol: TCP, port: 443}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: dashboards-ingress, namespace: siem}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: opensearch-dashboards}}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app.kubernetes.io/name: siem-edge}}}]
+      ports: [{protocol: TCP, port: 5601}]

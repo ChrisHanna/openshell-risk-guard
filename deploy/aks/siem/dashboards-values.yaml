@@ -15,6 +15,8 @@ config:
     server.host: "0.0.0.0"
     opensearch.hosts: ["https://opensearch-cluster-master:9200"]
     opensearch.ssl.verificationMode: none
+    # Served to browsers over HTTPS by the public front door (scripts/aks/24-expose-siem.ps1), so the sign-in cookie is marked secure.
+    opensearch_security.cookie.secure: true
 
 resources:
   requests: {cpu: 250m, memory: 512Mi}

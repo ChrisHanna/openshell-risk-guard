@@ -45,6 +45,11 @@ config:
         - context: log
           statements:
             - set(body, ParseJSON(body)) where IsString(body)
+            # JSON numbers parse as floating point (1.79E12), which a date field refuses and an integer field only tolerates. Turn the ones OpenSearch maps back into integers.
+            - set(body["time"], Int(body["time"])) where IsMap(body) and IsDouble(body["time"])
+            - set(body["class_uid"], Int(body["class_uid"])) where IsMap(body) and IsDouble(body["class_uid"])
+            - set(body["severity_id"], Int(body["severity_id"])) where IsMap(body) and IsDouble(body["severity_id"])
+            - set(body["activity_id"], Int(body["activity_id"])) where IsMap(body) and IsDouble(body["activity_id"])
     batch: {}
   exporters:
     opensearch:
