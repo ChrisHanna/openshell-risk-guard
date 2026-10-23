@@ -557,6 +557,15 @@ pub(crate) fn routes() -> Router<Arc<SqliteRiskStore>> {
                 }
             },
         ))
+        .route("/api/controls", get(
+            |State(store): State<Arc<SqliteRiskStore>>| async move {
+                match tokio::task::spawn_blocking(move || store.controls_overview(now_ms())).await {
+                    Ok(Ok(view)) => Json(view).into_response(),
+                    Ok(Err(error)) => error_response(error),
+                    Err(error) => error_response(RiskGuardError::Internal(error.to_string())),
+                }
+            },
+        ))
         .route("/api/baseline-suggestions", get(
             |State(store): State<Arc<SqliteRiskStore>>| async move {
                 let now = now_ms();

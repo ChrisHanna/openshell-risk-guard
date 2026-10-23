@@ -1336,6 +1336,26 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
 .appr-error { color: var(--crit); font-size: 13px; margin-top: 6px; }
 .appr-status { display: inline-block; padding: 1px 8px; border: 1px solid var(--border); border-radius: 10px; font-size: 12px; }
 .appr-pick { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: 13px; }
+
+.ctl-lead { border: 1px solid var(--ok-border); background: var(--ok-bg); border-radius: 8px; padding: 12px 14px; margin: 14px 0 0; font-size: 14px; }
+.ctl-flow { display: flex; gap: 8px; flex-wrap: wrap; align-items: stretch; margin: 14px 0 0; }
+.ctl-step { flex: 1 1 190px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-code); padding: 10px 12px; font-size: 13px; }
+.ctl-step strong { display: block; margin-bottom: 4px; font-size: 13px; }
+.ctl-group { margin: 22px 0 0; }
+.ctl-group h2 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+.ctl-group > p { margin: 0 0 8px; color: var(--text-secondary); font-size: 13px; }
+.ctl-row { display: grid; grid-template-columns: minmax(220px, 2fr) 120px minmax(160px, 1.3fr) minmax(200px, 1.6fr); gap: 14px; align-items: start; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-code); padding: 12px 14px; margin: 0 0 8px; }
+.ctl-name { font-weight: 600; }
+.ctl-what, .ctl-evidence, .ctl-data { font-size: 13px; color: var(--text-secondary); }
+.ctl-badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 12px; font-weight: 600; border: 1px solid var(--border); }
+.ctl-badge.enforcing { color: var(--ok-text); background: var(--ok-bg); border-color: var(--ok-border); }
+.ctl-badge.watching, .ctl-badge.mixed { color: var(--warn-text); background: var(--warn-bg); border-color: var(--warn-border); }
+.ctl-badge.off, .ctl-badge.no_list, .ctl-badge.not_built, .ctl-badge.unknown { color: var(--text-muted); }
+.ctl-state-not_enough_data { color: var(--warn-text); font-weight: 600; }
+.ctl-state-not_built { color: var(--text-muted); font-weight: 600; }
+.ctl-profiles { margin: 6px 0 0; padding: 0; list-style: none; font-size: 12px; }
+.ctl-legend { display: flex; gap: 14px; flex-wrap: wrap; margin: 14px 0 0; font-size: 13px; color: var(--text-secondary); }
+@media (max-width: 900px) { .ctl-row { grid-template-columns: 1fr; gap: 6px; } }
 </style>
 </head>
 <body class="signed-out">
@@ -1383,6 +1403,12 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
           <span class="nav-item-left">
             <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6M17 15a5 5 0 0 1 4 5"/></svg>
             <span>Workloads</span>
+          </span>
+        </button>
+        <button type="button" class="nav-item" id="nav-controls-btn">
+          <span class="nav-item-left">
+            <svg viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+            <span>Controls</span>
           </span>
         </button>
         <button type="button" class="nav-item" id="nav-how-btn">
@@ -1541,6 +1567,25 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
         <p class="quiet-note" style="margin:10px 14px"><span id="directory-count" role="status"></span></p>
       </section>
       <p class="quiet-note" id="inventory-scope">Recorded totals from the loaded inventory.</p>
+    </main>
+
+    <main class="content-wrap view-hidden" id="controls-view" aria-label="Controls">
+      <div class="page-heading">
+        <div>
+          <h1>Controls</h1>
+          <p class="fleet-verdict">Everything that can stop a call, or advise on one, in one list: where it comes from, whether it is blocking or only watching, what it did in the last day, and whether it has the data it needs.</p>
+        </div>
+      </div>
+      <div class="ctl-lead" id="ctl-lead" role="note"></div>
+      <div class="ctl-flow" aria-label="How a call is checked">
+        <div class="ctl-step"><strong>1. OpenShell policy</strong>Refuses what the policy does not allow. This is the floor and needs no learning.</div>
+        <div class="ctl-step"><strong>2. Rules a person set</strong>Deny list and approved lists. They do not learn. Each is enforcing or watching.</div>
+        <div class="ctl-step"><strong>3. Learned behavior</strong>Scores how unusual a call is. It cannot refuse until a task profile has learned enough.</div>
+        <div class="ctl-step"><strong>4. People and the SIEM</strong>A quarantine stops a workload. The SIEM can only ask for one, never loosen anything.</div>
+      </div>
+      <div class="ctl-legend" id="ctl-legend"></div>
+      <div id="ctl-groups"></div>
+      <p class="quiet-note" id="ctl-foot" style="margin-top:16px"></p>
     </main>
 
     <main class="content-wrap view-hidden" id="approvals-view" aria-label="Approvals">
@@ -2930,12 +2975,14 @@ function switchMainView(view, scrollToTop = false) {
   activeTopView = view;
   $("nav-fleet-btn").classList.toggle("active", view === "fleet");
   $("nav-directory-btn").classList.toggle("active", view === "directory" || view === "agent");
+  $("nav-controls-btn").classList.toggle("active", view === "controls");
   $("nav-approvals-btn").classList.toggle("active", view === "approvals");
   $("nav-how-btn").classList.toggle("active", view === "how");
   $("nav-agent-btn").classList.toggle("active", view === "agent");
   for (const [id, isCurrent] of [
     ["nav-fleet-btn", view === "fleet"],
     ["nav-directory-btn", view === "directory"],
+    ["nav-controls-btn", view === "controls"],
     ["nav-approvals-btn", view === "approvals"],
     ["nav-how-btn", view === "how"],
     ["nav-agent-btn", view === "agent"]
@@ -2944,16 +2991,19 @@ function switchMainView(view, scrollToTop = false) {
     else $(id).removeAttribute("aria-current");
   }
   $("nav-agent-lbl").textContent = view === "fleet" || view === "directory" ? "Fleet overview"
-    : view === "approvals" ? "Approvals"
+    : view === "controls" ? "Controls"
+          : view === "approvals" ? "Approvals"
           : view === "how" ? "How it works"
       : (currentAgentData?.agent ? agentName(currentAgentData.agent) || currentAgentData.agent.agent_id : "Agent workspace");
   // "directory" is the workloads section of the Fleet page, so it shows that page and scrolls to the section.
   $("fleet-view").classList.toggle("view-hidden", view !== "fleet" && view !== "directory");
+  $("controls-view").classList.toggle("view-hidden", view !== "controls");
   $("approvals-view").classList.toggle("view-hidden", view !== "approvals");
   $("how-view").classList.toggle("view-hidden", view !== "how");
   $("agent-detail").classList.toggle("view-hidden", view !== "agent");
   $("agent-detail").hidden = view !== "agent" || !currentAgentData;
   if (view === "agent") switchAgentSubTab(activeAgentTab);
+  if (view === "controls") void loadControls();
   if (view === "approvals") void loadApprovals();
   if (view === "how") { renderHowLive(); if (cachedStateData) void loadHowExample(cachedStateData); }
   if (view === "directory") $("directory-section").scrollIntoView({ block: "start", behavior: "instant" });
@@ -2993,7 +3043,7 @@ function openAuditModal(contextLabel) {
   }
   modal.hidden = false;
   document.body.style.overflow = "hidden";
-  for (const id of ["fleet-view", "how-view", "approvals-view", "agent-detail", "agent-loading"]) $(id).inert = true;
+  for (const id of ["fleet-view", "how-view", "controls-view", "approvals-view", "agent-detail", "agent-loading"]) $(id).inert = true;
   document.querySelector(".top-header").inert = true;
   document.querySelector(".sidebar").inert = true;
   if (isOpening) $("close-audit-modal-btn").focus();
@@ -3002,7 +3052,7 @@ function openAuditModal(contextLabel) {
 function closeAuditModal() {
   $("audit-modal").hidden = true;
   document.body.style.overflow = "";
-  for (const id of ["fleet-view", "how-view", "approvals-view", "agent-detail", "agent-loading"]) $(id).inert = false;
+  for (const id of ["fleet-view", "how-view", "controls-view", "approvals-view", "agent-detail", "agent-loading"]) $(id).inert = false;
   document.querySelector(".top-header").inert = false;
   document.querySelector(".sidebar").inert = false;
   if (selected?.kind === "sandbox") {
@@ -7530,6 +7580,69 @@ async function loadApprovals() {
   }
 }
 
+
+// ---- Controls: every control in the same words ----------------------------------------------------------------------------------------------------------------
+const CTL_GROUPS = [
+  ["openshell", "The floor: OpenShell", "Enforced by OpenShell itself, before Risk Guard sees the call. It does not depend on any learning."],
+  ["rule", "Rules a person set", "They match lists that people approved. They do not learn. Each is enforcing (blocks) or watching (records what it would block)."],
+  ["learned", "Learned behavior", "These need history. Until a task profile has enough, they only watch, and the rules and OpenShell's policy above are what protect it."],
+  ["people", "People and the SIEM", "Quarantine stops a workload. The SIEM can only ask for one; it can never loosen anything."]
+];
+const CTL_MODE_LABEL = { enforcing: "Enforcing", watching: "Watching", off: "Off", mixed: "Mixed", no_list: "No list set", not_built: "Not built", unknown: "Unknown" };
+const CTL_MODE_ORDER = ["enforcing", "watching", "off", "mixed", "no_list", "not_built", "unknown"];
+const CTL_STATE_LABEL = { ok: "Has what it needs", not_enough_data: "Not enough data yet", not_applicable: "Nothing to match yet", not_built: "Not built yet" };
+
+function ctlEvidence(e) {
+  const parts = [];
+  const add = (key, label) => { if (e[key] !== undefined) parts.push(`${label} ${e[key]}`); };
+  add("refused_24h", "refused"); add("would_refuse_24h", "would have refused"); add("scored_but_not_enforceable_24h", "scored but too early to enforce");
+  add("seen_24h", "seen"); add("received_24h", "received"); add("applied_24h", "applied"); add("dry_run_24h", "recorded only");
+  add("quarantined_now", "quarantined now");
+  if (e.calls_24h !== undefined) parts.push(`of ${e.calls_24h} calls`);
+  let text = parts.join(", ");
+  if (e.note) text = text ? `${text}. ${e.note}` : e.note;
+  return text || "Nothing recorded in the last day.";
+}
+
+function ctlRow(c) {
+  const badge = apprEl("span", { class: `ctl-badge ${c.mode}`, text: CTL_MODE_LABEL[c.mode] || c.mode });
+  const nameCell = apprEl("div", {}, apprEl("div", { class: "ctl-name", text: c.name }), apprEl("div", { class: "ctl-what", text: c.what }));
+  const profiles = (c.profiles || []);
+  if (profiles.length) {
+    const list = apprEl("ul", { class: "ctl-profiles" }, profiles.map(p => {
+      const text = p.state !== undefined ? `${p.task_profile}: ${CTL_MODE_LABEL[p.state] || p.state}` : `${p.task_profile}: ${p.sessions} sessions, ${p.requests} requests — ${p.enough ? "enough" : "not enough yet"}`;
+      return apprEl("li", { text });
+    }));
+    nameCell.append(apprEl("details", {}, apprEl("summary", { class: "ctl-what", text: `By task profile (${profiles.length})` }), list));
+  }
+  const data = apprEl("div", { class: "ctl-data" }, apprEl("div", { class: `ctl-state-${c.data.state}`, text: CTL_STATE_LABEL[c.data.state] || c.data.state }), apprEl("div", { text: c.data.note }));
+  return apprEl("div", { class: "ctl-row" }, nameCell, apprEl("div", {}, badge), apprEl("div", { class: "ctl-evidence", text: ctlEvidence(c.evidence || {}) }), data);
+}
+
+async function loadControls() {
+  try {
+    const view = await guardrailJson("/api/controls");
+    const list = view.controls || [];
+    const learned = list.find(c => c.id === "behavioral_score");
+    const short = learned && learned.data.state !== "ok";
+    $("ctl-lead").textContent = short
+      ? "Right now: OpenShell's policy and the lists people approved are doing the protecting. The learned controls say below how much data they still need, and until they have it they only watch."
+      : "Learned controls have enough data for every task profile. They still start in watching mode until someone promotes them.";
+    $("ctl-legend").replaceChildren(...CTL_MODE_ORDER.filter(key => (view.vocabulary || {})[key]).map(key => [key, view.vocabulary[key]]).map(([key, text]) =>
+      apprEl("span", {}, apprEl("span", { class: `ctl-badge ${key}`, text: CTL_MODE_LABEL[key] || key }), ` ${text}`)));
+    const groupOf = c => (c.source === "operator" || c.source === "siem") ? "people" : c.source;
+    $("ctl-groups").replaceChildren(...CTL_GROUPS.map(([key, title, blurb]) => {
+      const rows = list.filter(c => groupOf(c) === key);
+      return apprEl("section", { class: "ctl-group" }, apprEl("h2", { text: title }), apprEl("p", { text: blurb }), rows.map(ctlRow));
+    }));
+    $("ctl-foot").textContent = `Counts are for the last ${view.window_hours} hours (${view.calls_24h} calls checked, ${view.profiles} task profiles). Updated ${new Date(view.generated_at_ms).toLocaleTimeString()}.`;
+  } catch (e) {
+    $("ctl-groups").replaceChildren(apprEl("div", { class: "appr-error", text: e.message }));
+  }
+}
+
+$("nav-controls-btn").addEventListener("click", () => switchMainView("controls", true));
+setInterval(() => { if (!document.hidden && activeTopView === "controls") void loadControls(); }, 30000);
 $("nav-approvals-btn").addEventListener("click", () => switchMainView("approvals", true));
 setInterval(() => { if (!document.hidden && activeTopView === "approvals") void loadApprovals(); }, 30000);
 $("nav-how-btn").addEventListener("click", () => switchMainView("how", true));

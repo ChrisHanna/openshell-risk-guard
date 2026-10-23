@@ -21,6 +21,7 @@ use crate::types::{
 
 mod adaptive;
 mod changes;
+mod controls;
 mod guardrails;
 mod identity;
 mod operations;

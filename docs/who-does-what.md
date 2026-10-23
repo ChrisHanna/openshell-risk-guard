@@ -7,6 +7,22 @@ SPDX-License-Identifier: Apache-2.0
 
 Three systems and some people. This page answers four questions about them and nothing else. For the loop they form, see [the story](the-story.md); for detail, [how it works](how-it-works.md).
 
+**The console has one page for this: Controls.** It lists every control below in the same words, with what each did in the last 24 hours, and says plainly when a control does not have the data it needs. Until Risk Guard has learned enough, OpenShell's policy and the lists people approved are what protect an agent, and the page says so.
+
+The words used everywhere (the code and older pages say "shadow" for what the console now calls **watching**):
+
+| Word | Meaning |
+|---|---|
+| **Enforcing** | Blocks the call. |
+| **Watching** | Works out its answer, records it, lets the call through. |
+| **Off** | Does nothing. |
+| **Mixed** | Enforcing for some task profiles, watching or off for others. |
+| **No list set** | A rule with nothing to match yet, because no list was approved. An empty list never means "block everything". |
+| **Not built** | In the design, not in the product. |
+| **Unknown** | No running Risk Guard has recorded how it was started, so the mode cannot be shown. |
+
+A learned control needs history before it can enforce: a task profile counts as having learned enough after 20 sessions and 200 requests. Before that, the behavioral score is recorded and never refuses on rarity alone.
+
 The rule to hold on to: **only OpenShell, Risk Guard and the network fence can stop a call. OpenSearch can only watch, alert, and ask Risk Guard to tighten. Nothing loosens without two people.**
 
 ## 1. What can block a call?

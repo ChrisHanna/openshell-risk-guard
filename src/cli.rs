@@ -802,6 +802,25 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             let store = Arc::new(SqliteRiskStore::open(&db)?);
             let svid_store = Arc::clone(&store) as Arc<dyn RiskStore>;
             store.bind_resource_key(&hmac_key, now_unix_ms())?;
+            store.record_runtime_facts(
+                &[
+                    ("tunnel_restriction_mode", tunnel_restriction_mode.as_str()),
+                    (
+                        "tunnel_gate",
+                        if svid_proxy_ids.is_empty() {
+                            "off"
+                        } else {
+                            "on"
+                        },
+                    ),
+                    (
+                        "signals_listening",
+                        if signals_listen.is_some() { "1" } else { "0" },
+                    ),
+                    ("signals_dry_run", if signals_dry_run { "1" } else { "0" }),
+                ],
+                now_unix_ms(),
+            )?;
             if decision_retention_days > 0 {
                 let retention_store = Arc::clone(&store);
                 let window_ms = i64::from(decision_retention_days) * 86_400_000;

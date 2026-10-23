@@ -4,6 +4,8 @@ This is the technical detail behind [the story](the-story.md), which explains wh
 
 One page that ties the parts together. Each section names the page with the detail. What is measured and what is only designed is stated in each place; the limits are collected at the end.
 
+The console's **Controls** page lists every control with its mode (enforcing, watching, off), what it did in the last 24 hours and whether it has the data it needs; see [who blocks, who recommends](who-does-what.md).
+
 ## 1. The decision path
 
 An agent in an OpenShell sandbox makes a call. Risk Guard can only narrow OpenShell's answer: `FinalAllow = OpenShellAllow ∧ RiskPermit`.
