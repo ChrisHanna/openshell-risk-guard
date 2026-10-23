@@ -103,10 +103,20 @@ TABLE_PARAMS = {"perPage": 10, "showPartialRows": False, "showMetricsAtAllLevels
                 "showTotal": False, "totalFunc": "sum"}
 
 
+def pattern_fields():
+    # Dashboards expects the field list stored with the index pattern; without it, charts say "Could not locate that index-pattern-field".
+    meta = "&".join(f"meta_fields={m}" for m in ("_source", "_id", "_type", "_index", "_score"))
+    out = exec_in_pod(f"curl -s -u admin:$OPENSEARCH_PASSWORD 'http://localhost:5601/api/index_patterns/_fields_for_wildcard?pattern={INDEX}&{meta}'")
+    fields = json.loads(out).get("fields", [])
+    if not fields:
+        raise SystemExit("No fields found for the index; has any event arrived yet?")
+    return fields
+
+
 def build_objects():
     objects = [{
         "id": PATTERN_ID, "type": "index-pattern", "migrationVersion": {"index-pattern": "7.6.0"}, "references": [],
-        "attributes": {"title": INDEX, "timeFieldName": "time"}}]
+        "attributes": {"title": INDEX, "timeFieldName": "time", "fields": json.dumps(pattern_fields())}}]
     objects += [
         saved_search("rg-search-refusals", "Risk Guard refusals", "Every request the risk-guard middleware refused.", REFUSALS),
         saved_search("rg-search-failures", "Middleware failures (failed closed)", "Times a required middleware could not answer, so the request was refused.", FAILURES),
