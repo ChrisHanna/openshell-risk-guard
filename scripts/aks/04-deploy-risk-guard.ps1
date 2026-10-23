@@ -156,20 +156,27 @@ if ($Hardened) {
 }
 # Signals (25-enable-signals.ps1): a SIEM may ask Risk Guard to quarantine a workload for a while. A separate port with its own token, reached only from the SIEM
 # namespace (see deploy/aks/siem/signals-egress.yaml), and a Secret that arrives as an environment variable.
-$signals = @{ args = ''; servicePort = ''; containerPort = ''; env = '' }
+$signals = @{ args = ''; servicePort = ''; containerPort = ''; env = ''; tokenEnv = '' }
 if (Get-StateValue 'signalsEnabled') {
     if ((Get-StateValue 'signalsMtls') -and $svidDomain) {
         # Mutual TLS: only the SIEM forwarder's exact SPIFFE ID may send. No shared secret on this side.
         $signals.args = "            - --signals-listen=0.0.0.0:50063`n            - --signals-allow-spiffe=spiffe://$svidDomain/ns/siem/sa/signal-forwarder"
     } else {
         $signals.args = "            - --signals-listen=0.0.0.0:50063`n            - --signals-allow-plaintext"
-        $signals.env = "          env:`n            - name: RISK_GUARD_SIGNALS_TOKEN`n              valueFrom:`n                secretKeyRef: {name: siem-signals-token, key: token}"
+        $signals.tokenEnv = "            - name: RISK_GUARD_SIGNALS_TOKEN`n              valueFrom:`n                secretKeyRef: {name: siem-signals-token, key: token}"
     }
     if (Get-StateValue 'signalsDryRun') { $signals.args += "`n            - --signals-dry-run" }
     $signals.servicePort = "    - name: signals`n      port: 50063`n      targetPort: signals"
     $signals.containerPort = "            - name: signals`n              containerPort: 50063"
     Write-Note "signals listener on :50063 ($(if ($signals.env) { 'bearer token, plain HTTP' } else { 'mutual TLS, SPIFFE identity' }); $(if (Get-StateValue 'signalsDryRun') { 'dry run: records, changes nothing' } else { 'enforcing' }))"
 }
+# The environment of the risk-guard container: who may bind a sandbox to a workload (set by 13-register-agent-identity.ps1, and recorded in the state so a redeploy keeps it: without it
+# new agent sandboxes are refused with "only an allowlisted operator or user principal may attach a sandbox to a workload ID") and, in token mode, the signals token.
+$envEntries = @()
+$bindingPrincipal = Get-StateValue 'agentBindingPrincipal'
+if ($bindingPrincipal) { $envEntries += "            - name: RISK_GUARD_AGENT_BINDING_PRINCIPALS`n              value: $bindingPrincipal" }
+if ($signals.tokenEnv) { $envEntries += $signals.tokenEnv }
+if ($envEntries.Count) { $signals.env = "          env:`n" + ($envEntries -join "`n") }
 # Risk Guard's own OCSF events (refusals with the workload, score and reason; tunnel refusals; signals) go to the SIEM's collector over OTLP/HTTP.
 if (Get-StateValue 'ocsfExport') {
     $extra = "            - --ocsf-otlp-endpoint=http://otel-collector.siem.svc.cluster.local:4318"

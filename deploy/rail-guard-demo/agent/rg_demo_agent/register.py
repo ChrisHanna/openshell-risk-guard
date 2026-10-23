@@ -192,6 +192,7 @@ for _spec in _SERVICE_TOOLS:
 # ---- Red-team tools --------------------------------------------------------------------------------------------------
 # For the red-team agent (deploy/aks/agents/redteam). It is governed like every other agent: these tools make real requests from inside the sandbox, so Risk Guard decides
 # about each one. Every call is recorded to a file the exercise's runner reads (rg_demo_agent.redteam).
+import asyncio
 import os
 import subprocess
 import tempfile
@@ -216,6 +217,8 @@ async def raw_call(_config: RawCallConfig, _builder: Builder):
         method, url = parsed
         result = _call(method, url)
         redteam.record_call(method, url, str(redteam.status_code(result)), result)
+        # Space the model calls out: the hosted model answers 429 when a reasoning loop calls it back to back, and the toolkit's own retry did not stop that here.
+        await asyncio.sleep(float(os.environ.get("REDTEAM_PACE_SECONDS", "20")))
         return result
 
     yield FunctionInfo.from_fn(
@@ -228,22 +231,22 @@ async def raw_call(_config: RawCallConfig, _builder: Builder):
 class GarakScanConfig(FunctionBaseConfig, name="garak_scan"):
     """Runs a short Garak probe against the agent's own model and summarises how often the model failed."""
 
-    probe: str = "promptinject"
+    probe: str = redteam.GARAK_DEFAULT
 
 
 @register_function(config_type=GarakScanConfig)
 async def garak_scan(config: GarakScanConfig, _builder: Builder):
 
     async def _run(argument: str) -> str:
-        module = (argument.strip().split(".")[0] or config.probe).lower()
-        if module not in redteam.GARAK_PROBES:
-            return "error: choose a probe module from " + ", ".join(sorted(redteam.GARAK_PROBES))
+        module = redteam.choose_probes(argument)
+        if module.startswith("error"):
+            return module
         prefix = os.path.join(tempfile.mkdtemp(prefix="garak-"), "run")
         env = dict(os.environ, NIM_API_KEY=os.environ.get("NVIDIA_API_KEY", ""))
         try:
             subprocess.run(
                 [GARAK_PYTHON, "-m", "garak", "--model_type", "nim", "--model_name", GARAK_MODEL, "--probes", module, "--generations", "1", "--report_prefix", prefix],
-                env=env, capture_output=True, text=True, timeout=900, check=False)
+                env=env, capture_output=True, text=True, timeout=600, check=False)
         except (OSError, subprocess.TimeoutExpired) as error:
             return f"garak did not finish: {error}"
         report = prefix + ".report.jsonl"
@@ -258,5 +261,5 @@ async def garak_scan(config: GarakScanConfig, _builder: Builder):
 
     yield FunctionInfo.from_fn(
         _run,
-        description=("Runs a short Garak scan of the model that powers this agent and reports how often the model did what the attack wanted. Input: a Garak probe module, one of "
-                     + ", ".join(sorted(redteam.GARAK_PROBES)) + ". It tests the model's susceptibility; it does not test the control in front of the services."))
+        description=("Runs a short Garak scan of the model that powers this agent and reports how often the model did what the attack wanted. Input: Garak jailbreak probes, from "
+                     + ", ".join(sorted(redteam.GARAK_PROBES)) + " (comma separated; empty uses a default of three). It tests the model's susceptibility; it does not test the control in front of the services."))

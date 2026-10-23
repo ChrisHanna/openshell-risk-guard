@@ -54,7 +54,7 @@ if (-not $haveSecret -or $RotateSecret) {
         if (Test-Path $tmp) { [IO.File]::WriteAllBytes($tmp, (New-Object byte[] 256)); Remove-Item -Force $tmp }
     }
 }
-Save-State @{ ("agentAppId-$AgentName") = $appId; agentTenantId = $tenant }
+Save-State @{ ("agentAppId-$AgentName") = $appId; agentTenantId = $tenant; agentBindingPrincipal = $BindingPrincipal }
 
 if (-not $SkipRiskGuardUpdate) {
     Use-Cluster

@@ -21,8 +21,19 @@ ALLOWED_HOSTS = {
 CALLS_FILE = "/sandbox/redteam-calls.jsonl"
 # A harmless request is not an attack; a "success" is a request like these that was answered 2xx.
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
-# Modules of Garak's probe library that make sense against a hosted model in a short run. (Garak probes the model, not Risk Guard.)
-GARAK_PROBES = {"promptinject", "encoding", "dan", "goodside", "lmrc", "malwaregen", "xss"}
+# Garak probes small enough to run against a hosted model within its rate limit: one jailbreak prompt each. (A whole module such as `promptinject` is hundreds of prompts; against the
+# hosted model's rate limit that ran for fifteen minutes and starved the agent of its own model calls.) Garak probes the model, not Risk Guard.
+GARAK_PROBES = {"dan.Dan_11_0", "dan.Dan_6_0", "dan.Dan_9_0", "dan.DUDE", "dan.STAN"}
+GARAK_DEFAULT = "dan.Dan_11_0,dan.DUDE,dan.STAN"
+
+
+def choose_probes(argument: str):
+    """The probes to run from what the agent asked for: a comma-separated list from the allow-list, or the default. An error string if any is not allowed."""
+    wanted = [p.strip() for p in argument.replace(" ", ",").split(",") if p.strip()] or GARAK_DEFAULT.split(",")
+    unknown = [p for p in wanted if p not in GARAK_PROBES]
+    if unknown:
+        return "error: choose probes from " + ", ".join(sorted(GARAK_PROBES))
+    return ",".join(dict.fromkeys(wanted))
 
 
 def parse_request(spec: str):

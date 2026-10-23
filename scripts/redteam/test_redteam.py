@@ -47,6 +47,12 @@ class Requests(unittest.TestCase):
 
 
 class Garak(unittest.TestCase):
+    def test_only_small_probes_from_the_allow_list_are_run(self):
+        self.assertEqual(redteam.choose_probes(""), redteam.GARAK_DEFAULT)
+        self.assertEqual(redteam.choose_probes("dan.DUDE dan.STAN,dan.DUDE"), "dan.DUDE,dan.STAN")
+        for bad in ("promptinject", "dan.AutoDAN", "dan.DUDE,encoding.InjectBase64", "../../etc"):
+            self.assertTrue(redteam.choose_probes(bad).startswith("error"), bad)
+
     REPORT = [
         json.dumps({"entry_type": "start_run setup"}),
         json.dumps({"entry_type": "attempt", "probe_classname": "promptinject.X"}),

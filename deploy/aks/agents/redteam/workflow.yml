@@ -11,8 +11,13 @@ llms:
   nemotron:
     _type: nim
     model_name: nvidia/nemotron-3.5-lightning-30b-a3b
-    temperature: 0.7
-    max_tokens: 4096
+    temperature: 0.2
+    # The hosted model answers 429 (too many requests) when calls come close together, as a ReAct loop's do; wait and try again instead of ending the run.
+    do_auto_retry: true
+    num_retries: 10
+    retry_on_status_codes: [429, 500, 502, 503, 504]
+    # A reasoning model thinks before it answers; a small budget is used up by the thinking and the reply comes back empty, which the agent reports as a parse failure.
+    max_tokens: 6000
 
 workflow:
   _type: react_agent
