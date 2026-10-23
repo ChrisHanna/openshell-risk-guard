@@ -48,6 +48,19 @@ operator token, and it cannot do anything the operator token can.
 On the demo cluster, `scripts/aks/25-enable-signals.ps1 -Apply` creates the Secret, opens the port, fences it so only the SIEM's OpenSearch pod can reach it
 (`deploy/aks/siem/signals-egress.yaml`), and creates the webhook channel and the alert in OpenSearch. It starts in **dry run**; `-Enforce` makes it act.
 
+## Mutual TLS with a SPIFFE sender (the deployment that matters)
+
+With SPIRE present, `scripts/aks/25-enable-signals.ps1 -Apply` does not use a token on Risk Guard's side at all:
+
+* Risk Guard serves the signals port over **mutual TLS** (`--signals-allow-spiffe`). The sender must present an X.509-SVID that chains to the SPIRE trust bundle, in an accepted trust domain, and whose SPIFFE ID is on the list (here exactly
+  `spiffe://<trust domain>/ns/siem/sa/signal-forwarder`). The recorded source of every signal is that verified ID, whatever the request body says. No client certificate, an untrusted authority, another trust domain or another ID in the same
+  domain are all refused (`tests/signals_mtls.rs`).
+* OpenSearch's webhook cannot present a certificate, so a small **forwarder** pod (`risk-guard signal-forwarder`, `deploy/aks/siem/signal-forwarder.yaml`) with its own SVID sits in the SIEM namespace. OpenSearch calls it with a token over a network
+  policy that lets only OpenSearch reach it; the forwarder checks the request is a plain `quarantine` and forwards it to Risk Guard as itself (`tests/signal_forwarder.rs`). It reads its SVID from files on every request, so SPIRE's hourly rotation needs no restart.
+* The old Secret on Risk Guard's side is deleted. `-TokenOnly` brings back the bearer-token mode for clusters without SPIRE.
+
+What is still weak: the OpenSearch-to-forwarder hop is a token inside the SIEM namespace, and the forwarder trusts what the alert rule tells it to ask for (within the signals rules). Anyone who controls the SIEM's alert rules can ask for quarantines, up to the limits.
+
 ## Honest limits
 
 * **Plain HTTP with a bearer token** is demonstration-grade. In-cluster it is fenced by a network policy, but a token on the wire can be replayed by anything that can see

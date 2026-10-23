@@ -164,6 +164,20 @@ fn every_attack_in_the_catalog_gets_the_answer_it_is_expected_to_get() {
         .unwrap(),
     )
     .unwrap();
+    // Attacks found by the adaptive red-team agent (scripts/redteam/ingest.py) join the catalog, so a discovered gap is replayed on every build.
+    let mut catalog = catalog;
+    let discovered_path = format!(
+        "{}/conformance/red-team/discovered.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    if let Ok(text) = std::fs::read_to_string(&discovered_path) {
+        let discovered: Value = serde_json::from_str(&text).unwrap();
+        let extra = discovered["attacks"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        catalog["attacks"].as_array_mut().unwrap().extend(extra);
+    }
     let attacks = catalog["attacks"].as_array().unwrap();
 
     let mut results = Vec::new();

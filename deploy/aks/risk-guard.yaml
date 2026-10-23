@@ -148,6 +148,17 @@ __SVID_POD_SPEC__
               memory: 64Mi
           securityContext: *baseline-security
           volumeMounts: *baseline-mounts
+        - name: baseline-import-redteam
+          image: __IMAGE__
+          args: [baseline-import, --db=/var/lib/openshell-risk-guard/risk-guard.db, --profile=/etc/openshell-risk-guard/baseline/redteam.json]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          securityContext: *baseline-security
+          volumeMounts: *baseline-mounts
       containers:
         - name: risk-guard
           image: __IMAGE__

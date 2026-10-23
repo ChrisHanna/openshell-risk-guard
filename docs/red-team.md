@@ -25,6 +25,11 @@ The report says **why** each call was refused. Nearly all are judged (`task_cons
 dot segments (`/services/web/../worker`) are refused because the normalizer rejects the path, not because the call was scored. That is a safe outcome, but it is a different
 claim, and the report keeps them apart.
 
+## More than the catalog
+
+* **Fuzzer** (`tests/red_team_fuzz.rs`): every single-call must-refuse attack is mutated 387 ways; a variant that gets through fails the build unless it is written in `conformance/red-team/fuzz-known.json` with a reason.
+* **Adaptive attacker** (`conformance/red-team/discovered.json`): attacks an LLM agent found are replayed with the catalog. See [red-team-agent.md](red-team-agent.md).
+
 ## What it does not cover, on purpose
 
 * **Anything only in a body, header or query string** (a method-override header, a destructive query parameter, a mutation inside a GraphQL body). Risk Guard never reads

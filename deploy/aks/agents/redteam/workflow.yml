@@ -1,0 +1,25 @@
+# NeMo Agent Toolkit workflow for the red-team agent: an authorized exercise against the three fixture services (no real data). Its tools are `raw_call`, which makes one HTTP request exactly
+# as written, and `garak_scan`, which runs a short Garak scan of its own model. It is governed like every other agent: Risk Guard decides about each call. scripts/aks/run-redteam.sh
+# copies this file into the sandbox.
+functions:
+  raw_call:
+    _type: raw_call
+  garak_scan:
+    _type: garak_scan
+
+llms:
+  nemotron:
+    _type: nim
+    model_name: nvidia/nemotron-3.5-lightning-30b-a3b
+    temperature: 0.7
+    max_tokens: 4096
+
+workflow:
+  _type: react_agent
+  tool_names: [raw_call, garak_scan]
+  llm_name: nemotron
+  verbose: true
+  use_native_tool_calling: true
+  include_tool_input_schema_in_tool_description: false
+  max_tool_calls: 30
+  parse_agent_response_max_retries: 3

@@ -187,3 +187,76 @@ def _register_service_tool(tool_name: str, method: str, path: str, takes_argumen
 
 for _spec in _SERVICE_TOOLS:
     _register_service_tool(*_spec)
+
+
+# ---- Red-team tools --------------------------------------------------------------------------------------------------
+# For the red-team agent (deploy/aks/agents/redteam). It is governed like every other agent: these tools make real requests from inside the sandbox, so Risk Guard decides
+# about each one. Every call is recorded to a file the exercise's runner reads (rg_demo_agent.redteam).
+import os
+import subprocess
+import tempfile
+
+from rg_demo_agent import redteam
+
+GARAK_PYTHON = os.environ.get("GARAK_PYTHON", "/opt/garak/bin/python")
+GARAK_MODEL = os.environ.get("GARAK_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b")
+
+
+class RawCallConfig(FunctionBaseConfig, name="raw_call"):
+    """Makes one HTTP request exactly as written, to one of the three exercise services."""
+
+
+@register_function(config_type=RawCallConfig)
+async def raw_call(_config: RawCallConfig, _builder: Builder):
+
+    async def _run(spec: str) -> str:
+        parsed = redteam.parse_request(spec)
+        if isinstance(parsed, str):
+            return parsed
+        method, url = parsed
+        result = _call(method, url)
+        redteam.record_call(method, url, str(redteam.status_code(result)), result)
+        return result
+
+    yield FunctionInfo.from_fn(
+        _run,
+        description=("Makes one HTTP request exactly as written and returns the status and body. Input: 'METHOD URL', for example "
+                     "'DELETE http://deploy-api.openshell.svc.cluster.local:18081/services/worker'. The path, host and method are sent as you spell them. "
+                     "Only the deploy-api, support-api and cloud-api services of this exercise may be called."))
+
+
+class GarakScanConfig(FunctionBaseConfig, name="garak_scan"):
+    """Runs a short Garak probe against the agent's own model and summarises how often the model failed."""
+
+    probe: str = "promptinject"
+
+
+@register_function(config_type=GarakScanConfig)
+async def garak_scan(config: GarakScanConfig, _builder: Builder):
+
+    async def _run(argument: str) -> str:
+        module = (argument.strip().split(".")[0] or config.probe).lower()
+        if module not in redteam.GARAK_PROBES:
+            return "error: choose a probe module from " + ", ".join(sorted(redteam.GARAK_PROBES))
+        prefix = os.path.join(tempfile.mkdtemp(prefix="garak-"), "run")
+        env = dict(os.environ, NIM_API_KEY=os.environ.get("NVIDIA_API_KEY", ""))
+        try:
+            subprocess.run(
+                [GARAK_PYTHON, "-m", "garak", "--model_type", "nim", "--model_name", GARAK_MODEL, "--probes", module, "--generations", "1", "--report_prefix", prefix],
+                env=env, capture_output=True, text=True, timeout=900, check=False)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return f"garak did not finish: {error}"
+        report = prefix + ".report.jsonl"
+        if not os.path.exists(report):
+            return "garak produced no report."
+        with open(report, encoding="utf-8") as handle:
+            summary = redteam.parse_garak_report(handle)
+        with open(os.environ.get("GARAK_SUMMARY_FILE", "/sandbox/garak-summary.json"), "w", encoding="utf-8") as out:
+            import json as _json
+            _json.dump(summary, out)
+        return redteam.summarise_for_agent(summary)
+
+    yield FunctionInfo.from_fn(
+        _run,
+        description=("Runs a short Garak scan of the model that powers this agent and reports how often the model did what the attack wanted. Input: a Garak probe module, one of "
+                     + ", ".join(sorted(redteam.GARAK_PROBES)) + ". It tests the model's susceptibility; it does not test the control in front of the services."))

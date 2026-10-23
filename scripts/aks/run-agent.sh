@@ -98,4 +98,6 @@ WORKFLOW_B64="$(base64 -w0 "$WORKFLOW_FILE")"
 echo "--- agent run: $TASK"
 timeout 600 "$CLI" sandbox exec --name "$NAME" --no-tty --no-login-shell -- \
   /opt/agent/bin/nat run --config_file /tmp/workflow.yml --input "$TASK" 2>&1 | tail -n "${TAIL_LINES:-40}"
+# A caller can ask for something to happen while the sandbox still exists (it is deleted on exit when CLEANUP_SANDBOX=1): the red-team runner reads the agent's call record here.
+if [ -n "${AFTER_RUN:-}" ]; then NAME="$NAME" CLI="$CLI" eval "$AFTER_RUN" || echo "AFTER_RUN failed" >&2; fi
 echo "sandbox: $NAME   (see what Risk Guard recorded: pwsh scripts/aks/07-verify.ps1)"

@@ -10,6 +10,10 @@ RUN apt-get update \
     && python3 -m venv /opt/agent \
     && /opt/agent/bin/pip install --no-cache-dir "nvidia-nat[langchain]" nemoguardrails
 
+# Garak (NVIDIA's LLM vulnerability scanner) gets a virtual environment of its own: its dependencies are large and must not disturb the agent toolkit's. The CPU build of PyTorch
+# is installed first so pip does not pull the multi-gigabyte GPU wheels. The red-team agent calls it as a tool; nothing else uses it.
+RUN python3 -m venv /opt/garak     && /opt/garak/bin/pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu     && /opt/garak/bin/pip install --no-cache-dir garak
+
 COPY rg_demo_agent /opt/agent-src/rg_demo_agent
 COPY pyproject.toml /opt/agent-src/pyproject.toml
 COPY workflow.yml /opt/agent-src/workflow.yml
