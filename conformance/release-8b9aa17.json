@@ -1,0 +1,43 @@
+{
+  "release": "8b9aa17",
+  "built_at": "2026-10-23T03:43:49+00:00",
+  "image_digest": "sha256:f62ca09bf7cedb6f57a8acd7cea1cc465fad9db56f9f8aeffde714b86b1a5f9a",
+  "base_images": [
+    "rust:1.95-trixie@sha256:f49565f188ee00bc2a18dd418183f2c5f23ef7d6e691890517ed341a598f67c3",
+    "gcr.io/distroless/cc-debian13@sha256:83b9b50586253821cf63ffcec87d3d94265a093ad30da232039af962dd8f4edf"
+  ],
+  "toolchain": "profile = \"minimal\"",
+  "cargo_lock_sha256": "2f21b77cd9feb8faf64e3d30225c99ecb0a364bcf1d662cddcff9c18300e7ca8",
+  "scanner": "aquasec/trivy:0.58.1",
+  "scans": {
+    "image": {
+      "by_severity": {
+        "MEDIUM": 23,
+        "LOW": 8
+      },
+      "high_or_critical_with_a_fix": [],
+      "high_or_critical_without_a_fix_by_package": {}
+    },
+    "rust_dependencies": {
+      "by_severity": {},
+      "high_or_critical_with_a_fix": [],
+      "high_or_critical_without_a_fix_by_package": {}
+    }
+  },
+  "sbom_components": {
+    "image": 15,
+    "rust_dependencies": 383
+  },
+  "gate": {
+    "rule": "no HIGH or CRITICAL finding with a fixed version available",
+    "passed": true,
+    "failures": []
+  },
+  "artifacts": {
+    "sbom-image-8b9aa17.cdx.json": "a486fc7f86fac3259fe505bd500c9f9e86dce538773e1e304be86f838fde807a",
+    "sbom-rust-deps-8b9aa17.cdx.json": "1bb521afc41d8331a72357a1e83de4d97a3b362cfeb506c7b55bab15216c4f4e",
+    "scan-image-8b9aa17.json": "5b1e0c9d84d01ce7461fc583c138935db5e431e5a7950ae38e14be0a1d18b7e5",
+    "scan-rust-deps-8b9aa17.json": "72641af3a667cc68b23da100565cee53b02d70c0721ed12ee50a9d201f46a96d"
+  },
+  "image_repository": "openshell-risk-guard"
+}

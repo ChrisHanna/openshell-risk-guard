@@ -1,6 +1,6 @@
 {
   "test": "hardening",
-  "run_at": "2026-10-23T02:30:20+00:00",
+  "run_at": "2026-10-23T03:49:30+00:00",
   "checks": [
     "non_root",
     "no_privilege_escalation",
@@ -90,54 +90,6 @@
       "failed": [],
       "excepted": []
     },
-    "sandbox-workload-pod": {
-      "pods": 1,
-      "failed": [],
-      "excepted": [
-        {
-          "check": "requests",
-          "subject": "openshell-sandbox-bootstrap",
-          "detail": "missing cpu or memory request",
-          "reason": "Created by OpenShell's Kubernetes driver from the sandbox's template; its memory and CPU come from the Kata runtime class and the VM, not container requests."
-        },
-        {
-          "check": "memory_limit",
-          "subject": "openshell-sandbox-bootstrap",
-          "detail": "no memory limit",
-          "reason": "Same as requests: the micro-VM is sized by the runtime class."
-        },
-        {
-          "check": "requests",
-          "subject": "workspace-init",
-          "detail": "missing cpu or memory request",
-          "reason": "Created by OpenShell's Kubernetes driver from the sandbox's template; its memory and CPU come from the Kata runtime class and the VM, not container requests."
-        },
-        {
-          "check": "memory_limit",
-          "subject": "workspace-init",
-          "detail": "no memory limit",
-          "reason": "Same as requests: the micro-VM is sized by the runtime class."
-        },
-        {
-          "check": "read_only_root",
-          "subject": "agent",
-          "detail": "the root filesystem is writable",
-          "reason": "The agent's root filesystem is writable by design (its workspace). Inside the micro-VM, Landlock and OpenShell's policy confine what it can write."
-        },
-        {
-          "check": "requests",
-          "subject": "agent",
-          "detail": "missing cpu or memory request",
-          "reason": "Created by OpenShell's Kubernetes driver from the sandbox's template; its memory and CPU come from the Kata runtime class and the VM, not container requests."
-        },
-        {
-          "check": "memory_limit",
-          "subject": "agent",
-          "detail": "no memory limit",
-          "reason": "Same as requests: the micro-VM is sized by the runtime class."
-        }
-      ]
-    },
     "egress-demo": {
       "pods": 1,
       "failed": [],
@@ -193,24 +145,6 @@
           "subject": "openshell-gateway",
           "detail": "no memory limit",
           "reason": "The OpenShell chart sets no memory limit for the gateway container by default."
-        }
-      ]
-    },
-    "sandbox-supervisor-pod": {
-      "pods": 1,
-      "failed": [],
-      "excepted": [
-        {
-          "check": "requests",
-          "subject": "supervisor",
-          "detail": "missing cpu or memory request",
-          "reason": "Created by OpenShell's Kubernetes driver; it sets no requests."
-        },
-        {
-          "check": "memory_limit",
-          "subject": "supervisor",
-          "detail": "no memory limit",
-          "reason": "Created by OpenShell's Kubernetes driver; it sets no limits."
         }
       ]
     },
@@ -692,10 +626,16 @@
   "summary": {
     "workloads_checked": {
       "static": 10,
-      "live": 17
+      "live": 15
     },
     "unexplained_failures": [],
-    "documented_exceptions": 87,
-    "exceptions_no_longer_needed": []
+    "documented_exceptions": 78,
+    "exceptions_no_longer_needed": [
+      "sandbox-workload-pod: requests",
+      "sandbox-workload-pod: memory_limit",
+      "sandbox-workload-pod: read_only_root",
+      "sandbox-supervisor-pod: requests",
+      "sandbox-supervisor-pod: memory_limit"
+    ]
   }
 }

@@ -1,0 +1,146 @@
+{
+  "test": "upgrade_rollback_drill",
+  "run_at": "2026-10-23T03:49:05+00:00",
+  "started_on": "openshell-risk-guard:d35b248",
+  "target_tag": "8b9aa17",
+  "steps": [
+    {
+      "step": "upgrade (hardened, pinned by digest)",
+      "image_after": "openshell-risk-guard@sha256:f62ca09bf7cedb6f57a8acd7cea1cc465fad9db56f9f8aeffde714b86b1a5f9a",
+      "seconds_to_ready": 0.2,
+      "seconds_total": 109.5,
+      "smoke": {
+        "allowed_read": true,
+        "destructive_refused_by_policy": true,
+        "detail": [
+          "GET /repos/local/review -> 200 {\"name\": \"review\", \"owner\": \"local\", \"default_bra",
+          "DELETE /services/worker -> 403 denied by Risk Guard: behavioral_risk_restricted"
+        ]
+      },
+      "state": {
+        "restrictions": [
+          "[\"ctx-29be83e96fbd430b9ce7ea7d127cf487a70c3d4ca642155d891c1805e3cc5a91\", \"http://deploy-api.openshell.svc.cluster.local:18081 DELETE /services/{svc} worker\"]",
+          "[\"ctx-29be83e96fbd430b9ce7ea7d127cf487a70c3d4ca642155d891c1805e3cc5a91\", \"http://deploy-api.openshell.svc.cluster.local:18081 POST /services/{svc}/rollback payments\"]",
+          "[\"ctx-4720df5726d16ccc9ab8542912d978ab57759cae86473234cff5e828c8a056dd\", \"http://deploy-api.openshell.svc.cluster.local:18081 DELETE /services/{svc} worker\"]",
+          "[\"ctx-4720df5726d16ccc9ab8542912d978ab57759cae86473234cff5e828c8a056dd\", \"http://deploy-api.openshell.svc.cluster.local:18081 POST /services/{svc}/rollback payments\"]",
+          "[\"ctx-5bd8257cd70f55a0590f06414640359943eeb4e21f5909464fc9243c35f0f76e\", \"https://api.github.local:443 DELETE /repos/{owner}/{repo} org/payments-prod\"]",
+          "[\"ctx-5bd8257cd70f55a0590f06414640359943eeb4e21f5909464fc9243c35f0f76e\", \"https://api.github.local:443 DELETE unknown api.github.local:443/services/worker\"]",
+          "[\"ctx-5bd8257cd70f55a0590f06414640359943eeb4e21f5909464fc9243c35f0f76e\", \"https://api.github.local:443 PATCH /repos/{owner}/{repo} org/payments-prod\"]",
+          "[\"ctx-5bd8257cd70f55a0590f06414640359943eeb4e21f5909464fc9243c35f0f76e\", \"https://api.github.local:443 POST /repos/{owner}/{repo}/hooks org/payments-prod\"]",
+          "[\"ctx-5bd8257cd70f55a0590f06414640359943eeb4e21f5909464fc9243c35f0f76e\", \"https://api.github.local:443 PUT /repos/{owner}/{repo}/contents/** org/payments-prod\"]",
+          "[\"ctx-7e80763267275d4013ae65bcb2ff1def8756eeaa5c992cb17184ec0aba8a9a03\", \"https://api.github.local:443 DELETE /repos/{owner}/{repo} org/payments-prod\"]",
+          "[\"ctx-7e80763267275d4013ae65bcb2ff1def8756eeaa5c992cb17184ec0aba8a9a03\", \"https://api.github.local:443 PATCH /repos/{owner}/{repo} org/payments-prod\"]",
+          "[\"ctx-7e80763267275d4013ae65bcb2ff1def8756eeaa5c992cb17184ec0aba8a9a03\", \"https://api.github.local:443 POST /repos/{owner}/{repo}/hooks org/payments-prod\"]",
+          "[\"ctx-7e80763267275d4013ae65bcb2ff1def8756eeaa5c992cb17184ec0aba8a9a03\", \"https://api.github.local:443 PUT /repos/{owner}/{repo}/contents/** org/payments-prod\"]",
+          "[\"ctx-8186df953d6bfe77ec781bfb6224aa87dbc96e5d40ee1ddfda45594aec446feb\", \"http://cloud-api.openshell.svc.cluster.local:18081 DELETE /buckets/{name} customer-backups\"]",
+          "[\"ctx-8186df953d6bfe77ec781bfb6224aa87dbc96e5d40ee1ddfda45594aec446feb\", \"http://cloud-api.openshell.svc.cluster.local:18081 DELETE /buckets/{name} tmp-scratch\"]",
+          "[\"ctx-8186df953d6bfe77ec781bfb6224aa87dbc96e5d40ee1ddfda45594aec446feb\", \"http://cloud-api.openshell.svc.cluster.local:18081 GET /secrets secrets\"]",
+          "[\"ctx-8186df953d6bfe77ec781bfb6224aa87dbc96e5d40ee1ddfda45594aec446feb\", \"http://cloud-api.openshell.svc.cluster.local:18081 GET /secrets/{name} secrets\"]",
+          "[\"ctx-8c613d61a29fee6746db460403e538ff40e2c95caf49fecfa95706ac04fdf657\", \"http://cloud-api.openshell.svc.cluster.local:18081 DELETE /buckets/{name} customer-backups\"]",
+          "[\"ctx-8c613d61a29fee6746db460403e538ff40e2c95caf49fecfa95706ac04fdf657\", \"http://cloud-api.openshell.svc.cluster.local:18081 GET /secrets secrets\"]",
+          "[\"ctx-b5500673c51f0f99d89263b6bfcae14368f413b008f8ed94ca91a334aca506b8\", \"http://support-api.openshell.svc.cluster.local:18081 GET /exports/customers customer-export\"]",
+          "[\"ctx-c58ffe16f9ed401a2b9b47c83e4600ab443b764ff202130bbf2ad99bb4db3eeb\", \"http://support-api.openshell.svc.cluster.local:18081 GET /exports/customers customer-export\"]",
+          "[\"ctx-cdd98cb3d6f6811d9126840e9abd599fd60513708a9cbd2edabdbe77a8a09415\", \"http://risk-guard-fixture.openshell.svc.cluster.local:18081 DELETE /repos/{owner}/{repo} local/production\"]"
+        ],
+        "quarantined": []
+      },
+      "restrictions_lost_since_previous_step": [],
+      "quarantine_still_listed": true
+    },
+    {
+      "step": "roll back to the previous image",
+      "image_after": "openshell-risk-guard:d35b248",
+      "seconds_to_ready": 51.9,
+      "seconds_total": 79.6,
+      "smoke": {
+        "allowed_read": true,
+        "destructive_refused_by_policy": true,
+        "detail": [
+          "GET /repos/local/review -> 200 {\"name\": \"review\", \"owner\": \"local\", \"default_bra",
+          "DELETE /services/worker -> 403 denied by Risk Guard: behavioral_risk_restricted"
+        ]
+      },
+      "state": {
+        "restrictions": [
+          "[\"ctx-29be83e96fbd430b9ce7ea7d127cf487a70c3d4ca642155d891c1805e3cc5a91\", \"http://deploy-api.openshell.svc.cluster.local:18081 DELETE /services/{svc} worker\"]",
+          "[\"ctx-29be83e96fbd430b9ce7ea7d127cf487a70c3d4ca642155d891c1805e3cc5a91\", \"http://deploy-api.openshell.svc.cluster.local:18081 POST /services/{svc}/rollback payments\"]",
+          "[\"ctx-4720df5726d16ccc9ab8542912d978ab57759cae86473234cff5e828c8a056dd\", \"http://deploy-api.openshell.svc.cluster.local:18081 DELETE /services/{svc} worker\"]",
+          "[\"ctx-4720df5726d16ccc9ab8542912d978ab57759cae86473234cff5e828c8a056dd\", \"http://deploy-api.openshell.svc.cluster.local:18081 POST /services/{svc}/rollback payments\"]",
+          "[\"ctx-5bd8257cd70f55a0590f06414640359943eeb4e21f5909464fc9243c35f0f76e\", \"https://api.github.local:443 DELETE /repos/{owner}/{repo} org/payments-prod\"]",
+          "[\"ctx-5bd8257cd70f55a0590f06414640359943eeb4e21f5909464fc9243c35f0f76e\", \"https://api.github.local:443 DELETE unknown api.github.local:443/services/worker\"]",
+          "[\"ctx-5bd8257cd70f55a0590f06414640359943eeb4e21f5909464fc9243c35f0f76e\", \"https://api.github.local:443 PATCH /repos/{owner}/{repo} org/payments-prod\"]",
+          "[\"ctx-5bd8257cd70f55a0590f06414640359943eeb4e21f5909464fc9243c35f0f76e\", \"https://api.github.local:443 POST /repos/{owner}/{repo}/hooks org/payments-prod\"]",
+          "[\"ctx-5bd8257cd70f55a0590f06414640359943eeb4e21f5909464fc9243c35f0f76e\", \"https://api.github.local:443 PUT /repos/{owner}/{repo}/contents/** org/payments-prod\"]",
+          "[\"ctx-7e80763267275d4013ae65bcb2ff1def8756eeaa5c992cb17184ec0aba8a9a03\", \"https://api.github.local:443 DELETE /repos/{owner}/{repo} org/payments-prod\"]",
+          "[\"ctx-7e80763267275d4013ae65bcb2ff1def8756eeaa5c992cb17184ec0aba8a9a03\", \"https://api.github.local:443 PATCH /repos/{owner}/{repo} org/payments-prod\"]",
+          "[\"ctx-7e80763267275d4013ae65bcb2ff1def8756eeaa5c992cb17184ec0aba8a9a03\", \"https://api.github.local:443 POST /repos/{owner}/{repo}/hooks org/payments-prod\"]",
+          "[\"ctx-7e80763267275d4013ae65bcb2ff1def8756eeaa5c992cb17184ec0aba8a9a03\", \"https://api.github.local:443 PUT /repos/{owner}/{repo}/contents/** org/payments-prod\"]",
+          "[\"ctx-8186df953d6bfe77ec781bfb6224aa87dbc96e5d40ee1ddfda45594aec446feb\", \"http://cloud-api.openshell.svc.cluster.local:18081 DELETE /buckets/{name} customer-backups\"]",
+          "[\"ctx-8186df953d6bfe77ec781bfb6224aa87dbc96e5d40ee1ddfda45594aec446feb\", \"http://cloud-api.openshell.svc.cluster.local:18081 DELETE /buckets/{name} tmp-scratch\"]",
+          "[\"ctx-8186df953d6bfe77ec781bfb6224aa87dbc96e5d40ee1ddfda45594aec446feb\", \"http://cloud-api.openshell.svc.cluster.local:18081 GET /secrets secrets\"]",
+          "[\"ctx-8186df953d6bfe77ec781bfb6224aa87dbc96e5d40ee1ddfda45594aec446feb\", \"http://cloud-api.openshell.svc.cluster.local:18081 GET /secrets/{name} secrets\"]",
+          "[\"ctx-8c613d61a29fee6746db460403e538ff40e2c95caf49fecfa95706ac04fdf657\", \"http://cloud-api.openshell.svc.cluster.local:18081 DELETE /buckets/{name} customer-backups\"]",
+          "[\"ctx-8c613d61a29fee6746db460403e538ff40e2c95caf49fecfa95706ac04fdf657\", \"http://cloud-api.openshell.svc.cluster.local:18081 GET /secrets secrets\"]",
+          "[\"ctx-b5500673c51f0f99d89263b6bfcae14368f413b008f8ed94ca91a334aca506b8\", \"http://support-api.openshell.svc.cluster.local:18081 GET /exports/customers customer-export\"]",
+          "[\"ctx-c58ffe16f9ed401a2b9b47c83e4600ab443b764ff202130bbf2ad99bb4db3eeb\", \"http://support-api.openshell.svc.cluster.local:18081 GET /exports/customers customer-export\"]",
+          "[\"ctx-cdd98cb3d6f6811d9126840e9abd599fd60513708a9cbd2edabdbe77a8a09415\", \"http://risk-guard-fixture.openshell.svc.cluster.local:18081 DELETE /repos/{owner}/{repo} local/production\"]"
+        ],
+        "quarantined": []
+      },
+      "restrictions_lost_since_previous_step": [],
+      "quarantine_still_listed": true
+    },
+    {
+      "step": "roll forward again",
+      "image_after": "openshell-risk-guard@sha256:f62ca09bf7cedb6f57a8acd7cea1cc465fad9db56f9f8aeffde714b86b1a5f9a",
+      "seconds_to_ready": 0.2,
+      "seconds_total": 108.0,
+      "smoke": {
+        "allowed_read": true,
+        "destructive_refused_by_policy": true,
+        "detail": [
+          "GET /repos/local/review -> 200 {\"name\": \"review\", \"owner\": \"local\", \"default_bra",
+          "DELETE /services/worker -> 403 denied by Risk Guard: behavioral_risk_restricted"
+        ]
+      },
+      "state": {
+        "restrictions": [
+          "[\"ctx-29be83e96fbd430b9ce7ea7d127cf487a70c3d4ca642155d891c1805e3cc5a91\", \"http://deploy-api.openshell.svc.cluster.local:18081 DELETE /services/{svc} worker\"]",
+          "[\"ctx-29be83e96fbd430b9ce7ea7d127cf487a70c3d4ca642155d891c1805e3cc5a91\", \"http://deploy-api.openshell.svc.cluster.local:18081 POST /services/{svc}/rollback payments\"]",
+          "[\"ctx-4720df5726d16ccc9ab8542912d978ab57759cae86473234cff5e828c8a056dd\", \"http://deploy-api.openshell.svc.cluster.local:18081 DELETE /services/{svc} worker\"]",
+          "[\"ctx-4720df5726d16ccc9ab8542912d978ab57759cae86473234cff5e828c8a056dd\", \"http://deploy-api.openshell.svc.cluster.local:18081 POST /services/{svc}/rollback payments\"]",
+          "[\"ctx-5bd8257cd70f55a0590f06414640359943eeb4e21f5909464fc9243c35f0f76e\", \"https://api.github.local:443 DELETE /repos/{owner}/{repo} org/payments-prod\"]",
+          "[\"ctx-5bd8257cd70f55a0590f06414640359943eeb4e21f5909464fc9243c35f0f76e\", \"https://api.github.local:443 DELETE unknown api.github.local:443/services/worker\"]",
+          "[\"ctx-5bd8257cd70f55a0590f06414640359943eeb4e21f5909464fc9243c35f0f76e\", \"https://api.github.local:443 PATCH /repos/{owner}/{repo} org/payments-prod\"]",
+          "[\"ctx-5bd8257cd70f55a0590f06414640359943eeb4e21f5909464fc9243c35f0f76e\", \"https://api.github.local:443 POST /repos/{owner}/{repo}/hooks org/payments-prod\"]",
+          "[\"ctx-5bd8257cd70f55a0590f06414640359943eeb4e21f5909464fc9243c35f0f76e\", \"https://api.github.local:443 PUT /repos/{owner}/{repo}/contents/** org/payments-prod\"]",
+          "[\"ctx-7e80763267275d4013ae65bcb2ff1def8756eeaa5c992cb17184ec0aba8a9a03\", \"https://api.github.local:443 DELETE /repos/{owner}/{repo} org/payments-prod\"]",
+          "[\"ctx-7e80763267275d4013ae65bcb2ff1def8756eeaa5c992cb17184ec0aba8a9a03\", \"https://api.github.local:443 PATCH /repos/{owner}/{repo} org/payments-prod\"]",
+          "[\"ctx-7e80763267275d4013ae65bcb2ff1def8756eeaa5c992cb17184ec0aba8a9a03\", \"https://api.github.local:443 POST /repos/{owner}/{repo}/hooks org/payments-prod\"]",
+          "[\"ctx-7e80763267275d4013ae65bcb2ff1def8756eeaa5c992cb17184ec0aba8a9a03\", \"https://api.github.local:443 PUT /repos/{owner}/{repo}/contents/** org/payments-prod\"]",
+          "[\"ctx-8186df953d6bfe77ec781bfb6224aa87dbc96e5d40ee1ddfda45594aec446feb\", \"http://cloud-api.openshell.svc.cluster.local:18081 DELETE /buckets/{name} customer-backups\"]",
+          "[\"ctx-8186df953d6bfe77ec781bfb6224aa87dbc96e5d40ee1ddfda45594aec446feb\", \"http://cloud-api.openshell.svc.cluster.local:18081 DELETE /buckets/{name} tmp-scratch\"]",
+          "[\"ctx-8186df953d6bfe77ec781bfb6224aa87dbc96e5d40ee1ddfda45594aec446feb\", \"http://cloud-api.openshell.svc.cluster.local:18081 GET /secrets secrets\"]",
+          "[\"ctx-8186df953d6bfe77ec781bfb6224aa87dbc96e5d40ee1ddfda45594aec446feb\", \"http://cloud-api.openshell.svc.cluster.local:18081 GET /secrets/{name} secrets\"]",
+          "[\"ctx-8c613d61a29fee6746db460403e538ff40e2c95caf49fecfa95706ac04fdf657\", \"http://cloud-api.openshell.svc.cluster.local:18081 DELETE /buckets/{name} customer-backups\"]",
+          "[\"ctx-8c613d61a29fee6746db460403e538ff40e2c95caf49fecfa95706ac04fdf657\", \"http://cloud-api.openshell.svc.cluster.local:18081 GET /secrets secrets\"]",
+          "[\"ctx-b5500673c51f0f99d89263b6bfcae14368f413b008f8ed94ca91a334aca506b8\", \"http://support-api.openshell.svc.cluster.local:18081 GET /exports/customers customer-export\"]",
+          "[\"ctx-c58ffe16f9ed401a2b9b47c83e4600ab443b764ff202130bbf2ad99bb4db3eeb\", \"http://support-api.openshell.svc.cluster.local:18081 GET /exports/customers customer-export\"]",
+          "[\"ctx-cdd98cb3d6f6811d9126840e9abd599fd60513708a9cbd2edabdbe77a8a09415\", \"http://risk-guard-fixture.openshell.svc.cluster.local:18081 DELETE /repos/{owner}/{repo} local/production\"]"
+        ],
+        "quarantined": []
+      },
+      "restrictions_lost_since_previous_step": [],
+      "quarantine_still_listed": true
+    }
+  ],
+  "result": {
+    "state_survived_every_step": true,
+    "smoke_passed_every_step": true
+  },
+  "not_tested": [
+    "first-time install into an empty cluster",
+    "teardown",
+    "a database migration (none changed between these two images)"
+  ]
+}

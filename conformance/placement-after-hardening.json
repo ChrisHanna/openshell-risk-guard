@@ -1,6 +1,6 @@
 {
   "test": "placement",
-  "run_at": "2026-10-23T02:30:21+00:00",
+  "run_at": "2026-10-23T03:49:32+00:00",
   "profile": "hardened-placement",
   "scope_note": "node separation only; the nodes share a control plane and cluster administrators",
   "placement": {
@@ -45,9 +45,7 @@
     "security_services_run_on": [
       "aks-security-25705114-vmss000000"
     ],
-    "sandbox_supervisors_run_on": [
-      "aks-kata-81034805-vmss000000"
-    ],
+    "sandbox_supervisors_run_on": [],
     "security_services_share_a_node_with_sandboxes": []
   },
   "permissions": {
