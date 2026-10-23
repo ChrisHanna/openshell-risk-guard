@@ -1,0 +1,40 @@
+# Takes the shortcuts away from a compromised supervisor: the pod that enforces policy and holds the credentials.
+#
+# OpenShell's own NetworkPolicy for supervisors (openshell-sandbox-supervisors) allows all egress, because a supervisor must reach the
+# gateway, Risk Guard, DNS and the destinations a policy approves. NetworkPolicies only add allowances, so another standard policy cannot
+# narrow that. Cilium (the cluster's network engine) supports deny rules, which take precedence over any allowance, so this removes the
+# routes a supervisor has no legitimate use for:
+#
+#   * the internet, directly. Encrypted traffic must go through the tunnel gate (sandbox-egress), which asks Risk Guard.
+#     Plain HTTP to the internet is not allowed at all; it is not chained through the proxy.
+#   * the cloud metadata address (which hands out the node's identity token), the Kubernetes API, and the nodes.
+#   * the SPIRE server, and Risk Guard's SPIFFE listener (that listener is for proxies and workloads, not supervisors).
+#
+# What it deliberately does not remove: in-cluster destinations such as the demo APIs. A supervisor forwards a sandbox's requests to them
+# directly, so a policy cannot tell that from a bypass; for those the supervisor and Risk Guard's middleware are the enforcement point.
+# Measured by scripts/conformance/egress_bypass.py. Applied by scripts/aks/18-enable-sandbox-egress.ps1.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: supervisor-egress-fence
+  namespace: openshell
+spec:
+  endpointSelector:
+    matchLabels:
+      openshell.ai/boundary-role: supervisor
+  # A Cilium policy with an egress section makes egress default-deny for the pods it selects, so allow everything here and subtract below.
+  egress:
+    - toEntities: [all]
+  egressDeny:
+    - toEntities: [world, kube-apiserver, host, remote-node]
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: server
+            app.kubernetes.io/instance: spire
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: risk-guard
+      toPorts:
+        - ports:
+            - port: "50062"
+              protocol: TCP

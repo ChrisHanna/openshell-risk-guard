@@ -1,0 +1,192 @@
+{
+  "test": "egress_bypass",
+  "run_at": "2026-10-23T00:36:26+00:00",
+  "deployment": {
+    "risk_guard_image": "mcr.microsoft.com/azurelinux/base/nginx:1.30.6-1-azl3.0.20261015",
+    "network_policies": [
+      "egress-demo-only-via-proxy",
+      "openshell-sandbox-ssh",
+      "openshell-sandbox-supervisors",
+      "openshell-sandbox-workloads",
+      "sandbox-egress"
+    ]
+  },
+  "destination_side": {
+    "before": {
+      "destructive_hits": 2,
+      "counters": {
+        "GET": 219,
+        "DELETE": 0
+      }
+    },
+    "after": {
+      "destructive_hits": 3,
+      "counters": {
+        "GET": 221,
+        "DELETE": 0
+      }
+    },
+    "destructive_requests_that_arrived": 1
+  },
+  "results": [
+    {
+      "position": "agent",
+      "case": "agent: approved destination through the intended path",
+      "expected_reachable": true,
+      "reached": true,
+      "detail": 200,
+      "pass": true
+    },
+    {
+      "position": "agent",
+      "case": "agent: destination its policy does not list (deploy-api)",
+      "expected_reachable": false,
+      "reached": false,
+      "detail": "URLError",
+      "pass": true
+    },
+    {
+      "position": "agent",
+      "case": "agent: a destructive call to an unlisted service",
+      "expected_reachable": false,
+      "reached": false,
+      "detail": "URLError",
+      "pass": true
+    },
+    {
+      "position": "agent",
+      "case": "agent: the internet over HTTP",
+      "expected_reachable": false,
+      "reached": false,
+      "detail": "URLError",
+      "pass": true
+    },
+    {
+      "position": "agent",
+      "case": "agent: the internet over HTTPS",
+      "expected_reachable": false,
+      "reached": false,
+      "detail": "URLError",
+      "pass": true
+    },
+    {
+      "position": "agent",
+      "case": "agent: the cloud metadata address",
+      "expected_reachable": false,
+      "reached": false,
+      "detail": "URLError",
+      "pass": true
+    },
+    {
+      "position": "agent",
+      "case": "agent: an arbitrary address and port",
+      "expected_reachable": false,
+      "reached": false,
+      "detail": "URLError",
+      "pass": true
+    },
+    {
+      "position": "agent",
+      "case": "agent: the Kubernetes API",
+      "expected_reachable": false,
+      "reached": false,
+      "detail": "URLError",
+      "pass": true
+    },
+    {
+      "position": "supervisor",
+      "case": "internet over HTTPS, around the proxy",
+      "expected_reachable": false,
+      "reached": true,
+      "detail": "200",
+      "pass": false
+    },
+    {
+      "position": "supervisor",
+      "case": "internet over HTTP",
+      "expected_reachable": false,
+      "reached": true,
+      "detail": "200",
+      "pass": false
+    },
+    {
+      "position": "supervisor",
+      "case": "an arbitrary address and port",
+      "expected_reachable": false,
+      "reached": false,
+      "detail": "000",
+      "pass": true
+    },
+    {
+      "position": "supervisor",
+      "case": "the cloud metadata address",
+      "expected_reachable": false,
+      "reached": true,
+      "detail": "200",
+      "pass": false
+    },
+    {
+      "position": "supervisor",
+      "case": "the Kubernetes API",
+      "expected_reachable": false,
+      "reached": true,
+      "detail": "401",
+      "pass": false
+    },
+    {
+      "position": "supervisor",
+      "case": "the SPIRE server",
+      "expected_reachable": false,
+      "reached": false,
+      "detail": "000",
+      "pass": true
+    },
+    {
+      "position": "supervisor",
+      "case": "Risk Guard's identity listener",
+      "expected_reachable": false,
+      "reached": false,
+      "detail": "000",
+      "pass": true
+    },
+    {
+      "position": "supervisor",
+      "case": "the OpenShell gateway (needed)",
+      "expected_reachable": true,
+      "reached": true,
+      "detail": "404",
+      "pass": true
+    },
+    {
+      "position": "supervisor",
+      "case": "Risk Guard's middleware (needed)",
+      "expected_reachable": true,
+      "reached": true,
+      "detail": "200",
+      "pass": true
+    },
+    {
+      "position": "supervisor",
+      "case": "the tunnel proxy (needed)",
+      "expected_reachable": true,
+      "reached": true,
+      "detail": "404",
+      "pass": true
+    },
+    {
+      "position": "supervisor",
+      "case": "an in-cluster plain-HTTP destination, directly",
+      "expected_reachable": "documented",
+      "reached": true,
+      "detail": "200",
+      "pass": null
+    }
+  ],
+  "failed": [
+    "internet over HTTPS, around the proxy",
+    "internet over HTTP",
+    "the cloud metadata address",
+    "the Kubernetes API"
+  ],
+  "documented_limit": "A compromised supervisor can reach in-cluster plain-HTTP destinations directly: the supervisor is their enforcement point, and a network policy cannot tell its legitimate forwarding from a bypass. 'destructive_requests_that_arrived' counts that."
+}
