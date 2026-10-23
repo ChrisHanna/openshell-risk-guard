@@ -94,6 +94,6 @@ Invoke-Native helm @('upgrade', '--install', 'otel-collector', 'open-telemetry/o
 Save-State @{ siemDeployed = $true }
 Write-Host ''
 Write-Host 'The demo SIEM is up.' -ForegroundColor Green
-Write-Host '  Open the dashboards:  kubectl -n siem port-forward svc/dashboards-opensearch-dashboards 5601:5601   then https://localhost:5601 (user: admin)'
-Write-Host '  Read the password:    kubectl -n siem get secret opensearch-admin -o jsonpath="{.data.password}"   (base64; do not paste it into chat or commit it)'
+Write-Host '  Open the dashboards:  kubectl -n siem port-forward svc/dashboards-opensearch-dashboards 5601:5601   then http://localhost:5601 (plain http on the forwarded port; user: admin)'
+Write-Host '  Copy the password:    [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String((kubectl -n siem get secret opensearch-admin -o jsonpath="{.data.password}"))) | Set-Clipboard   (copies without printing; do not paste it into chat or commit it)'
 Write-Host '  Next:                 scripts/aks/23-enable-ocsf-export.ps1 -Apply   (points OpenShell at the collector; restarts the gateway briefly)'
