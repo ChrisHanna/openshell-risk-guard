@@ -89,6 +89,43 @@ def destination_deletes():
     return next((a["hits"] for a in json.loads(out) if a["method"] == "DELETE" and a["path"] == "/services/worker"), 0)
 
 
+DELETE_PROBE = r'''
+import urllib.error, urllib.request
+try:
+    urllib.request.urlopen(urllib.request.Request("http://support-api.openshell.svc.cluster.local:18081/customers/1", method="DELETE"), timeout=15)
+    print("allowed")
+except urllib.error.HTTPError as error:
+    print("refused", error.code)
+'''
+
+
+def siem_view():
+    """The same kind of refusal, inside a real OpenShell sandbox, as the security events OpenShell writes for a SIEM (OCSF)."""
+    sandbox_id = json.loads(fleet("openshell", "sandbox", "get", SANDBOX, "--output", "json"))["id"]
+    script = base64.b64encode(DELETE_PROBE.encode()).decode()
+    mark = time.time()
+    answer = fleet("openshell", "sandbox", "exec", "--name", SANDBOX, "--no-tty", "--no-login-shell", "--", "/bin/sh", "-c",
+                   f"echo {script} | base64 -d > /tmp/d.py; /opt/agent/bin/python3.12 /tmp/d.py", check=False, timeout=60).strip().splitlines()[-1:]
+    say(f"  inside the sandbox: DELETE /customers/1 -> {answer[0] if answer else 'no answer'}", RED)
+    time.sleep(4)
+    shown = 0
+    for line in kubectl("logs", f"pod/os-supervisor-{sandbox_id}", "--since=60s", check=False).splitlines():
+        if "OCSF-JSON " not in line:
+            continue
+        try:
+            record = json.loads(line.split("OCSF-JSON ", 1)[1])
+        except ValueError:
+            continue
+        if record.get("class_uid") == 4002 and record.get("status_detail"):
+            say(f"  OCSF  HTTP Activity   {record['action']:8} {record['http_request']['http_method']} {record['http_request']['url']['path']}   {record['status_detail']}", DIM)
+            shown += 1
+        elif record.get("class_uid") == 2004 and record.get("finding_info", {}).get("uid", "").startswith("risk-guard"):
+            say(f"  OCSF  Detection Finding {record['severity']:6} {record['finding_info']['title']} (middleware {record['unmapped'].get('middleware')})", DIM)
+            shown += 1
+    if not shown:
+        say("  (no OCSF records found: is ocsf_json_enabled set? `openshell settings set --global --key ocsf_json_enabled --value true --yes`)", AMBER)
+
+
 def probe_from_sandbox():
     script = base64.b64encode(PROBE.encode()).decode()
     began = time.time()
@@ -139,6 +176,13 @@ def run(pause):
     say("  " + caller("DELETE", "/services/worker")[:110], RED)
     after = destination_deletes()
     say(f"  destination's own DELETE counter: {before} before, {after} after  ->  {'no effect at the destination' if after == before else 'EFFECT AT DESTINATION'}", GREEN if after == before else RED)
+
+    try:
+        fleet("openshell", "sandbox", "get", SANDBOX, check=True)
+        say("  and inside an OpenShell sandbox, as the security events a SIEM receives:", DIM)
+        siem_view()
+    except SystemExit:
+        pass
 
     act(3, "An operator quarantines the workload", pause)
     try:
