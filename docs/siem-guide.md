@@ -34,6 +34,9 @@ It is safe to run again; it updates what it made and skips what exists. It runs 
 |---|---|
 | **Risk Guard: decisions and workloads** | Events, middleware refusals, tunnel events, signals and workloads seen; refusals over time by reason; the risk score of refused requests (average and highest); each workload's events and highest score; the signals behind refusals; events by task profile and by where Risk Guard acted |
 | **Risk Guard: quarantine and signals** | Tunnels refused or would-be-refused, silent supervisors, and the signals the SIEM sent (applied, dry run, limited or unknown), who sent them and which workloads they named |
+| **Agent activity: what the agents do** | Model calls, tool calls and Risk Guard decisions per sandbox; allowed and refused over time; where tool calls go and which routes, by method. From OpenShell's supervisor events |
+| **Egress and policy: where agents tried to go** | Destinations OpenShell denied (today: the NVIDIA telemetry endpoint, 324 times), where connections were allowed, and names agents asked for that policy has not approved (candidates for a policy decision) |
+| **Control plane: gateway and sandboxes** | Callers the gateway does not recognise (`unknown_identity`, several thousand, repeating every 5 s from sandbox addresses), times Risk Guard could not answer, operator sessions into sandboxes |
 | **Model training: the synthetic data** | The generated traffic and injected attacks behind the anomaly detector. Its data sits in January 2027, so the dashboard opens on that range |
 
 They are installed by `python scripts/siem/install_content.py` along with the first dashboard. The workload names are what Risk Guard knows the agents as (for the fleet, their application IDs).
@@ -59,3 +62,7 @@ Two words in the data that matter: a **refusal** (`middleware_denied:...`) means
 ## Where this goes next
 
 Today the SIEM only listens. The design for sending what it learns back to Risk Guard (tighten automatically, loosen only with a person's approval, every automated action limited, logged and expiring) is in [siem-integration.md](siem-integration.md); the action API it needs is not built.
+
+## Checking the dashboards
+
+`python scripts/siem/check_dashboards.py` runs every chart's search against OpenSearch and lists any that would draw nothing or fail. It cannot see how a chart renders, only whether its data is there.

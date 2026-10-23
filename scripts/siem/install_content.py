@@ -239,6 +239,78 @@ def build_synthetic_objects():
     return objects + [board]
 
 
+# OpenShell's own events (supervisors and gateway). These say what the agents actually do, which Risk Guard's events alone cannot.
+HTTP = 'class_name:"HTTP Activity"'
+NET = 'class_name:"Network Activity"'
+DECISIONS_ALL = 'message:"MIDDLEWARE risk-guard"'                      # every decision Risk Guard gave a supervisor, allow or deny
+MODEL_CALLS = 'class_name:"HTTP Activity" and dst_endpoint.domain:"integrate.api.nvidia.com"'
+TOOL_CALLS = 'class_name:"HTTP Activity" and not dst_endpoint.domain:"integrate.api.nvidia.com" and not message:"Token grant"'
+NET_DENIED = 'class_name:"Network Activity" and action:"Denied"'
+NET_ALLOWED = 'class_name:"Network Activity" and action:"Allowed" and activity_name:"Open"'
+AUTH_FAILED = 'class_name:"Authentication"'
+STAGED = 'message:"Policy DNS staged unapproved name"'
+
+
+def build_activity_objects():
+    sandbox = terms("2", "container.name.keyword", "bucket", 10)
+    objects = [
+        saved_search("oa-search-denied", "Network connections OpenShell denied", "Destinations a sandbox tried to reach that its policy does not allow.", NET_DENIED,
+                     columns=("container.name", "dst_endpoint.domain", "status_detail", "message")),
+        saved_search("oa-search-auth", "Gateway authentication failures", "Callers the gateway did not recognise.", AUTH_FAILED,
+                     columns=("src_endpoint.ip", "http_request.url.path", "auth_protocol", "message")),
+        saved_search("oa-search-calls", "Agent calls through Risk Guard", "Every request a supervisor asked Risk Guard about.", DECISIONS_ALL,
+                     columns=("container.name", "http_request.http_method", "http_request.url.hostname", "http_request.url.path", "action")),
+        visualization("oa-model-calls", "Model calls", "metric", [COUNT], METRIC_PARAMS, MODEL_CALLS),
+        visualization("oa-tool-calls", "Tool calls", "metric", [COUNT], METRIC_PARAMS, TOOL_CALLS),
+        visualization("oa-decisions", "Decisions by Risk Guard", "metric", [COUNT], METRIC_PARAMS, DECISIONS_ALL),
+        visualization("oa-sandboxes", "Sandboxes active", "metric", [metric_agg("1", "cardinality", "container.name.keyword")], METRIC_PARAMS, DECISIONS_ALL),
+        visualization("oa-allow-deny-time", "Risk Guard decisions over time: allowed and refused", "histogram",
+                      [COUNT, TIME_BUCKET, terms("3", "action.keyword", "group")], BAR_PARAMS, DECISIONS_ALL),
+        visualization("oa-per-sandbox", "Per sandbox: calls allowed and refused", "table",
+                      [COUNT, sandbox, terms("3", "action.keyword", "bucket", 3)], TABLE_PARAMS, DECISIONS_ALL),
+        visualization("oa-tool-destinations", "Where tool calls go", "table",
+                      [COUNT, terms("2", "dst_endpoint.domain.keyword", "bucket", 8), terms("3", "action.keyword", "bucket", 3)], TABLE_PARAMS, TOOL_CALLS),
+        visualization("oa-tool-routes", "Tool routes called, by method", "table",
+                      [COUNT, terms("2", "http_request.url.path.keyword", "bucket", 10), terms("3", "http_request.http_method.keyword", "bucket", 3)], TABLE_PARAMS, TOOL_CALLS),
+        visualization("oa-model-time", "Model calls over time, by sandbox", "histogram",
+                      [COUNT, TIME_BUCKET, terms("3", "container.name.keyword", "group", 6)], BAR_PARAMS, MODEL_CALLS),
+        visualization("oa-denied-dest", "Destinations OpenShell denied", "table",
+                      [COUNT, terms("2", "dst_endpoint.domain.keyword", "bucket", 8), terms("3", "status_detail.keyword", "bucket", 3)], TABLE_PARAMS, NET_DENIED),
+        visualization("oa-denied-time", "Denied connections over time, by destination", "histogram",
+                      [COUNT, TIME_BUCKET, terms("3", "dst_endpoint.domain.keyword", "group", 6)], BAR_PARAMS, NET_DENIED),
+        visualization("oa-allowed-dest", "Destinations sandboxes opened connections to", "pie",
+                      [COUNT, terms("2", "dst_endpoint.domain.keyword", "segment", 8)], PIE_PARAMS, NET_ALLOWED),
+        visualization("oa-staged", "Names agents asked for that policy has not approved", "table",
+                      [COUNT, terms("2", "unmapped.normalized_domain.keyword", "bucket", 8), terms("3", "container.name.keyword", "bucket", 5)], TABLE_PARAMS, STAGED),
+        visualization("oa-auth-time", "Gateway authentication failures over time", "histogram",
+                      [COUNT, TIME_BUCKET, terms("3", "http_request.url.path.keyword", "group", 4)], BAR_PARAMS, AUTH_FAILED),
+        visualization("oa-auth-source", "Who the gateway did not recognise", "table",
+                      [COUNT, terms("2", "src_endpoint.ip.keyword", "bucket", 10), terms("3", "auth_protocol.keyword", "bucket", 2)], TABLE_PARAMS, AUTH_FAILED),
+        visualization("oa-ssh", "Operator sessions into sandboxes", "histogram",
+                      [COUNT, TIME_BUCKET, terms("3", "container.name.keyword", "group", 5)], BAR_PARAMS, 'class_name:"SSH Activity" and activity_name:"Open"'),
+        visualization("oa-failures", "Times Risk Guard could not answer", "histogram",
+                      [COUNT, TIME_BUCKET], BAR_PARAMS, FAILURES),
+    ]
+    activity = dashboard("oa-dashboard-activity", "Agent activity: what the agents do",
+                         "Model calls, tool calls and what Risk Guard decided about each, per sandbox. From OpenShell's supervisor events.", [
+        ("oa-model-calls", "visualization", 0, 0, 12, 7), ("oa-tool-calls", "visualization", 12, 0, 12, 7),
+        ("oa-decisions", "visualization", 24, 0, 12, 7), ("oa-sandboxes", "visualization", 36, 0, 12, 7),
+        ("oa-allow-deny-time", "visualization", 0, 7, 28, 14), ("oa-model-time", "visualization", 28, 7, 20, 14),
+        ("oa-per-sandbox", "visualization", 0, 21, 24, 14), ("oa-tool-destinations", "visualization", 24, 21, 24, 14),
+        ("oa-tool-routes", "visualization", 0, 35, 48, 13), ("oa-search-calls", "search", 0, 48, 48, 13)])
+    egress = dashboard("oa-dashboard-egress", "Egress and policy: where agents tried to go",
+                       "Destinations denied by policy, where connections were allowed, and names agents asked for that nobody has approved yet (candidates for a policy decision).", [
+        ("oa-denied-dest", "visualization", 0, 0, 24, 14), ("oa-allowed-dest", "visualization", 24, 0, 24, 14),
+        ("oa-denied-time", "visualization", 0, 14, 48, 14),
+        ("oa-staged", "visualization", 0, 28, 48, 13), ("oa-search-denied", "search", 0, 41, 48, 13)])
+    control = dashboard("oa-dashboard-control", "Control plane: gateway and sandboxes",
+                        "Callers the gateway does not recognise, times Risk Guard could not answer, and operator sessions into sandboxes.", [
+        ("oa-auth-time", "visualization", 0, 0, 48, 14),
+        ("oa-auth-source", "visualization", 0, 14, 24, 14), ("oa-failures", "visualization", 24, 14, 24, 14),
+        ("oa-ssh", "visualization", 0, 28, 48, 13), ("oa-search-auth", "search", 0, 41, 48, 13)])
+    return objects + [activity, egress, control]
+
+
 def build_objects():
     objects = [{
         "id": PATTERN_ID, "type": "index-pattern", "migrationVersion": {"index-pattern": "7.6.0"}, "references": [],
@@ -276,7 +348,7 @@ def build_objects():
                        "version": 1, "timeRestore": True, "timeTo": "now", "timeFrom": "now-24h",
                        "refreshInterval": {"pause": False, "value": 30000},
                        "kibanaSavedObjectMeta": {"searchSourceJSON": json.dumps({"query": {"language": "kuery", "query": ""}, "filter": []})}}})
-    return objects + build_risk_guard_objects() + build_synthetic_objects()
+    return objects + build_risk_guard_objects() + build_activity_objects() + build_synthetic_objects()
 
 
 def feature(name, field="metadata.uid.keyword"):
