@@ -28,19 +28,23 @@ It is safe to run again; it updates what it made and skips what exists. It runs 
 | Alert monitor | Middleware failures: 3 or more in 5 minutes | Checks every 5 minutes. Fires when Risk Guard could not answer (so the request was refused) at least three times in the last five minutes. |
 | Report | Risk Guard daily overview | A daily PDF of the dashboard, under **Reporting**. |
 
-## Dashboards built on Risk Guard's own events
+## The dashboards, organised around agents
 
-| Dashboard | Shows |
-|---|---|
-| **Risk Guard: decisions and workloads** | Events, middleware refusals, tunnel events, signals and workloads seen; refusals over time by reason; the risk score of refused requests (average and highest); each workload's events and highest score; the signals behind refusals; events by task profile and by where Risk Guard acted |
-| **Risk Guard: quarantine and signals** | Tunnels refused or would-be-refused, silent supervisors, and the signals the SIEM sent (applied, dry run, limited or unknown), who sent them and which workloads they named |
-| **Agent activity: what the agents do** | Model calls, tool calls and Risk Guard decisions per sandbox; allowed and refused over time; where tool calls go and which routes, by method. From OpenShell's supervisor events |
-| **Egress and policy: where agents tried to go** | Destinations OpenShell denied (today: the NVIDIA telemetry endpoint, 324 times), where connections were allowed, and names agents asked for that policy has not approved (candidates for a policy decision) |
-| **Control plane: gateway and sandboxes** | Callers the gateway does not recognise (`unknown_identity`, several thousand, repeating every 5 s from sandbox addresses), times Risk Guard could not answer, operator sessions into sandboxes |
-| **Workloads: what each agent does** | Decisions per minute per workload (allowed and refused), share refused, highest score, how many different paths each touched. Built from Risk Guard's once-a-minute summaries. A workload that stops appearing has gone quiet |
-| **Model training: the synthetic data** | The generated traffic and injected attacks behind the anomaly detector. Its data sits in January 2027, so the dashboard opens on that range |
+Each starts with the same navigation bar. The questions they answer, in the order an operator asks them:
 
-They are installed by `python scripts/siem/install_content.py` along with the first dashboard. The workload names are what Risk Guard knows the agents as (for the fleet, their application IDs).
+| Dashboard | The question | What is on it |
+|---|---|---|
+| **Fleet: are my agents behaving?** | Is anything wrong, and with whom? | Agents active, decisions, refused, highest score, containment actions. A table of every agent (task, decisions, refused, highest score, last seen). Decisions per minute and share refused, by agent. Which sandbox is which agent. Recent notable events |
+| **One agent: what it does and what was refused** | What is this agent doing? | Pick an agent; the whole page follows. Decisions, refused, highest score, routes and destinations used. Allowed and refused over time. **What it calls** (host, method, route, allowed, refused) and **where it connects** (destination, allowed, refused, would be refused in enforce mode). Why it was refused. Its event log |
+| **Incidents: what was refused, contained or signalled** | What happened, in what order? Is it safe to enforce? | Refusals, tunnels refused, signals. A timeline by kind. By agent: events, first seen, last seen, highest score. **Enforcement readiness:** what shadow mode would have refused, per agent. Signals and their outcomes. The incident log in time order |
+| **Control health: is the control itself working?** | Can I trust what I see? | Times Risk Guard could not answer, supervisors that went quiet, signals held back by a limit. Risk Guard's heartbeat (a gap is silence). Which sources are reporting. Gateway authentication failures. Operator sessions |
+| **Sandbox view: calls / egress and policy** | What do the sandboxes (not the agents) do? | OpenShell's own events: model and tool calls, denied destinations, names agents asked for that policy has not approved |
+| **Model training: the synthetic data** | (demo) | The generated traffic behind the anomaly detector |
+
+Where the numbers come from: Risk Guard counts every decision per agent per minute and sends a summary, one row per route and one row per destination (`gate: summary`, `route`, `egress`). The
+agent's name is the one set with `agent-rename`. OpenShell's events know only the sandbox, so the sandbox views are per sandbox; **Fleet** has the table that says which sandbox is which agent.
+
+`python scripts/siem/install_content.py` installs them and removes the dashboards they replace.
 
 Two words in the data that matter: a **refusal** (`middleware_denied:...`) means Risk Guard decided the behaviour was too risky. A **failure** (`middleware_failed`) means Risk Guard did not answer in time or at all, and OpenShell refused because the middleware is set to fail closed. They need different responses: refusals are the guard working; failures are the guard having a bad moment.
 

@@ -318,7 +318,7 @@ def build_workload_objects():
     sum_total = metric_agg("1", "sum", RG_FIELD + "total")
     objects = [
         saved_search("wl-search", "Workload activity summaries", "One line per active sandbox per minute.", RG_SUMMARY,
-                     columns=("actor.user.name", "unmapped.risk_guard.total", "unmapped.risk_guard.refused_calls", "unmapped.risk_guard.max_score", "unmapped.risk_guard.distinct_paths")),
+                     columns=("actor.user.name", "unmapped.risk_guard.total", "unmapped.risk_guard.refused_calls", "unmapped.risk_guard.max_score", "unmapped.risk_guard.distinct_routes")),
         visualization("wl-decisions", "Decisions counted", "metric", [metric_agg("1", "sum", RG_FIELD + "total")], METRIC_PARAMS, RG_SUMMARY),
         visualization("wl-refused", "Of which refused", "metric", [metric_agg("1", "sum", RG_FIELD + "refused_calls")], METRIC_PARAMS, RG_SUMMARY),
         visualization("wl-active", "Workloads active", "metric", [metric_agg("1", "cardinality", "actor.user.name.keyword")], METRIC_PARAMS, RG_SUMMARY),
@@ -330,7 +330,7 @@ def build_workload_objects():
                        metric_agg("3", "sum", RG_FIELD + "refused_calls"), metric_agg("4", "avg", RG_FIELD + "refusal_ratio"),
                        metric_agg("5", "max", RG_FIELD + "max_score")], TABLE_PARAMS, RG_SUMMARY),
         visualization("wl-variety", "Distinct paths per minute (highest), by workload", "line",
-                      [metric_agg("1", "max", RG_FIELD + "distinct_paths"), TIME_BUCKET, terms("3", "actor.user.name.keyword", "group", 6)], dict(LINE_PARAMS, seriesParams=[
+                      [metric_agg("1", "max", RG_FIELD + "distinct_routes"), TIME_BUCKET, terms("3", "actor.user.name.keyword", "group", 6)], dict(LINE_PARAMS, seriesParams=[
                           {"show": True, "type": "line", "mode": "normal", "data": {"label": "Distinct paths", "id": "1"}, "valueAxis": "ValueAxis-1",
                            "drawLinesBetweenPoints": True, "lineWidth": 2, "showCircles": True}]), RG_SUMMARY),
         visualization("wl-tasks", "Decisions by task profile", "pie", [sum_total, terms("2", RG_FIELD + "task_profile.keyword", "segment")], PIE_PARAMS, RG_SUMMARY),
@@ -344,6 +344,147 @@ def build_workload_objects():
         ("wl-variety", "visualization", 0, 34, 32, 13), ("wl-tasks", "visualization", 32, 34, 16, 13),
         ("wl-search", "search", 0, 47, 48, 13)], time_from="now-6h")
     return objects + [board]
+
+
+# ---- The dashboards an operator actually uses, organised around agents -------------------------------------------------------------------------------
+AGENT = "actor.user.full_name.keyword"
+SUMMARY = 'unmapped.risk_guard.gate:"summary"'          # one per active workload per minute: every decision counted
+ROUTES = 'unmapped.risk_guard.gate:"route"'            # one per workload per route per minute
+EGRESS = 'unmapped.risk_guard.gate:"egress"'           # one per workload per destination per minute
+NOTABLE = "unmapped.risk_guard.gate:(middleware or tunnel or signal)"   # refusals, tunnel refusals, signals
+RGF = "unmapped.risk_guard."
+
+OLD_DASHBOARDS = ["rg-dashboard-overview", "rg2-dashboard-decisions", "rg2-dashboard-signals", "wl-dashboard", "oa-dashboard-control"]
+
+NAV = ("**Agents:** [Fleet](#/view/ag-fleet) · [One agent](#/view/ag-agent) · [Incidents](#/view/ag-incidents) · [Control health](#/view/ag-health) "
+       "&nbsp;|&nbsp; **Sandboxes (OpenShell events):** [Calls](#/view/oa-dashboard-activity) · [Egress and policy](#/view/oa-dashboard-egress)")
+
+
+def markdown(oid, title, text):
+    state = {"title": title, "type": "markdown", "aggs": [], "params": {"fontSize": 12, "openLinksInNewTab": False, "markdown": text}}
+    return {"id": oid, "type": "visualization", "migrationVersion": {"visualization": "7.10.0"}, "references": [],
+            "attributes": {"title": title, "visState": json.dumps(state), "uiStateJSON": "{}", "description": "", "version": 1,
+                           "kibanaSavedObjectMeta": {"searchSourceJSON": json.dumps({"query": {"query": "", "language": "kuery"}, "filter": []})}}}
+
+
+def input_control(oid, title, field, label):
+    control = {"id": "1", "indexPattern": PATTERN_ID, "fieldName": field, "parent": "", "label": label, "type": "list",
+               "options": {"type": "terms", "multiselect": False, "dynamicOptions": True, "size": 25, "order": "desc"}}
+    state = {"title": title, "type": "input_control_vis", "aggs": [],
+             "params": {"controls": [control], "updateFiltersOnChange": True, "useTimeFilter": True, "pinFilters": False}}
+    return {"id": oid, "type": "visualization", "migrationVersion": {"visualization": "7.10.0"},
+            "references": [{"name": "control_0_index_pattern", "type": "index-pattern", "id": PATTERN_ID}],
+            "attributes": {"title": title, "visState": json.dumps(state), "uiStateJSON": "{}", "description": "", "version": 1,
+                           "kibanaSavedObjectMeta": {"searchSourceJSON": json.dumps({"query": {"query": "", "language": "kuery"}, "filter": []})}}}
+
+
+def total(agg_id="1", field="total"):
+    return metric_agg(agg_id, "sum", RGF + field)
+
+
+def build_agent_dashboards():
+    by_agent_group = terms("3", AGENT, "group", 8)
+    by_agent_row = terms("2", AGENT, "bucket", 15)
+    events_cols = (AGENT, "unmapped.risk_guard.gate", "status_detail", "risk_score", "message")
+    objects = [
+        markdown("ag-nav", "Navigation", NAV),
+        input_control("ag-pick", "Pick an agent", AGENT, "Agent"),
+        saved_search("ag-log", "What happened (newest first)", "Refusals, tunnel refusals and signals for the agent in view.", NOTABLE, columns=events_cols),
+        saved_search("ag-incident-log", "Incident log", "Refusals, tunnel refusals and signals, in the order they happened.", NOTABLE, columns=events_cols),
+        # --- fleet
+        visualization("ag-active", "Agents active", "metric", [metric_agg("1", "cardinality", AGENT)], METRIC_PARAMS, SUMMARY),
+        visualization("ag-decisions", "Decisions", "metric", [total()], METRIC_PARAMS, SUMMARY),
+        visualization("ag-refused", "Refused", "metric", [total("1", "refused_calls")], METRIC_PARAMS, SUMMARY),
+        visualization("ag-score", "Highest score", "metric", [metric_agg("1", "max", RGF + "max_score")], METRIC_PARAMS, SUMMARY),
+        visualization("ag-contained", "Containment actions", "metric", [COUNT], METRIC_PARAMS,
+                      '(unmapped.risk_guard.gate:"tunnel" and unmapped.risk_guard.refused:true) or (unmapped.risk_guard.gate:"signal" and unmapped.risk_guard.outcome:"applied")'),
+        visualization("ag-table", "Agents", "table",
+                      [total(), by_agent_row, terms("3", RGF + "task_profile.keyword", "bucket", 3), total("4", "refused_calls"),
+                       metric_agg("5", "max", RGF + "max_score"), metric_agg("6", "max", "time")], TABLE_PARAMS, SUMMARY),
+        visualization("ag-rate", "Decisions per minute, by agent", "histogram", [total(), TIME_BUCKET, by_agent_group], BAR_PARAMS, SUMMARY),
+        visualization("ag-refusal-share", "Share of decisions refused (average of each minute), by agent", "line",
+                      [metric_agg("1", "avg", RGF + "refusal_ratio"), TIME_BUCKET, by_agent_group], dict(LINE_PARAMS, seriesParams=[
+                          {"show": True, "type": "line", "mode": "normal", "data": {"label": "Share refused", "id": "1"}, "valueAxis": "ValueAxis-1",
+                           "drawLinesBetweenPoints": True, "lineWidth": 2, "showCircles": True}]), SUMMARY),
+        visualization("ag-which-sandbox", "Which sandbox is which agent", "table",
+                      [COUNT, terms("2", "container.uid.keyword", "bucket", 15), terms("3", AGENT, "bucket", 2)], TABLE_PARAMS, SUMMARY),
+        # --- one agent
+        visualization("ag1-decisions", "Decisions", "metric", [total()], METRIC_PARAMS, SUMMARY),
+        visualization("ag1-refused", "Refused", "metric", [total("1", "refused_calls")], METRIC_PARAMS, SUMMARY),
+        visualization("ag1-score", "Highest score", "metric", [metric_agg("1", "max", RGF + "max_score")], METRIC_PARAMS, SUMMARY),
+        visualization("ag1-routes", "Routes used", "metric", [metric_agg("1", "cardinality", RGF + "route.keyword")], METRIC_PARAMS, ROUTES),
+        visualization("ag1-destinations", "Destinations", "metric", [metric_agg("1", "cardinality", RGF + "destination.keyword")], METRIC_PARAMS, EGRESS),
+        visualization("ag1-over-time", "Allowed and refused over time", "histogram",
+                      [total("1", "allowed_calls"), TIME_BUCKET, total("3", "refused_calls")], BAR_PARAMS, SUMMARY),
+        visualization("ag1-score-time", "Highest score per minute", "line", [metric_agg("1", "max", RGF + "max_score"), TIME_BUCKET], dict(LINE_PARAMS, seriesParams=[
+            {"show": True, "type": "line", "mode": "normal", "data": {"label": "Highest score", "id": "1"}, "valueAxis": "ValueAxis-1",
+             "drawLinesBetweenPoints": True, "lineWidth": 2, "showCircles": True}]), SUMMARY),
+        visualization("ag1-route-table", "What it calls: route, allowed and refused", "table",
+                      [total("1", "allowed_calls"), terms("2", RGF + "host.keyword", "bucket", 6), terms("3", RGF + "method.keyword", "bucket", 6),
+                       terms("4", RGF + "route.keyword", "bucket", 12), total("5", "refused_calls"), metric_agg("6", "max", RGF + "max_score")], TABLE_PARAMS, ROUTES),
+        visualization("ag1-egress-table", "Where it connects: destination, allowed, refused, would be refused in enforce", "table",
+                      [total("1", "allowed_calls"), terms("2", RGF + "destination.keyword", "bucket", 12), total("3", "refused_calls"), total("4", "shadow_calls")],
+                      TABLE_PARAMS, EGRESS),
+        visualization("ag1-reasons", "Why it was refused", "pie", [COUNT, terms("2", RGF + "reason_code.keyword", "segment")], PIE_PARAMS, 'unmapped.risk_guard.gate:"middleware"'),
+        # --- incidents
+        visualization("in-refusals", "Refusals", "metric", [COUNT], METRIC_PARAMS, 'unmapped.risk_guard.gate:"middleware"'),
+        visualization("in-tunnels", "Tunnels refused", "metric", [COUNT], METRIC_PARAMS, 'unmapped.risk_guard.gate:"tunnel" and unmapped.risk_guard.refused:true'),
+        visualization("in-signals", "Signals", "metric", [COUNT], METRIC_PARAMS, 'unmapped.risk_guard.gate:"signal"'),
+        visualization("in-agents", "Agents involved", "metric", [metric_agg("1", "cardinality", AGENT)], METRIC_PARAMS, NOTABLE),
+        visualization("in-timeline", "Timeline of notable events, by kind", "histogram",
+                      [COUNT, TIME_BUCKET, terms("3", "status_detail.keyword", "group", 8)], BAR_PARAMS, NOTABLE),
+        visualization("in-by-agent", "By agent: events, first seen, last seen, highest score", "table",
+                      [COUNT, by_agent_row, metric_agg("3", "min", "time"), metric_agg("4", "max", "time"), metric_agg("5", "max", "risk_score")], TABLE_PARAMS, NOTABLE),
+        visualization("in-readiness", "Enforcement readiness: what shadow mode would have refused, by agent", "table",
+                      [total("1", "shadow_calls"), terms("2", AGENT, "bucket", 15), total("3", "refused_calls"), total("4", "allowed_calls")], TABLE_PARAMS, EGRESS),
+        visualization("in-signal-outcomes", "Signals: who sent them, what happened", "table",
+                      [COUNT, terms("2", RGF + "source.keyword", "bucket", 5), terms("3", RGF + "outcome.keyword", "bucket", 6)], TABLE_PARAMS, 'unmapped.risk_guard.gate:"signal"'),
+        # --- control health
+        visualization("hl-heartbeat", "Risk Guard heartbeat: summaries per minute (a gap is silence)", "histogram", [COUNT, TIME_BUCKET], BAR_PARAMS, SUMMARY),
+        visualization("hl-sources", "Which sources are reporting", "pie", [COUNT, terms("2", "metadata.product.name.keyword", "segment", 6)], PIE_PARAMS),
+        visualization("hl-silent", "Supervisors that went quiet", "metric", [COUNT], METRIC_PARAMS, 'unmapped.risk_guard.kind:"supervisor_silent"'),
+        visualization("hl-failed", "Times Risk Guard could not answer (failed closed)", "metric", [COUNT], METRIC_PARAMS, FAILURES),
+        visualization("hl-limited", "Signals held back by a limit", "metric", [COUNT], METRIC_PARAMS,
+                      'unmapped.risk_guard.gate:"signal" and unmapped.risk_guard.outcome:("rate_limited" or "too_many_active")'),
+        visualization("hl-routes-rate", "Decisions per minute, all agents", "histogram", [total(), TIME_BUCKET], BAR_PARAMS, SUMMARY),
+    ]
+    note_fleet = markdown("ag-note-fleet", "How to read this", "Every decision Risk Guard makes is counted per agent per minute. **A line that stops is an agent that went quiet.** "
+                          "'Share refused' is the average of each minute's share. Pick an agent on **One agent** for its routes, destinations and reasons.")
+    objects.append(note_fleet)
+    fleet = dashboard("ag-fleet", "Fleet: are my agents behaving?",
+                      "Every agent at a glance: how much it does, how much is refused, its highest score, when it was last seen.", [
+        ("ag-nav", "visualization", 0, 0, 48, 3),
+        ("ag-active", "visualization", 0, 3, 10, 7), ("ag-decisions", "visualization", 10, 3, 10, 7), ("ag-refused", "visualization", 20, 3, 10, 7),
+        ("ag-score", "visualization", 30, 3, 9, 7), ("ag-contained", "visualization", 39, 3, 9, 7),
+        ("ag-table", "visualization", 0, 10, 48, 14),
+        ("ag-rate", "visualization", 0, 24, 24, 14), ("ag-refusal-share", "visualization", 24, 24, 24, 14),
+        ("ag-which-sandbox", "visualization", 0, 38, 24, 13), ("ag-note-fleet", "visualization", 24, 38, 24, 13),
+        ("ag-log", "search", 0, 51, 48, 14)], time_from="now-24h")
+    one = dashboard("ag-agent", "One agent: what it does and what was refused",
+                    "Choose an agent. Everything below follows the choice: its decisions, the routes it calls, where it connects, why it was refused.", [
+        ("ag-nav", "visualization", 0, 0, 48, 3), ("ag-pick", "visualization", 0, 3, 48, 5),
+        ("ag1-decisions", "visualization", 0, 8, 10, 6), ("ag1-refused", "visualization", 10, 8, 10, 6), ("ag1-score", "visualization", 20, 8, 10, 6),
+        ("ag1-routes", "visualization", 30, 8, 9, 6), ("ag1-destinations", "visualization", 39, 8, 9, 6),
+        ("ag1-over-time", "visualization", 0, 14, 28, 13), ("ag1-score-time", "visualization", 28, 14, 20, 13),
+        ("ag1-route-table", "visualization", 0, 27, 48, 14), ("ag1-egress-table", "visualization", 0, 41, 30, 13), ("ag1-reasons", "visualization", 30, 41, 18, 13),
+        ("ag-log", "search", 0, 54, 48, 14)], time_from="now-24h")
+    incidents = dashboard("ag-incidents", "Incidents: what was refused, contained or signalled",
+                          "Refusals, tunnels refused and signals from the SIEM, by agent and in time order, with what shadow mode would have refused (is it safe to enforce?).", [
+        ("ag-nav", "visualization", 0, 0, 48, 3),
+        ("in-refusals", "visualization", 0, 3, 12, 6), ("in-tunnels", "visualization", 12, 3, 12, 6), ("in-signals", "visualization", 24, 3, 12, 6), ("in-agents", "visualization", 36, 3, 12, 6),
+        ("in-timeline", "visualization", 0, 9, 48, 14),
+        ("in-by-agent", "visualization", 0, 23, 48, 13),
+        ("in-readiness", "visualization", 0, 36, 28, 13), ("in-signal-outcomes", "visualization", 28, 36, 20, 13),
+        ("ag-incident-log", "search", 0, 49, 48, 15)], time_from="now-7d")
+    health = dashboard("ag-health", "Control health: is the control itself working?",
+                       "Is Risk Guard answering, is it reporting, are callers being refused at the gateway, did a supervisor go quiet?", [
+        ("ag-nav", "visualization", 0, 0, 48, 3),
+        ("hl-failed", "visualization", 0, 3, 16, 6), ("hl-silent", "visualization", 16, 3, 16, 6), ("hl-limited", "visualization", 32, 3, 16, 6),
+        ("hl-heartbeat", "visualization", 0, 9, 28, 13), ("hl-sources", "visualization", 28, 9, 20, 13),
+        ("hl-routes-rate", "visualization", 0, 22, 48, 12),
+        ("oa-auth-time", "visualization", 0, 34, 48, 13), ("oa-auth-source", "visualization", 0, 47, 24, 13), ("oa-failures", "visualization", 24, 47, 24, 13),
+        ("oa-ssh", "visualization", 0, 60, 48, 12)], time_from="now-24h")
+    return objects + [fleet, one, incidents, health]
 
 
 def build_objects():
@@ -383,7 +524,7 @@ def build_objects():
                        "version": 1, "timeRestore": True, "timeTo": "now", "timeFrom": "now-24h",
                        "refreshInterval": {"pause": False, "value": 30000},
                        "kibanaSavedObjectMeta": {"searchSourceJSON": json.dumps({"query": {"language": "kuery", "query": ""}, "filter": []})}}})
-    return objects + build_risk_guard_objects() + build_activity_objects() + build_workload_objects() + build_synthetic_objects()
+    return objects + build_risk_guard_objects() + build_activity_objects() + build_workload_objects() + build_agent_dashboards() + build_synthetic_objects()
 
 
 def feature(name, field="metadata.uid.keyword"):
@@ -414,7 +555,7 @@ def install_detectors():
         entity_detector("workload-activity-by-agent",
                         "How much each workload does, how much of it is refused and how varied it is, against that workload's own normal.",
                         [("decisions", "sum", "unmapped.risk_guard.total"), ("refused", "sum", "unmapped.risk_guard.refused_calls"),
-                         ("paths", "max", "unmapped.risk_guard.distinct_paths")]),
+                         ("routes", "max", "unmapped.risk_guard.distinct_routes")]),
         detector("risk-guard-refusals-per-minute", "Unusual number of Risk Guard refusals in a minute.",
                  [{"term": {"firewall_rule.type.keyword": "middleware"}}, {"term": {"action.keyword": "Denied"}}]),
         detector("middleware-failures-per-minute", "Unusual number of times the middleware could not answer (the request was refused).",
@@ -599,6 +740,8 @@ def main():
     if "--retention" in sys.argv:
         install_retention()
         return
+    for old in OLD_DASHBOARDS:
+        exec_in_pod(f"curl -s -X DELETE -u admin:$OPENSEARCH_PASSWORD -H 'osd-xsrf: true' 'http://localhost:5601/api/saved_objects/dashboard/{old}'")
     imported = dashboards_import("\n".join(json.dumps(o) for o in build_objects()) + "\n")
     errors = imported.get("errors") or []
     print(f"dashboard objects: {imported.get('successCount', 0)} imported, {len(errors)} errors")

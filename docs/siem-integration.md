@@ -141,6 +141,10 @@ OpenShell reduces what a middleware says to a generic `risk-guard` finding: the 
   `allowed_calls`, `refused_calls`, `refusal_ratio`, `max_score`, `distinct_paths`, over `window_seconds`. This is the per-workload denominator and the feature source for per-agent anomaly
   detection and model training. Counting costs about 70 ns per decision (in memory, no I/O); a workload that does nothing sends nothing, so a missing summary is itself a signal. Paths are
   counted up to 512 per workload per minute, then the count saturates.
+* **Per route and per destination.** The same minute also produces one row per route a workload called (`gate: route`: host, method, route template, `allowed_calls`, `refused_calls`, `max_score`) and one row per
+  destination it opened tunnels to (`gate: egress`: destination, `allowed_calls`, `refused_calls`, `shadow_calls`, where shadow means "would be refused in enforce mode"). Routes and destinations are capped at 64
+  per workload per minute; the rest are counted together as `other`. These give a per-agent view of what it calls and where it connects, which OpenShell's own events cannot (they know the sandbox, not the agent).
+* Events carry `actor.user.full_name`, the name an operator gave the agent (`agent-rename`); `actor.user.name` stays the agent_id that decisions are keyed on.
 * **One field name, one type.** OpenSearch fixes a field's type on first sight. The first version of the summary reused `refused` (a flag on tunnel events) as a count, and the collector dropped
   every summary. A unit test now fails if any key has different JSON types across the event kinds.
 * Individual allowed requests are not sent; OpenShell already records them and they would drown the rest.
