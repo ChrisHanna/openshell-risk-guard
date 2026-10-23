@@ -463,7 +463,7 @@ pub fn to_ocsf(
                     "unmapped": {"risk_guard": {
                         "gate": "summary", "agent_id": identity.agent_id, "run_id": identity.run_id,
                         "task_profile": identity.task_profile, "spiffe_id": spiffe,
-                        "window_seconds": window_ms / 1000, "allowed": allowed, "refused": refused, "total": total,
+                        "window_seconds": window_ms / 1000, "allowed_calls": allowed, "refused_calls": refused, "total": total,
                         "refusal_ratio": ratio, "max_score": max_score, "distinct_paths": distinct_paths,
                     }},
                 })
@@ -732,6 +732,84 @@ mod tests {
         );
     }
 
+    /// OpenSearch fixes a field's type when it first sees it, and rejects a document that later uses the same name for another type. All of Risk Guard's events share
+    /// `unmapped.risk_guard.*`, so a key must mean the same JSON type in every kind of event. (An activity summary once used `refused` as a count where tunnel events
+    /// use it as a flag; the collector dropped every summary.)
+    #[test]
+    fn a_key_has_the_same_type_in_every_kind_of_event() {
+        let sample = [
+            decision(),
+            Occurrence::Tunnel {
+                sandbox_id: "s".into(),
+                destination: "d".into(),
+                refused: true,
+                reason: "r".into(),
+                silent_for_ms: Some(1),
+                at_ms: 1,
+            },
+            Occurrence::Signal {
+                signal_id: "i".into(),
+                source: "s".into(),
+                alert_id: Some("a".into()),
+                agent_id: Some("g".into()),
+                sandbox_id: Some("s".into()),
+                outcome: "applied".into(),
+                ttl_seconds: 1,
+                reason: "r".into(),
+                at_ms: 1,
+            },
+            Occurrence::Activity {
+                sandbox_id: "s".into(),
+                window_ms: 60_000,
+                allowed: 1,
+                refused: 1,
+                max_score: 1,
+                distinct_paths: 1,
+                at_ms: 1,
+            },
+        ];
+        let kind = |v: &Value| match v {
+            Value::Bool(_) => "bool",
+            Value::Number(_) => "number",
+            Value::String(_) => "string",
+            Value::Array(_) => "array",
+            Value::Object(_) => "object",
+            Value::Null => "null",
+        };
+        let mut seen: std::collections::HashMap<String, (&str, usize)> =
+            std::collections::HashMap::new();
+        for (n, occurrence) in sample.iter().enumerate() {
+            let event = to_ocsf(occurrence, &identity(), Some("example.org"), "0.1.0");
+            // Every top-level key as well as everything under unmapped.risk_guard.
+            let mut keys: Vec<(String, &Value)> = event
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), v))
+                .collect();
+            keys.extend(
+                event["unmapped"]["risk_guard"]
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .map(|(k, v)| (format!("unmapped.risk_guard.{k}"), v)),
+            );
+            for (key, value) in keys {
+                if value.is_null() {
+                    continue;
+                }
+                if let Some((previous, from)) = seen.insert(key.clone(), (kind(value), n)) {
+                    assert_eq!(
+                        previous,
+                        kind(value),
+                        "{key} is a {previous} in event {from} and a {} in event {n}",
+                        kind(value)
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn recording_a_decision_costs_microseconds_not_milliseconds() {
         let counters = ActivityCounters::default();
@@ -761,6 +839,7 @@ mod tests {
         let event = to_ocsf(&summary, &identity(), Some("example.org"), "0.1.0");
         assert_eq!(event["unmapped"]["risk_guard"]["gate"], "summary");
         assert_eq!(event["unmapped"]["risk_guard"]["total"], 10);
+        assert_eq!(event["unmapped"]["risk_guard"]["refused_calls"], 2);
         assert_eq!(event["unmapped"]["risk_guard"]["refusal_ratio"], 0.2);
         assert_eq!(event["actor"]["user"]["name"], "agent-7");
         assert_eq!(event["status_detail"], "risk_guard_summary");

@@ -129,10 +129,11 @@ LINE_PARAMS = dict(BAR_PARAMS, type="line", seriesParams=[
      "drawLinesBetweenPoints": True, "lineWidth": 2, "showCircles": True}])
 
 # Risk Guard's own events (src/ocsf.rs). Every one has unmapped.risk_guard.gate: middleware, tunnel or signal.
-RG_ALL = "unmapped.risk_guard.gate:*"
+RG_ALL = "unmapped.risk_guard.gate:(middleware or tunnel or signal)"
 RG_MIDDLEWARE = 'unmapped.risk_guard.gate:"middleware"'
 RG_TUNNEL = 'unmapped.risk_guard.gate:"tunnel"'
 RG_SIGNAL = 'unmapped.risk_guard.gate:"signal"'
+RG_SUMMARY = 'unmapped.risk_guard.gate:"summary"'
 RG_FIELD = "unmapped.risk_guard."
 
 
@@ -311,6 +312,40 @@ def build_activity_objects():
     return objects + [activity, egress, control]
 
 
+def build_workload_objects():
+    """Per-workload activity from Risk Guard's once-a-minute summaries (every decision counted, allowed or refused)."""
+    by_workload = terms("3", "actor.user.name.keyword", "group", 8)
+    sum_total = metric_agg("1", "sum", RG_FIELD + "total")
+    objects = [
+        saved_search("wl-search", "Workload activity summaries", "One line per active sandbox per minute.", RG_SUMMARY,
+                     columns=("actor.user.name", "unmapped.risk_guard.total", "unmapped.risk_guard.refused_calls", "unmapped.risk_guard.max_score", "unmapped.risk_guard.distinct_paths")),
+        visualization("wl-decisions", "Decisions counted", "metric", [metric_agg("1", "sum", RG_FIELD + "total")], METRIC_PARAMS, RG_SUMMARY),
+        visualization("wl-refused", "Of which refused", "metric", [metric_agg("1", "sum", RG_FIELD + "refused_calls")], METRIC_PARAMS, RG_SUMMARY),
+        visualization("wl-active", "Workloads active", "metric", [metric_agg("1", "cardinality", "actor.user.name.keyword")], METRIC_PARAMS, RG_SUMMARY),
+        visualization("wl-rate", "Decisions per minute, by workload", "histogram", [sum_total, TIME_BUCKET, by_workload], BAR_PARAMS, RG_SUMMARY),
+        visualization("wl-refused-time", "Refused decisions, by workload", "histogram",
+                      [metric_agg("1", "sum", RG_FIELD + "refused_calls"), TIME_BUCKET, by_workload], BAR_PARAMS, RG_SUMMARY),
+        visualization("wl-table", "Per workload: decisions, refused, share refused, highest score", "table",
+                      [metric_agg("1", "sum", RG_FIELD + "total"), terms("2", "actor.user.name.keyword", "bucket", 10),
+                       metric_agg("3", "sum", RG_FIELD + "refused_calls"), metric_agg("4", "avg", RG_FIELD + "refusal_ratio"),
+                       metric_agg("5", "max", RG_FIELD + "max_score")], TABLE_PARAMS, RG_SUMMARY),
+        visualization("wl-variety", "Distinct paths per minute (highest), by workload", "line",
+                      [metric_agg("1", "max", RG_FIELD + "distinct_paths"), TIME_BUCKET, terms("3", "actor.user.name.keyword", "group", 6)], dict(LINE_PARAMS, seriesParams=[
+                          {"show": True, "type": "line", "mode": "normal", "data": {"label": "Distinct paths", "id": "1"}, "valueAxis": "ValueAxis-1",
+                           "drawLinesBetweenPoints": True, "lineWidth": 2, "showCircles": True}]), RG_SUMMARY),
+        visualization("wl-tasks", "Decisions by task profile", "pie", [sum_total, terms("2", RG_FIELD + "task_profile.keyword", "segment")], PIE_PARAMS, RG_SUMMARY),
+    ]
+    board = dashboard("wl-dashboard", "Workloads: what each agent does",
+                      "Every decision Risk Guard made, counted per workload per minute (allowed and refused), with the highest score and how many different paths it touched. "
+                      "A workload that stops appearing here has gone quiet.", [
+        ("wl-decisions", "visualization", 0, 0, 16, 7), ("wl-refused", "visualization", 16, 0, 16, 7), ("wl-active", "visualization", 32, 0, 16, 7),
+        ("wl-rate", "visualization", 0, 7, 28, 14), ("wl-refused-time", "visualization", 28, 7, 20, 14),
+        ("wl-table", "visualization", 0, 21, 48, 13),
+        ("wl-variety", "visualization", 0, 34, 32, 13), ("wl-tasks", "visualization", 32, 34, 16, 13),
+        ("wl-search", "search", 0, 47, 48, 13)], time_from="now-6h")
+    return objects + [board]
+
+
 def build_objects():
     objects = [{
         "id": PATTERN_ID, "type": "index-pattern", "migrationVersion": {"index-pattern": "7.6.0"}, "references": [],
@@ -348,7 +383,7 @@ def build_objects():
                        "version": 1, "timeRestore": True, "timeTo": "now", "timeFrom": "now-24h",
                        "refreshInterval": {"pause": False, "value": 30000},
                        "kibanaSavedObjectMeta": {"searchSourceJSON": json.dumps({"query": {"language": "kuery", "query": ""}, "filter": []})}}})
-    return objects + build_risk_guard_objects() + build_activity_objects() + build_synthetic_objects()
+    return objects + build_risk_guard_objects() + build_activity_objects() + build_workload_objects() + build_synthetic_objects()
 
 
 def feature(name, field="metadata.uid.keyword"):
@@ -364,8 +399,22 @@ def detector(name, description, query_filter):
             "window_delay": {"period": {"interval": 1, "unit": "Minutes"}}, "shingle_size": 8}
 
 
+def entity_detector(name, description, features, minutes=5):
+    """One baseline per workload (the detector's category field), on Risk Guard's activity summaries."""
+    return {"name": name, "description": description, "time_field": "time", "indices": [INDEX],
+            "feature_attributes": [{"feature_name": n, "feature_enabled": True, "aggregation_query": {n: {agg: {"field": f}}}} for n, agg, f in features],
+            "filter_query": {"bool": {"filter": [{"term": {"unmapped.risk_guard.gate.keyword": "summary"}}]}},
+            "detection_interval": {"period": {"interval": minutes, "unit": "Minutes"}},
+            "window_delay": {"period": {"interval": 1, "unit": "Minutes"}}, "shingle_size": 6,
+            "category_field": ["actor.user.name.keyword"]}
+
+
 def install_detectors():
     wanted = [
+        entity_detector("workload-activity-by-agent",
+                        "How much each workload does, how much of it is refused and how varied it is, against that workload's own normal.",
+                        [("decisions", "sum", "unmapped.risk_guard.total"), ("refused", "sum", "unmapped.risk_guard.refused_calls"),
+                         ("paths", "max", "unmapped.risk_guard.distinct_paths")]),
         detector("risk-guard-refusals-per-minute", "Unusual number of Risk Guard refusals in a minute.",
                  [{"term": {"firewall_rule.type.keyword": "middleware"}}, {"term": {"action.keyword": "Denied"}}]),
         detector("middleware-failures-per-minute", "Unusual number of times the middleware could not answer (the request was refused).",
