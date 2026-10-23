@@ -1,0 +1,820 @@
+{
+  "test": "path_benchmark",
+  "run_at": "2026-10-23T03:00:22+00:00",
+  "environment": {
+    "kubernetes_version": "v1.36.4",
+    "nodes": [
+      {
+        "pool": "kata",
+        "vm_size": "Standard_D4s_v5",
+        "vcpu": "4"
+      },
+      {
+        "pool": "nodepool1",
+        "vm_size": "Standard_D2s_v5",
+        "vcpu": "2"
+      },
+      {
+        "pool": "nodepool1",
+        "vm_size": "Standard_D2s_v5",
+        "vcpu": "2"
+      },
+      {
+        "pool": "security",
+        "vm_size": "Standard_D2s_v5",
+        "vcpu": "2"
+      }
+    ],
+    "risk_guard_image": "openshell-risk-guard:d35b248",
+    "repository_commit": "943b26a",
+    "risk_guard_resources": {
+      "limits": {
+        "cpu": "500m",
+        "memory": "512Mi"
+      },
+      "requests": {
+        "cpu": "100m",
+        "memory": "128Mi"
+      }
+    }
+  },
+  "seconds_per_cell": 20,
+  "request": "GET /repos/local/review (allowed read, one SPIFFE identity)",
+  "cells": [
+    {
+      "path": "direct",
+      "connections": "keepalive",
+      "workers": 1,
+      "requests": 1000,
+      "ok": 1000,
+      "policy_denied": 0,
+      "other_status": 0,
+      "transport_error": 0,
+      "seconds": 20.0,
+      "per_second": 49.9,
+      "latency_ms": {
+        "p50": 17.96,
+        "p95": 34.93,
+        "p99": 46.29,
+        "max": 66.06,
+        "mean": 20.04
+      },
+      "pod_usage_mid_run": {
+        "egress-demo": {
+          "cpu_millicores": 65,
+          "memory_mib": 15
+        },
+        "egress-proxy": {
+          "cpu_millicores": 57,
+          "memory_mib": 21
+        },
+        "risk-guard": {
+          "cpu_millicores": 101,
+          "memory_mib": 70
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 45,
+          "memory_mib": 25
+        }
+      }
+    },
+    {
+      "path": "proxied",
+      "connections": "keepalive",
+      "workers": 1,
+      "requests": 777,
+      "ok": 774,
+      "policy_denied": 0,
+      "other_status": 3,
+      "transport_error": 0,
+      "seconds": 20.0,
+      "per_second": 38.8,
+      "latency_ms": {
+        "p50": 18.84,
+        "p95": 34.74,
+        "p99": 214.52,
+        "max": 288.07,
+        "mean": 23.91
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 33,
+          "memory_mib": 0
+        },
+        "egress-demo": {
+          "cpu_millicores": 1,
+          "memory_mib": 15
+        },
+        "egress-proxy": {
+          "cpu_millicores": 7,
+          "memory_mib": 21
+        },
+        "risk-guard": {
+          "cpu_millicores": 40,
+          "memory_mib": 70
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 18,
+          "memory_mib": 25
+        }
+      }
+    },
+    {
+      "path": "denied",
+      "connections": "keepalive",
+      "workers": 1,
+      "requests": 1799,
+      "ok": 0,
+      "policy_denied": 1795,
+      "other_status": 4,
+      "transport_error": 0,
+      "seconds": 20.0,
+      "per_second": 89.9,
+      "latency_ms": {
+        "p50": 5.51,
+        "p95": 9.68,
+        "p99": 245.64,
+        "max": 296.91,
+        "mean": 10.02
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 33,
+          "memory_mib": 0
+        },
+        "egress-demo": {
+          "cpu_millicores": 1,
+          "memory_mib": 15
+        },
+        "egress-proxy": {
+          "cpu_millicores": 7,
+          "memory_mib": 21
+        },
+        "risk-guard": {
+          "cpu_millicores": 40,
+          "memory_mib": 70
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 18,
+          "memory_mib": 25
+        }
+      }
+    },
+    {
+      "path": "direct",
+      "connections": "keepalive",
+      "workers": 4,
+      "requests": 1965,
+      "ok": 1965,
+      "policy_denied": 0,
+      "other_status": 0,
+      "transport_error": 0,
+      "seconds": 20.1,
+      "per_second": 98.0,
+      "latency_ms": {
+        "p50": 25.28,
+        "p95": 117.7,
+        "p99": 347.36,
+        "max": 855.98,
+        "mean": 40.76
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 33,
+          "memory_mib": 0
+        },
+        "egress-demo": {
+          "cpu_millicores": 1,
+          "memory_mib": 15
+        },
+        "egress-proxy": {
+          "cpu_millicores": 7,
+          "memory_mib": 21
+        },
+        "risk-guard": {
+          "cpu_millicores": 40,
+          "memory_mib": 70
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 18,
+          "memory_mib": 25
+        }
+      }
+    },
+    {
+      "path": "proxied",
+      "connections": "keepalive",
+      "workers": 4,
+      "requests": 1374,
+      "ok": 1366,
+      "policy_denied": 0,
+      "other_status": 8,
+      "transport_error": 0,
+      "seconds": 20.0,
+      "per_second": 68.6,
+      "latency_ms": {
+        "p50": 24.29,
+        "p95": 249.06,
+        "p99": 342.62,
+        "max": 652.72,
+        "mean": 55.67
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 0,
+          "memory_mib": 0
+        },
+        "egress-demo": {
+          "cpu_millicores": 14,
+          "memory_mib": 15
+        },
+        "egress-proxy": {
+          "cpu_millicores": 23,
+          "memory_mib": 21
+        },
+        "risk-guard": {
+          "cpu_millicores": 77,
+          "memory_mib": 67
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 35,
+          "memory_mib": 25
+        }
+      }
+    },
+    {
+      "path": "denied",
+      "connections": "keepalive",
+      "workers": 4,
+      "requests": 1904,
+      "ok": 0,
+      "policy_denied": 1888,
+      "other_status": 16,
+      "transport_error": 0,
+      "seconds": 20.2,
+      "per_second": 94.2,
+      "latency_ms": {
+        "p50": 19.79,
+        "p95": 265.79,
+        "p99": 304.46,
+        "max": 315.81,
+        "mean": 38.53
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 0,
+          "memory_mib": 0
+        },
+        "egress-demo": {
+          "cpu_millicores": 14,
+          "memory_mib": 15
+        },
+        "egress-proxy": {
+          "cpu_millicores": 23,
+          "memory_mib": 21
+        },
+        "risk-guard": {
+          "cpu_millicores": 77,
+          "memory_mib": 67
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 35,
+          "memory_mib": 25
+        }
+      }
+    },
+    {
+      "path": "direct",
+      "connections": "keepalive",
+      "workers": 16,
+      "requests": 2235,
+      "ok": 2235,
+      "policy_denied": 0,
+      "other_status": 0,
+      "transport_error": 0,
+      "seconds": 20.3,
+      "per_second": 110.0,
+      "latency_ms": {
+        "p50": 34.15,
+        "p95": 741.89,
+        "p99": 1948.39,
+        "max": 3835.0,
+        "mean": 143.87
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 26,
+          "memory_mib": 16
+        },
+        "egress-demo": {
+          "cpu_millicores": 19,
+          "memory_mib": 15
+        },
+        "egress-proxy": {
+          "cpu_millicores": 36,
+          "memory_mib": 21
+        },
+        "risk-guard": {
+          "cpu_millicores": 80,
+          "memory_mib": 71
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 49,
+          "memory_mib": 26
+        }
+      }
+    },
+    {
+      "path": "proxied",
+      "connections": "keepalive",
+      "workers": 16,
+      "requests": 1696,
+      "ok": 1632,
+      "policy_denied": 0,
+      "other_status": 64,
+      "transport_error": 0,
+      "seconds": 20.5,
+      "per_second": 82.7,
+      "latency_ms": {
+        "p50": 128.9,
+        "p95": 496.06,
+        "p99": 795.52,
+        "max": 1124.59,
+        "mean": 179.89
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 26,
+          "memory_mib": 16
+        },
+        "egress-demo": {
+          "cpu_millicores": 19,
+          "memory_mib": 15
+        },
+        "egress-proxy": {
+          "cpu_millicores": 36,
+          "memory_mib": 21
+        },
+        "risk-guard": {
+          "cpu_millicores": 80,
+          "memory_mib": 71
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 49,
+          "memory_mib": 26
+        }
+      }
+    },
+    {
+      "path": "denied",
+      "connections": "keepalive",
+      "workers": 16,
+      "requests": 1959,
+      "ok": 0,
+      "policy_denied": 1927,
+      "other_status": 32,
+      "transport_error": 0,
+      "seconds": 20.2,
+      "per_second": 96.8,
+      "latency_ms": {
+        "p50": 87.79,
+        "p95": 398.74,
+        "p99": 427.33,
+        "max": 436.61,
+        "mean": 159.24
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 26,
+          "memory_mib": 16
+        },
+        "egress-demo": {
+          "cpu_millicores": 19,
+          "memory_mib": 15
+        },
+        "egress-proxy": {
+          "cpu_millicores": 36,
+          "memory_mib": 21
+        },
+        "risk-guard": {
+          "cpu_millicores": 80,
+          "memory_mib": 71
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 49,
+          "memory_mib": 26
+        }
+      }
+    },
+    {
+      "path": "direct",
+      "connections": "keepalive",
+      "workers": 32,
+      "requests": 2245,
+      "ok": 2245,
+      "policy_denied": 0,
+      "other_status": 0,
+      "transport_error": 0,
+      "seconds": 20.6,
+      "per_second": 108.8,
+      "latency_ms": {
+        "p50": 63.48,
+        "p95": 1440.04,
+        "p99": 2844.98,
+        "max": 4944.0,
+        "mean": 288.31
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 17,
+          "memory_mib": 0
+        },
+        "egress-demo": {
+          "cpu_millicores": 21,
+          "memory_mib": 32
+        },
+        "egress-proxy": {
+          "cpu_millicores": 32,
+          "memory_mib": 22
+        },
+        "risk-guard": {
+          "cpu_millicores": 83,
+          "memory_mib": 75
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 59,
+          "memory_mib": 25
+        }
+      }
+    },
+    {
+      "path": "proxied",
+      "connections": "keepalive",
+      "workers": 32,
+      "requests": 1586,
+      "ok": 1166,
+      "policy_denied": 0,
+      "other_status": 420,
+      "transport_error": 0,
+      "seconds": 20.4,
+      "per_second": 77.6,
+      "latency_ms": {
+        "p50": 368.09,
+        "p95": 670.32,
+        "p99": 844.54,
+        "max": 1674.5,
+        "mean": 372.21
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 17,
+          "memory_mib": 0
+        },
+        "egress-demo": {
+          "cpu_millicores": 21,
+          "memory_mib": 32
+        },
+        "egress-proxy": {
+          "cpu_millicores": 32,
+          "memory_mib": 22
+        },
+        "risk-guard": {
+          "cpu_millicores": 83,
+          "memory_mib": 75
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 59,
+          "memory_mib": 25
+        }
+      }
+    },
+    {
+      "path": "denied",
+      "connections": "keepalive",
+      "workers": 32,
+      "requests": 1975,
+      "ok": 0,
+      "policy_denied": 1502,
+      "other_status": 473,
+      "transport_error": 0,
+      "seconds": 20.2,
+      "per_second": 97.6,
+      "latency_ms": {
+        "p50": 184.53,
+        "p95": 472.39,
+        "p99": 491.68,
+        "max": 495.89,
+        "mean": 270.34
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 24,
+          "memory_mib": 0
+        },
+        "egress-demo": {
+          "cpu_millicores": 13,
+          "memory_mib": 34
+        },
+        "egress-proxy": {
+          "cpu_millicores": 31,
+          "memory_mib": 22
+        },
+        "risk-guard": {
+          "cpu_millicores": 72,
+          "memory_mib": 80
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 69,
+          "memory_mib": 27
+        }
+      }
+    },
+    {
+      "path": "direct",
+      "connections": "keepalive",
+      "workers": 64,
+      "requests": 2503,
+      "ok": 2503,
+      "policy_denied": 0,
+      "other_status": 0,
+      "transport_error": 0,
+      "seconds": 21.1,
+      "per_second": 118.7,
+      "latency_ms": {
+        "p50": 103.63,
+        "p95": 2364.79,
+        "p99": 4373.8,
+        "max": 9088.83,
+        "mean": 520.26
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 24,
+          "memory_mib": 0
+        },
+        "egress-demo": {
+          "cpu_millicores": 13,
+          "memory_mib": 34
+        },
+        "egress-proxy": {
+          "cpu_millicores": 31,
+          "memory_mib": 22
+        },
+        "risk-guard": {
+          "cpu_millicores": 72,
+          "memory_mib": 80
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 69,
+          "memory_mib": 27
+        }
+      }
+    },
+    {
+      "path": "proxied",
+      "connections": "keepalive",
+      "workers": 64,
+      "requests": 2286,
+      "ok": 170,
+      "policy_denied": 0,
+      "other_status": 2116,
+      "transport_error": 0,
+      "seconds": 20.5,
+      "per_second": 111.3,
+      "latency_ms": {
+        "p50": 378.99,
+        "p95": 592.15,
+        "p99": 626.53,
+        "max": 637.79,
+        "mean": 348.85
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 24,
+          "memory_mib": 0
+        },
+        "egress-demo": {
+          "cpu_millicores": 13,
+          "memory_mib": 34
+        },
+        "egress-proxy": {
+          "cpu_millicores": 31,
+          "memory_mib": 22
+        },
+        "risk-guard": {
+          "cpu_millicores": 72,
+          "memory_mib": 80
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 69,
+          "memory_mib": 27
+        }
+      }
+    },
+    {
+      "path": "denied",
+      "connections": "keepalive",
+      "workers": 64,
+      "requests": 2412,
+      "ok": 0,
+      "policy_denied": 237,
+      "other_status": 2175,
+      "transport_error": 0,
+      "seconds": 21.0,
+      "per_second": 115.0,
+      "latency_ms": {
+        "p50": 317.41,
+        "p95": 592.65,
+        "p99": 638.49,
+        "max": 645.75,
+        "mean": 342.22
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 36,
+          "memory_mib": 0
+        },
+        "egress-demo": {
+          "cpu_millicores": 21,
+          "memory_mib": 38
+        },
+        "egress-proxy": {
+          "cpu_millicores": 28,
+          "memory_mib": 22
+        },
+        "risk-guard": {
+          "cpu_millicores": 77,
+          "memory_mib": 95
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 47,
+          "memory_mib": 36
+        }
+      }
+    },
+    {
+      "path": "direct",
+      "connections": "fresh",
+      "workers": 4,
+      "requests": 2084,
+      "ok": 2084,
+      "policy_denied": 0,
+      "other_status": 0,
+      "transport_error": 0,
+      "seconds": 20.0,
+      "per_second": 104.0,
+      "latency_ms": {
+        "p50": 23.53,
+        "p95": 99.87,
+        "p99": 339.06,
+        "max": 1339.46,
+        "mean": 38.43
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 36,
+          "memory_mib": 0
+        },
+        "egress-demo": {
+          "cpu_millicores": 21,
+          "memory_mib": 38
+        },
+        "egress-proxy": {
+          "cpu_millicores": 28,
+          "memory_mib": 22
+        },
+        "risk-guard": {
+          "cpu_millicores": 79,
+          "memory_mib": 95
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 47,
+          "memory_mib": 36
+        }
+      }
+    },
+    {
+      "path": "proxied",
+      "connections": "fresh",
+      "workers": 4,
+      "requests": 1242,
+      "ok": 1230,
+      "policy_denied": 0,
+      "other_status": 12,
+      "transport_error": 0,
+      "seconds": 20.1,
+      "per_second": 61.9,
+      "latency_ms": {
+        "p50": 38.55,
+        "p95": 252.9,
+        "p99": 298.01,
+        "max": 465.82,
+        "mean": 60.04
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 20,
+          "memory_mib": 0
+        },
+        "egress-demo": {
+          "cpu_millicores": 32,
+          "memory_mib": 30
+        },
+        "egress-proxy": {
+          "cpu_millicores": 29,
+          "memory_mib": 22
+        },
+        "risk-guard": {
+          "cpu_millicores": 79,
+          "memory_mib": 71
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 31,
+          "memory_mib": 36
+        }
+      }
+    },
+    {
+      "path": "direct",
+      "connections": "fresh",
+      "workers": 16,
+      "requests": 2262,
+      "ok": 2262,
+      "policy_denied": 0,
+      "other_status": 0,
+      "transport_error": 0,
+      "seconds": 20.4,
+      "per_second": 110.9,
+      "latency_ms": {
+        "p50": 33.43,
+        "p95": 739.52,
+        "p99": 1556.84,
+        "max": 3482.52,
+        "mean": 142.43
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 20,
+          "memory_mib": 0
+        },
+        "egress-demo": {
+          "cpu_millicores": 32,
+          "memory_mib": 30
+        },
+        "egress-proxy": {
+          "cpu_millicores": 29,
+          "memory_mib": 22
+        },
+        "risk-guard": {
+          "cpu_millicores": 79,
+          "memory_mib": 71
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 31,
+          "memory_mib": 36
+        }
+      }
+    },
+    {
+      "path": "proxied",
+      "connections": "fresh",
+      "workers": 16,
+      "requests": 1514,
+      "ok": 1463,
+      "policy_denied": 0,
+      "other_status": 51,
+      "transport_error": 0,
+      "seconds": 20.2,
+      "per_second": 74.9,
+      "latency_ms": {
+        "p50": 144.1,
+        "p95": 520.35,
+        "p99": 805.96,
+        "max": 1351.14,
+        "mean": 201.49
+      },
+      "pod_usage_mid_run": {
+        "bench-direct": {
+          "cpu_millicores": 20,
+          "memory_mib": 0
+        },
+        "egress-demo": {
+          "cpu_millicores": 32,
+          "memory_mib": 30
+        },
+        "egress-proxy": {
+          "cpu_millicores": 29,
+          "memory_mib": 22
+        },
+        "risk-guard": {
+          "cpu_millicores": 79,
+          "memory_mib": 71
+        },
+        "risk-guard-fixture": {
+          "cpu_millicores": 31,
+          "memory_mib": 36
+        }
+      }
+    }
+  ]
+}
