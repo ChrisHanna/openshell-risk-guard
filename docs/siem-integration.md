@@ -53,6 +53,22 @@ Each record carries the sandbox name and ID, the URL, the method, and the OpenSh
 3. A short guide for vendors in both directions: *consume* the OCSF and OTLP output, and *extend* OpenShell by implementing the middleware or interceptor
    contract (Risk Guard is the worked example).
 
+## Reference SIEM for the demo (prepared, not yet deployed)
+
+`deploy/aks/siem/` and scripts `22-deploy-siem.ps1` and `23-enable-ocsf-export.ps1` build a demonstration pipeline: the gateway and supervisors send OCSF as OTLP to
+an OpenTelemetry Collector, which writes documents to a single-node OpenSearch, viewed in OpenSearch Dashboards. Placement and controls:
+
+* its own namespace and a tainted node pool, away from Risk Guard and the sandboxes; default-deny network policies; Dashboards reachable only by port-forward;
+* the collector accepts OTLP only from the OpenShell gateway and supervisor pods. A compromised supervisor could still send forged events, so a rule that decides
+  something must treat supervisor-origin records as untrusted; the agent pods cannot reach it at all;
+* events contain attacker-influenced text (URLs, paths), so Dashboards must stay patched and its access restricted;
+* the OpenSearch admin password is generated into a Secret by the script and is never printed or committed;
+* **demo only:** a cluster administrator can delete it, so it is not the tamper-resistant audit store a production deployment needs (that is a separate cluster,
+  subscription or managed service). It uses a self-signed certificate and one node.
+
+Validated offline: the Helm values render against the real charts, the collector configuration passes `otelcol-contrib validate` (and a deliberately bad value
+is rejected), and the network policies match the rendered pod labels. Not yet run on the cluster.
+
 ## What this does not claim
 
 No commercial SIEM has been tested. The statement is: the OCSF output of a real sandbox contains Risk Guard's refusals, verified on this cluster.

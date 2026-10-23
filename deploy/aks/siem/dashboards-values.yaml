@@ -1,0 +1,29 @@
+# DEMO ONLY. OpenSearch Dashboards 3.9.0 (Apache-2.0). Reachable only by `kubectl port-forward`: no ingress, no public address.
+opensearchHosts: "https://opensearch-cluster-master:9200"
+replicaCount: 1
+
+extraEnvs:
+  - name: OPENSEARCH_USERNAME
+    value: admin
+  - name: OPENSEARCH_PASSWORD
+    valueFrom:
+      secretKeyRef: {name: opensearch-admin, key: password}
+
+# The demo OpenSearch uses a self-signed certificate; a real deployment would verify it.
+config:
+  opensearch_dashboards.yml: |
+    server.host: "0.0.0.0"
+    opensearch.hosts: ["https://opensearch-cluster-master:9200"]
+    opensearch.ssl.verificationMode: none
+
+resources:
+  requests: {cpu: 250m, memory: 512Mi}
+  limits: {memory: 1Gi}
+service: {type: ClusterIP}
+nodeSelector: {workload-class: siem}
+tolerations:
+  - {key: workload-class, operator: Equal, value: siem, effect: NoSchedule}
+podSecurityContext: {fsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
+securityContext: {capabilities: {drop: [ALL]}, runAsNonRoot: true, runAsUser: 1000, allowPrivilegeEscalation: false}
+serviceAccount: {create: true}
+automountServiceAccountToken: false

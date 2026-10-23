@@ -31,7 +31,8 @@
     "sandbox-policy.yaml",
     "entra-agent-provider.yaml",
     "agents",
-    "fleet"
+    "fleet",
+    "siem"
   ],
   "forbidden_in_supported": {
     "args": [

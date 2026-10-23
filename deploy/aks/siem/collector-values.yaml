@@ -1,0 +1,76 @@
+# DEMO ONLY. OpenTelemetry Collector (contrib build, which includes the OpenSearch exporter). OpenShell's gateway and supervisors send OCSF events here
+# as OTLP logs; the collector turns each event's JSON body into a document and writes it to OpenSearch. This is the fan-out point: more exporters can be
+# added next to `opensearch` without touching OpenShell or Risk Guard.
+fullnameOverride: otel-collector
+mode: deployment
+replicaCount: 1
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag: "0.163.2"
+command: {name: otelcol-contrib}
+
+extraEnvs:
+  - name: OPENSEARCH_USERNAME
+    value: admin
+  - name: OPENSEARCH_PASSWORD
+    valueFrom:
+      secretKeyRef: {name: opensearch-admin, key: password}
+
+ports:
+  otlp: {enabled: true, containerPort: 4317, servicePort: 4317, protocol: TCP}
+  otlp-http: {enabled: false}
+  jaeger-compact: {enabled: false}
+  jaeger-thrift: {enabled: false}
+  jaeger-grpc: {enabled: false}
+  zipkin: {enabled: false}
+  metrics: {enabled: false}
+
+config:
+  extensions:
+    health_check: {endpoint: "${env:MY_POD_IP}:13133"}
+    basicauth/opensearch:
+      client_auth:
+        username: ${env:OPENSEARCH_USERNAME}
+        password: ${env:OPENSEARCH_PASSWORD}
+  receivers:
+    otlp:
+      protocols:
+        grpc: {endpoint: 0.0.0.0:4317}
+  processors:
+    memory_limiter: {check_interval: 1s, limit_mib: 400, spike_limit_mib: 100, limit_percentage: null, spike_limit_percentage: null}
+    # Each OCSF event arrives as a JSON string in the log body; make it a real document so OpenSearch can index its fields.
+    transform/ocsf:
+      error_mode: ignore
+      log_statements:
+        - context: log
+          statements:
+            - set(body, ParseJSON(body)) where IsString(body)
+    batch: {}
+  exporters:
+    opensearch:
+      http:
+        endpoint: https://opensearch-cluster-master.siem.svc:9200
+        auth: {authenticator: basicauth/opensearch}
+        tls: {insecure_skip_verify: true}   # demo only: self-signed certificate
+      logs_index: ocsf-openshell
+      mapping: {mode: bodymap}
+  service:
+    extensions: [health_check, basicauth/opensearch]
+    pipelines:
+      logs:
+        receivers: [otlp]
+        processors: [memory_limiter, transform/ocsf, batch]
+        exporters: [opensearch]
+      traces: null
+      metrics: null
+
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {memory: 512Mi}
+nodeSelector: {workload-class: siem}
+tolerations:
+  - {key: workload-class, operator: Equal, value: siem, effect: NoSchedule}
+podSecurityContext: {seccompProfile: {type: RuntimeDefault}}
+securityContext: {capabilities: {drop: [ALL]}, runAsNonRoot: true, runAsUser: 10001, readOnlyRootFilesystem: true, allowPrivilegeEscalation: false}
+serviceAccount: {create: true, automountServiceAccountToken: false}
+service: {type: ClusterIP}

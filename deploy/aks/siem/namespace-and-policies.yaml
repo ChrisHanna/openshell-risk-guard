@@ -1,0 +1,81 @@
+# DEMO ONLY. A reference SIEM (OpenSearch) for showing OpenShell's and Risk Guard's OCSF events end to end.
+#
+# It lives in its own namespace on its own tainted node pool, away from the enforcement point (Risk Guard) and the sandboxes: it is large, it renders
+# attacker-influenced text (URLs and paths from agents), and a cluster administrator can still delete it, so it is NOT the tamper-resistant audit
+# store a production deployment needs (that is a separate cluster, subscription or managed service). Applied by scripts/aks/22-deploy-siem.ps1.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: siem
+  labels:
+    app.kubernetes.io/part-of: risk-guard-demo
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+# Nothing in or out unless allowed below.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: siem}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-dns, namespace: siem}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+---
+# The collector accepts OTLP only from OpenShell's gateway and sandbox supervisors. (Agent pods cannot reach it at all: OpenShell denies their egress.)
+# A compromised supervisor could still send forged events, so anything a rule decides on must treat supervisor-origin records as untrusted.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: collector-ingress, namespace: siem}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: opentelemetry-collector}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: openshell}}
+          podSelector: {matchLabels: {openshell.ai/component: supervisor}}
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: openshell}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: openshell}}
+      ports: [{protocol: TCP, port: 4317}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: collector-to-opensearch, namespace: siem}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: opentelemetry-collector}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: opensearch}}}]
+      ports: [{protocol: TCP, port: 9200}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: dashboards-to-opensearch, namespace: siem}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: opensearch-dashboards}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: opensearch}}}]
+      ports: [{protocol: TCP, port: 9200}]
+---
+# OpenSearch takes connections from the collector and the dashboards only, and makes none of its own (single node, no outbound).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: opensearch-ingress, namespace: siem}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: opensearch}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: opentelemetry-collector}}
+        - podSelector: {matchLabels: {app.kubernetes.io/name: opensearch-dashboards}}
+      ports: [{protocol: TCP, port: 9200}]
