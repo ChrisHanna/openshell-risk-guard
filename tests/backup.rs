@@ -161,6 +161,13 @@ fn a_damaged_unchecked_or_existing_target_is_refused() {
     let file = dir.path().join("snapshot.db");
     backup(&db, &file).unwrap();
 
+    // The directory for backups is created when it is missing (on the cluster's volume it does not exist until the first backup).
+    let nested = dir
+        .path()
+        .join("backups")
+        .join("nested")
+        .join("snapshot.db");
+    assert!(backup(&db, &nested).is_ok() && verify(&nested).is_ok());
     // A backup is never overwritten.
     assert!(backup(&db, &file).is_err());
     // A restore never replaces a database unless told to.
