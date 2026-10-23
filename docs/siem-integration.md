@@ -117,3 +117,28 @@ fields to integers, and an index template maps `time` as a date and sets no repl
 ## What this does not claim
 
 No commercial SIEM has been tested. The statement is: the OCSF output of a real sandbox contains Risk Guard's refusals, verified on this cluster.
+
+## Risk Guard's own events
+
+OpenShell reduces what a middleware says to a generic `risk-guard` finding: the score, the threshold and the workload do not survive. So Risk Guard sends its own OCSF events
+(`src/ocsf.rs`) to the same collector, over OTLP/HTTP (`--ocsf-otlp-endpoint`), into the same index. They carry:
+
+| Field | Meaning |
+|---|---|
+| `class_uid` 2004 (Detection Finding) | A refusal at the supervisor middleware, a tunnel refusal, a "would refuse in enforce mode" note, or a silent supervisor |
+| `class_uid` 6003 (API Activity) | A signal received from a SIEM, with its outcome |
+| `actor.user.name` | The workload (agent) |
+| `actor.user.uid` | The sandbox's SPIFFE ID, when a trust domain is configured (otherwise null) |
+| `actor.session.uid` | The run |
+| `risk_score`, `unmapped.risk_guard.threshold` | The score and the line it crossed |
+| `unmapped.risk_guard.reason_code`, `.signals[]` | Why, and which signals contributed |
+| `unmapped.risk_guard.task_profile` | The task the workload was approved for |
+| `unmapped.risk_guard.gate` | `middleware`, `tunnel` or `signal` |
+| `container.uid` | The sandbox |
+| `status_detail` | `risk_guard_denied:<reason>`, `risk_guard_tunnel:<kind>` or `risk_guard_signal:<outcome>` |
+
+* Allowed requests are not sent; OpenShell already records them and they would drown the rest.
+* Sending never slows a decision: events go through a bounded queue to a background task; when the queue is full or the collector is down they are dropped and counted.
+* Operator actions taken with the command line (quarantine, release, clear) run in a separate process and are **not** sent; they are in the quarantine audit table.
+* The events follow OCSF 1.8's shape but are **not validated against the schema**.
+* Enable on the demo cluster with `scripts/aks/25-enable-signals.ps1` (it turns on the export and the signals listener together).

@@ -122,6 +122,8 @@ pub struct RiskGuardMiddlewareService {
     pub require_agent_identity: bool,
     /// Where each request's server-side decision time is recorded. `None` records nothing (tests).
     pub latency: Option<Arc<crate::latency::LatencyRecorder>>,
+    /// Where refusals are sent as OCSF events. `None` sends nothing.
+    pub ocsf: Option<Arc<crate::ocsf::OcsfEmitter>>,
 }
 
 impl fmt::Debug for RiskGuardMiddlewareService {
@@ -155,7 +157,15 @@ impl RiskGuardMiddlewareService {
             eval_timeout: Duration::from_millis(DEFAULT_EVAL_TIMEOUT_MS),
             require_agent_identity: false,
             latency: None,
+            ocsf: None,
         }
+    }
+
+    /// Send each refusal to the SIEM as an OCSF event (see `crate::ocsf`).
+    #[must_use]
+    pub fn with_ocsf(mut self, emitter: Arc<crate::ocsf::OcsfEmitter>) -> Self {
+        self.ocsf = Some(emitter);
+        self
     }
 
     /// Record each request's server-side decision time (success, error and timeout alike) into `recorder`.
@@ -436,6 +446,12 @@ impl SupervisorMiddleware for RiskGuardMiddlewareService {
             None => (None, None, Vec::new()),
         };
 
+        // Kept for the SIEM event: the method, host and path only (the privacy boundary below still holds: no body, headers or query).
+        let (log_method, log_host, log_path) = (
+            target.method.clone(),
+            target.host.clone(),
+            target.path.split('?').next().unwrap_or("/").to_string(),
+        );
         // NFR-04 privacy boundary: ignore request.body, request.headers, and target.query.
         let raw_input = RawRequestInput {
             request_id: ctx.request_id.clone(),
@@ -488,6 +504,30 @@ impl SupervisorMiddleware for RiskGuardMiddlewareService {
             }
         };
 
+        if let Some(ocsf) = &self.ocsf
+            && eval.outcome == DecisionOutcome::Deny
+        {
+            ocsf.emit(crate::ocsf::Occurrence::Decision {
+                sandbox_id: eval.sandbox_id.clone(),
+                request_id: eval.request_id.clone(),
+                outcome: "Deny".into(),
+                reason_code: eval.reason_code.clone(),
+                risk_score: eval.risk_score,
+                threshold: eval.threshold,
+                mode: eval.mode.as_str().to_string(),
+                method: log_method,
+                host: log_host,
+                port,
+                path: log_path,
+                signals: eval
+                    .signals
+                    .iter()
+                    .filter(|signal| signal.contribution > 0)
+                    .map(|signal| (signal.feature.clone(), signal.contribution))
+                    .collect(),
+                at_ms: eval.decision_timestamp_ms,
+            });
+        }
         Ok(Response::new(build_http_request_result(&eval)))
     }
 

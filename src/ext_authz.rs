@@ -199,6 +199,8 @@ pub struct ExtAuthzService {
     restriction_mode: TunnelMode,
     /// How long a sandbox that has been reporting requests may go without one before opening a tunnel counts as a silent supervisor. 0 turns the check off.
     silence_ms: i64,
+    /// Where tunnel refusals and silent supervisors are sent as OCSF events. `None` sends nothing.
+    ocsf: Option<Arc<crate::ocsf::OcsfEmitter>>,
 }
 
 /// Whether a signal blocks the tunnel (`Enforce`) or is only recorded as what would have been blocked (`Shadow`).
@@ -236,6 +238,7 @@ impl ExtAuthzService {
             tunnels: None,
             restriction_mode: TunnelMode::Shadow,
             silence_ms: DEFAULT_SILENCE_MS,
+            ocsf: None,
         })
     }
 
@@ -253,6 +256,13 @@ impl ExtAuthzService {
     #[must_use]
     pub fn with_silence_threshold(mut self, threshold: std::time::Duration) -> Self {
         self.silence_ms = i64::try_from(threshold.as_millis()).unwrap_or(i64::MAX);
+        self
+    }
+
+    /// Send tunnel refusals, would-refuse notes and silent supervisors to the SIEM as OCSF events (see `crate::ocsf`).
+    #[must_use]
+    pub fn with_ocsf(mut self, emitter: Arc<crate::ocsf::OcsfEmitter>) -> Self {
+        self.ocsf = Some(emitter);
         self
     }
 
@@ -374,6 +384,18 @@ impl ExtAuthzService {
             Some(_) => ("allow", ""),
         };
         tracing::info!(%sandbox_id, destination, verdict, reason, "sandbox tunnel checked");
+        if let Some(ocsf) = &self.ocsf
+            && !reason.is_empty()
+        {
+            ocsf.emit(crate::ocsf::Occurrence::Tunnel {
+                sandbox_id: sandbox_id.clone(),
+                destination: destination.to_string(),
+                refused: verdict == "deny",
+                reason: reason.to_string(),
+                silent_for_ms: silent_for_ms.filter(|_| reason.contains("stopped reporting")),
+                at_ms: now_ms,
+            });
+        }
         Ok(if verdict == "allow" {
             allow()
         } else {

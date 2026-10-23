@@ -18,7 +18,7 @@ extraEnvs:
 
 ports:
   otlp: {enabled: true, containerPort: 4317, servicePort: 4317, protocol: TCP}
-  otlp-http: {enabled: false}
+  otlp-http: {enabled: true, containerPort: 4318, servicePort: 4318, protocol: TCP}
   jaeger-compact: {enabled: false}
   jaeger-thrift: {enabled: false}
   jaeger-grpc: {enabled: false}
@@ -36,6 +36,8 @@ config:
     otlp:
       protocols:
         grpc: {endpoint: 0.0.0.0:4317}
+        # Risk Guard's own events arrive over HTTP (OTLP/JSON); OpenShell's over gRPC.
+        http: {endpoint: 0.0.0.0:4318}
   processors:
     memory_limiter: {check_interval: 1s, limit_mib: 400, spike_limit_mib: 100, limit_percentage: null, spike_limit_percentage: null}
     # Each OCSF event arrives as a JSON string in the log body; make it a real document so OpenSearch can index its fields.

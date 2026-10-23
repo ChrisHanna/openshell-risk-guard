@@ -188,6 +188,13 @@ pub enum Commands {
             env = "RISK_GUARD_SIGNALS_ALLOW_PLAINTEXT"
         )]
         signals_allow_plaintext: bool,
+        /// Base URL of an OpenTelemetry Collector's OTLP/HTTP receiver (e.g. http://otel-collector.siem:4318). When given, Risk Guard sends its refusals,
+        /// tunnel refusals and signals there as OCSF events carrying the workload, run, task, score and reason.
+        #[arg(long = "ocsf-otlp-endpoint", env = "RISK_GUARD_OCSF_OTLP_ENDPOINT")]
+        ocsf_otlp_endpoint: Option<String>,
+        /// The trust domain that gives sandboxes SPIFFE IDs, used to fill the events' `actor.user.uid`.
+        #[arg(long = "ocsf-trust-domain", env = "RISK_GUARD_OCSF_TRUST_DOMAIN")]
+        ocsf_trust_domain: Option<String>,
     },
     /// Evaluate one request as the workload that owns an X.509-SVID, against a running SVID listener, and print the decision.
     SvidProbe {
@@ -652,6 +659,8 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             signals_max_per_minute,
             signals_max_active,
             signals_allow_plaintext,
+            ocsf_otlp_endpoint,
+            ocsf_trust_domain,
         } => {
             if public_key_pem.is_none() && !allow_insecure_local_test {
                 return Err(RiskGuardError::InvalidArgument(
@@ -731,6 +740,16 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             let hardening = Arc::new(ProverHardeningEngine::new());
             let health = crate::sidecar::HealthServer::new(Arc::clone(&store));
 
+            let ocsf = ocsf_otlp_endpoint.map(|endpoint| {
+                crate::ocsf::OcsfEmitter::start(
+                    crate::ocsf::OcsfConfig {
+                        endpoint,
+                        trust_domain: ocsf_trust_domain.clone(),
+                        version: env!("CARGO_PKG_VERSION").to_string(),
+                    },
+                    Arc::clone(&store),
+                )
+            });
             match (signals_listen, signals_token_file.as_deref()) {
                 (Some(signals_addr), token_file) => {
                     let policy = crate::store::SignalPolicy {
@@ -746,6 +765,10 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                             policy,
                         )?,
                         None => crate::signals::SignalsState::from_env(Arc::clone(&store), policy)?,
+                    };
+                    let state = match &ocsf {
+                        Some(emitter) => state.with_ocsf(Arc::clone(emitter)),
+                        None => state,
                     };
                     tokio::spawn(async move {
                         if let Err(error) =
@@ -803,6 +826,10 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             )
             .with_required_agent_identity(!allow_unattributed)
             .with_latency_recorder(latency);
+            let middleware_service = match &ocsf {
+                Some(emitter) => middleware_service.with_ocsf(Arc::clone(emitter)),
+                None => middleware_service,
+            };
 
             if let Some(svid_addr) = svid_listen {
                 let (Some(bundle), Some(server_tls)) = (svid_bundle.clone(), tls.clone()) else {
@@ -841,6 +868,9 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                             )));
                         }
                     });
+                    if let Some(emitter) = &ocsf {
+                        service = service.with_ocsf(Arc::clone(emitter));
+                    }
                     service = service.with_silence_threshold(std::time::Duration::from_secs(
                         tunnel_silence_seconds,
                     ));

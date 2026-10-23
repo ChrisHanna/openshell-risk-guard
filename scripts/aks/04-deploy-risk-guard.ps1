@@ -165,6 +165,13 @@ if (Get-StateValue 'signalsEnabled') {
     $signals.env = "          env:`n            - name: RISK_GUARD_SIGNALS_TOKEN`n              valueFrom:`n                secretKeyRef: {name: siem-signals-token, key: token}"
     Write-Note "signals listener on :50063 ($(if (Get-StateValue 'signalsDryRun') { 'dry run: records, changes nothing' } else { 'enforcing' }))"
 }
+# Risk Guard's own OCSF events (refusals with the workload, score and reason; tunnel refusals; signals) go to the SIEM's collector over OTLP/HTTP.
+if (Get-StateValue 'ocsfExport') {
+    $extra = "            - --ocsf-otlp-endpoint=http://otel-collector.siem.svc.cluster.local:4318"
+    if ($svidDomain -and (Get-StateValue 'sandboxSpiffe')) { $extra += "`n            - --ocsf-trust-domain=$svidDomain" }
+    $signals.args = if ($signals.args) { $signals.args + "`n" + $extra } else { $extra }
+    Write-Note 'OCSF export to the SIEM collector (:4318)'
+}
 $manifest = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/risk-guard.yaml') -Raw).Replace('__IMAGE__', $image).Replace('__CONSOLE_SIGNIN_ARGS__', $signIn).Replace('__SVID_ARGS__', $svid.args).Replace('__SVID_SERVICE_PORT__', $svid.servicePort).Replace('__SVID_CONTAINER_PORT__', $svid.containerPort).Replace('__SVID_MOUNT__', $svid.mount).Replace('__SVID_VOLUME__', $svid.volume).Replace('__SVID_POD_SPEC__', $svid.podSpec).Replace('__CONSOLE_ENV__', $consoleEnv).Replace('__SIGNALS_ARGS__', $signals.args).Replace('__SIGNALS_SERVICE_PORT__', $signals.servicePort).Replace('__SIGNALS_CONTAINER_PORT__', $signals.containerPort).Replace('__SIGNALS_ENV__', $signals.env)
 # Pod Security Admission: warn and audit against the Restricted standard, never enforce. SPIRE's node daemons (a privileged CSI driver, an agent with the host PID namespace) and the OpenShell gateway share this namespace and could not be admitted under an enforcing label; the exceptions are listed in deploy/aks/hardening-baseline.json.
 Invoke-Native kubectl @('label', 'namespace', $ns, 'pod-security.kubernetes.io/warn=restricted', 'pod-security.kubernetes.io/audit=restricted', '--overwrite') | Out-Null

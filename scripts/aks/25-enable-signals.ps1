@@ -8,7 +8,8 @@
     1. creates the Secret `siem-signals-token` in the openshell namespace (a random 64-hex token; never printed),
     2. records that signals are on (dry run unless -Enforce) and redeploys Risk Guard with the signals port (a short restart),
     3. applies the network policies in deploy/aks/siem/signals-egress.yaml,
-    4. creates the webhook channel and the alert in OpenSearch (scripts/siem/install_content.py --signals).
+    4. sends Risk Guard's own OCSF events (refusals with workload, score and reason; tunnel refusals; signals) to the collector,
+    5. creates the webhook channel and the alert in OpenSearch (scripts/siem/install_content.py --signals).
 
   Start in dry run (the default): every signal is recorded and answered, nothing is quarantined. Re-run with -Enforce when you have watched it.
   -Remove turns it off. See docs/siem-signals.md.
@@ -35,7 +36,7 @@ if (-not $Apply -and -not $Remove) {
 $hardened = (Get-StateValue 'riskGuardImage') -match '@sha256:'
 if ($Remove) {
     Write-Step 'Turning signals off'
-    Save-State @{ signalsEnabled = $false; signalsDryRun = $false }
+    Save-State @{ signalsEnabled = $false; signalsDryRun = $false; ocsfExport = $false }
     Invoke-Native kubectl @('delete', 'networkpolicy', 'risk-guard-signals-fence', '-n', $ns, '--ignore-not-found') -AllowFailure | Out-Null
     Invoke-Native kubectl @('delete', 'networkpolicy', 'opensearch-to-risk-guard-signals', '-n', 'siem', '--ignore-not-found') -AllowFailure | Out-Null
     & "$PSScriptRoot/04-deploy-risk-guard.ps1" @(if ($hardened) { '-Hardened' })
@@ -57,11 +58,15 @@ if (-not (Invoke-Native kubectl @('get', 'secret', 'siem-signals-token', '-n', $
     $token = $null
 }
 
+Write-Step 'The collector accepts events from Risk Guard (OTLP over HTTP, port 4318)'
+Invoke-KubectlApply (Get-Content (Join-Path $dir 'namespace-and-policies.yaml') -Raw)
+Invoke-Native helm @('upgrade', '--install', 'otel-collector', 'open-telemetry/opentelemetry-collector', '--version', '0.177.0', '-n', 'siem', '-f', (Join-Path $dir 'collector-values.yaml'), '--wait', '--timeout', '5m') -Retries 1 | Out-Null
+
 Write-Step 'Network fence'
 Invoke-KubectlApply (Get-Content (Join-Path $dir 'signals-egress.yaml') -Raw)
 
 Write-Step 'Risk Guard with the signals port'
-Save-State @{ signalsEnabled = $true; signalsDryRun = (-not $Enforce) }
+Save-State @{ signalsEnabled = $true; signalsDryRun = (-not $Enforce); ocsfExport = $true }
 & "$PSScriptRoot/04-deploy-risk-guard.ps1" @(if ($hardened) { '-Hardened' })
 
 Write-Step 'Webhook channel and alert in OpenSearch'

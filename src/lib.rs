@@ -20,6 +20,7 @@ pub mod interceptor_service;
 pub mod latency;
 pub mod middleware_service;
 pub mod normalizer;
+pub mod ocsf;
 mod operator_controls;
 pub mod operator_dashboard;
 pub mod pod_resolver;

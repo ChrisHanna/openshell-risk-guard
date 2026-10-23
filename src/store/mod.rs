@@ -512,6 +512,23 @@ impl SqliteRiskStore {
         Some(format!("spiffe://{domain}/openshell/sandbox/{sandbox_id}"))
     }
 
+    /// Who a sandbox is, for the events Risk Guard sends out: its workload, run and task profile. `None` when it has no active epoch.
+    pub fn sandbox_identity(
+        &self,
+        sandbox_id: &str,
+    ) -> Result<Option<crate::ocsf::SandboxIdentity>> {
+        let conn = self.lock_read_conn()?;
+        let Some(epoch) = query_active_epoch(&conn, sandbox_id)? else {
+            return Ok(None);
+        };
+        let identity = resolve_identity(&conn, &epoch)?;
+        Ok(Some(crate::ocsf::SandboxIdentity {
+            agent_id: identity.as_ref().map(|identity| identity.agent_id.clone()),
+            run_id: identity.as_ref().map(|identity| identity.run_id.clone()),
+            task_profile: Some(epoch.task_profile),
+        }))
+    }
+
     /// What the network path needs to know about a sandbox. `None` when the sandbox has no active epoch.
     pub fn sandbox_network_state(&self, sandbox_id: &str) -> Result<Option<NetworkState>> {
         let conn = self.lock_read_conn()?;

@@ -31,6 +31,7 @@ pub struct SignalsState {
     store: Arc<SqliteRiskStore>,
     digest: [u8; 32],
     policy: SignalPolicy,
+    ocsf: Option<Arc<crate::ocsf::OcsfEmitter>>,
 }
 
 fn digest_of(token: &str) -> [u8; 32] {
@@ -51,7 +52,15 @@ impl SignalsState {
             store,
             digest: digest_of(token),
             policy,
+            ocsf: None,
         })
+    }
+
+    /// Send each signal and its outcome to the SIEM as an OCSF event (see `crate::ocsf`).
+    #[must_use]
+    pub fn with_ocsf(mut self, emitter: Arc<crate::ocsf::OcsfEmitter>) -> Self {
+        self.ocsf = Some(emitter);
+        self
     }
 
     /// Read the token from the environment variable `RISK_GUARD_SIGNALS_TOKEN` (how a Kubernetes Secret reaches the pod: a mounted Secret is a
@@ -135,6 +144,7 @@ async fn post_signal(
     };
     let store = Arc::clone(&state.store);
     let policy = state.policy.clone();
+    let for_event = request.clone();
     let result =
         tokio::task::spawn_blocking(move || store.apply_signal(&request, &policy, now_ms())).await;
     match result {
@@ -145,6 +155,21 @@ async fn post_signal(
                 _ => StatusCode::OK,
             };
             tracing::info!(outcome = %outcome.outcome, duplicate = outcome.duplicate, "signal handled");
+            if let Some(ocsf) = &state.ocsf
+                && !outcome.duplicate
+            {
+                ocsf.emit(crate::ocsf::Occurrence::Signal {
+                    signal_id: for_event.signal_id,
+                    source: for_event.source,
+                    alert_id: for_event.alert_id,
+                    agent_id: outcome.agent_id.clone().or(for_event.agent_id),
+                    sandbox_id: for_event.sandbox_id,
+                    outcome: outcome.outcome.clone(),
+                    ttl_seconds: for_event.ttl_seconds,
+                    reason: for_event.reason,
+                    at_ms: now_ms(),
+                });
+            }
             reply(status, serde_json::to_value(&outcome).unwrap_or_default())
         }
         Ok(Err(RiskGuardError::InvalidArgument(message))) => {
