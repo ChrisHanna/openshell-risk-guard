@@ -18,7 +18,9 @@
 param(
     [switch]$Apply,
     [switch]$Remove,
-    [switch]$Enforce
+    [switch]$Enforce,
+    # Use a bearer token over plain HTTP even when SPIRE is available.
+    [switch]$TokenOnly
 )
 . "$PSScriptRoot/common.ps1"
 Assert-Tools
@@ -38,7 +40,9 @@ $deployArgs = @{}   # splatted below; an inline @(...) would be passed as a posi
 if ($hardened) { $deployArgs['Hardened'] = $true }
 if ($Remove) {
     Write-Step 'Turning signals off'
-    Save-State @{ signalsEnabled = $false; signalsDryRun = $false; ocsfExport = $false }
+    Save-State @{ signalsEnabled = $false; signalsDryRun = $false; ocsfExport = $false; signalsMtls = $false }
+    Invoke-Native kubectl @('delete', 'deploy/signal-forwarder', 'svc/signal-forwarder', 'sa/signal-forwarder', 'configmap/signal-forwarder-helper', 'configmap/risk-guard-ca', 'secret/signal-forwarder-token', 'networkpolicy/forwarder-ingress', 'networkpolicy/forwarder-egress', 'networkpolicy/opensearch-to-forwarder', '-n', 'siem', '--ignore-not-found') -AllowFailure | Out-Null
+    Invoke-Native kubectl @('delete', 'clusterspiffeid', 'risk-guard-signal-forwarder', '--ignore-not-found') -AllowFailure | Out-Null
     Invoke-Native kubectl @('delete', 'networkpolicy', 'risk-guard-signals-fence', '-n', $ns, '--ignore-not-found') -AllowFailure | Out-Null
     Invoke-Native kubectl @('delete', 'networkpolicy', 'opensearch-to-risk-guard-signals', '-n', 'siem', '--ignore-not-found') -AllowFailure | Out-Null
     & "$PSScriptRoot/04-deploy-risk-guard.ps1" @deployArgs
@@ -47,29 +51,52 @@ if ($Remove) {
     return
 }
 
-Write-Step 'Signals token (generated into a Secret, never printed)'
-if (-not (Invoke-Native kubectl @('get', 'secret', 'siem-signals-token', '-n', $ns, '-o', 'name') -AllowFailure)) {
+function New-TokenSecret([string]$Name, [string]$Namespace) {
+    if (Invoke-Native kubectl @('get', 'secret', $Name, '-n', $Namespace, '-o', 'name') -AllowFailure) { return }
     $bytes = New-Object byte[] 32
     [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
     $token = -join ($bytes | ForEach-Object { $_.ToString('x2') })
     $file = [IO.Path]::GetTempFileName()
     try {
         [IO.File]::WriteAllText($file, $token)
-        Invoke-Native kubectl @('create', 'secret', 'generic', 'siem-signals-token', '-n', $ns, "--from-file=token=$file") | Out-Null
+        Invoke-Native kubectl @('create', 'secret', 'generic', $Name, '-n', $Namespace, "--from-file=token=$file") | Out-Null
     } finally { Remove-Item -Force $file -ErrorAction SilentlyContinue }
     $token = $null
 }
+
+# With SPIRE present, the sender is a pod with its own SPIFFE identity and Risk Guard keeps no shared secret. Without it (or with -TokenOnly) a bearer token over plain HTTP is used.
+$mtls = (-not $TokenOnly) -and [bool](Get-StateValue 'svidTrustDomain')
 
 Write-Step 'The collector accepts events from Risk Guard (OTLP over HTTP, port 4318)'
 Invoke-KubectlApply (Get-Content (Join-Path $dir 'namespace-and-policies.yaml') -Raw)
 Invoke-Native helm @('upgrade', '--install', 'otel-collector', 'open-telemetry/opentelemetry-collector', '--version', '0.177.0', '-n', 'siem', '-f', (Join-Path $dir 'collector-values.yaml'), '--wait', '--timeout', '5m') -Retries 1 | Out-Null
 
-Write-Step 'Network fence'
-Invoke-KubectlApply (Get-Content (Join-Path $dir 'signals-egress.yaml') -Raw)
+if ($mtls) {
+    Write-Step 'The SIEM-side forwarder, with its own SPIFFE identity (mutual TLS to Risk Guard)'
+    New-TokenSecret 'signal-forwarder-token' 'siem'
+    # The forwarder checks Risk Guard's server certificate against the same CA the gateway uses.
+    $ca = Join-Path ([IO.Path]::GetTempPath()) ("rg-ca-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.crt')
+    try {
+        [IO.File]::WriteAllText($ca, (kubectl get configmap risk-guard-ca -n $ns -o 'jsonpath={.data.ca\.crt}'))
+        $cm = Invoke-Native kubectl @('create', 'configmap', 'risk-guard-ca', '-n', 'siem', "--from-file=ca.crt=$ca", '--dry-run=client', '-o', 'yaml')
+        Invoke-KubectlApply ($cm -join "`n")
+    } finally { Remove-Item -Force $ca -ErrorAction SilentlyContinue }
+    $image = Get-StateValue 'riskGuardImage'
+    if (-not $image) { throw 'No Risk Guard image is recorded; run 04-deploy-risk-guard.ps1 first.' }
+    Invoke-KubectlApply ((Get-Content (Join-Path $dir 'signal-forwarder.yaml') -Raw).Replace('__IMAGE__', $image))
+    Invoke-Native kubectl @('delete', 'networkpolicy', 'opensearch-to-risk-guard-signals', '-n', 'siem', '--ignore-not-found') -AllowFailure | Out-Null
+    Invoke-Native kubectl @('rollout', 'status', 'deploy/signal-forwarder', '-n', 'siem', '--timeout=300s') | Out-Null
+} else {
+    Write-Step 'Signals token (generated into a Secret, never printed)'
+    New-TokenSecret 'siem-signals-token' $ns
+    Write-Step 'Network fence'
+    Invoke-KubectlApply (Get-Content (Join-Path $dir 'signals-egress.yaml') -Raw)
+}
 
 Write-Step 'Risk Guard with the signals port'
-Save-State @{ signalsEnabled = $true; signalsDryRun = (-not $Enforce); ocsfExport = $true }
+Save-State @{ signalsEnabled = $true; signalsDryRun = (-not $Enforce); ocsfExport = $true; signalsMtls = $mtls }
 & "$PSScriptRoot/04-deploy-risk-guard.ps1" @deployArgs
+if ($mtls) { Invoke-Native kubectl @('delete', 'secret', 'siem-signals-token', '-n', $ns, '--ignore-not-found') -AllowFailure | Out-Null }
 
 Write-Step 'Webhook channel and alert in OpenSearch'
 Push-Location $script:RepoRoot

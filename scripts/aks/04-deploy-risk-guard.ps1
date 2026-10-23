@@ -158,12 +158,17 @@ if ($Hardened) {
 # namespace (see deploy/aks/siem/signals-egress.yaml), and a Secret that arrives as an environment variable.
 $signals = @{ args = ''; servicePort = ''; containerPort = ''; env = '' }
 if (Get-StateValue 'signalsEnabled') {
-    $signals.args = "            - --signals-listen=0.0.0.0:50063`n            - --signals-allow-plaintext"
+    if ((Get-StateValue 'signalsMtls') -and $svidDomain) {
+        # Mutual TLS: only the SIEM forwarder's exact SPIFFE ID may send. No shared secret on this side.
+        $signals.args = "            - --signals-listen=0.0.0.0:50063`n            - --signals-allow-spiffe=spiffe://$svidDomain/ns/siem/sa/signal-forwarder"
+    } else {
+        $signals.args = "            - --signals-listen=0.0.0.0:50063`n            - --signals-allow-plaintext"
+        $signals.env = "          env:`n            - name: RISK_GUARD_SIGNALS_TOKEN`n              valueFrom:`n                secretKeyRef: {name: siem-signals-token, key: token}"
+    }
     if (Get-StateValue 'signalsDryRun') { $signals.args += "`n            - --signals-dry-run" }
     $signals.servicePort = "    - name: signals`n      port: 50063`n      targetPort: signals"
     $signals.containerPort = "            - name: signals`n              containerPort: 50063"
-    $signals.env = "          env:`n            - name: RISK_GUARD_SIGNALS_TOKEN`n              valueFrom:`n                secretKeyRef: {name: siem-signals-token, key: token}"
-    Write-Note "signals listener on :50063 ($(if (Get-StateValue 'signalsDryRun') { 'dry run: records, changes nothing' } else { 'enforcing' }))"
+    Write-Note "signals listener on :50063 ($(if ($signals.env) { 'bearer token, plain HTTP' } else { 'mutual TLS, SPIFFE identity' }); $(if (Get-StateValue 'signalsDryRun') { 'dry run: records, changes nothing' } else { 'enforcing' }))"
 }
 # Risk Guard's own OCSF events (refusals with the workload, score and reason; tunnel refusals; signals) go to the SIEM's collector over OTLP/HTTP.
 if (Get-StateValue 'ocsfExport') {

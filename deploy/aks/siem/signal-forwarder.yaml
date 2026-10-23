@@ -1,0 +1,145 @@
+# DEMO. The SIEM's side of the signals path: a pod with its own SPIFFE identity that forwards OpenSearch's alert webhook to Risk Guard over mutual TLS.
+# Rendered by scripts/aks/25-enable-signals.ps1, which fills __IMAGE__ and creates the Secret `signal-forwarder-token` and the ConfigMap `risk-guard-ca` in this namespace.
+#
+# SPIRE gives a pod labelled app.kubernetes.io/name=signal-forwarder the identity spiffe://<trust domain>/ns/siem/sa/signal-forwarder. Risk Guard accepts exactly that ID on its
+# signals port and nothing else; there is no shared secret on Risk Guard's side. The hop from OpenSearch to this pod (a token and a network policy) stays inside the SIEM namespace.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: risk-guard-signal-forwarder
+spec:
+  className: openshell-spire
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: signal-forwarder
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: siem
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: signal-forwarder, namespace: siem}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: signal-forwarder-helper, namespace: siem}
+data:
+  helper.conf: |
+    agent_address = "/spiffe-workload-api/spire-agent.sock"
+    cert_dir = "/certs"
+    svid_file_name = "svid.pem"
+    svid_key_file_name = "svid_key.pem"
+    svid_bundle_file_name = "bundle.pem"
+    daemon_mode = true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: signal-forwarder, namespace: siem}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/name: signal-forwarder}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: signal-forwarder}}
+    spec:
+      serviceAccountName: signal-forwarder
+      automountServiceAccountToken: false
+      # The SPIFFE CSI driver and SPIRE agent run on the ordinary node pool, not on the SIEM's tainted node; the pod's namespace (siem), not its node, gives it its identity.
+      nodeSelector: {kubernetes.azure.com/agentpool: nodepool1}
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: spiffe-helper
+          image: ghcr.io/spiffe/spiffe-helper:0.12.1
+          args: ["-config", "/etc/spiffe-helper/helper.conf"]
+          resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {memory: 64Mi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: spiffe-workload-api, mountPath: /spiffe-workload-api, readOnly: true}
+            - {name: helper-config, mountPath: /etc/spiffe-helper, readOnly: true}
+            - {name: certs, mountPath: /certs}
+        - name: forwarder
+          image: __IMAGE__
+          args:
+            - signal-forwarder
+            - --listen=0.0.0.0:8088
+            - --target=https://risk-guard.openshell.svc:50063/v1/signals
+            - --svid=/certs/svid.pem
+            - --svid-key=/certs/svid_key.pem
+            - --server-ca=/etc/risk-guard-ca/ca.crt
+          env:
+            - name: RISK_GUARD_FORWARDER_TOKEN
+              valueFrom: {secretKeyRef: {name: signal-forwarder-token, key: token}}
+          ports: [{name: webhook, containerPort: 8088}]
+          readinessProbe: {tcpSocket: {port: webhook}, periodSeconds: 10}
+          resources: {requests: {cpu: 25m, memory: 32Mi}, limits: {memory: 128Mi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: certs, mountPath: /certs, readOnly: true}
+            - {name: ca, mountPath: /etc/risk-guard-ca, readOnly: true}
+      volumes:
+        - name: spiffe-workload-api
+          csi: {driver: csi.spiffe.io, readOnly: true}
+        - name: helper-config
+          configMap: {name: signal-forwarder-helper}
+        - name: certs
+          emptyDir: {}
+        - name: ca
+          configMap: {name: risk-guard-ca}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: signal-forwarder, namespace: siem}
+spec:
+  selector: {app.kubernetes.io/name: signal-forwarder}
+  ports: [{name: webhook, port: 8088, targetPort: webhook}]
+---
+# OpenSearch (which sends the webhook) may reach the forwarder, and nothing else may.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: forwarder-ingress, namespace: siem}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: signal-forwarder}}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app.kubernetes.io/name: opensearch}}}]
+      ports: [{protocol: TCP, port: 8088}]
+---
+# The forwarder may reach Risk Guard's signals port (and, via the allow-dns policy, DNS) and nothing else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: forwarder-egress, namespace: siem}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: signal-forwarder}}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: openshell}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: risk-guard}}
+      ports: [{protocol: TCP, port: 50063}]
+---
+# OpenSearch's webhook goes to the forwarder, not to Risk Guard.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: opensearch-to-forwarder, namespace: siem}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: opensearch}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: signal-forwarder}}}]
+      ports: [{protocol: TCP, port: 8088}]
+---
+# Risk Guard's signals port (50063) accepts the forwarder pod only. The ports it already served stay open to those who could reach them before (a NetworkPolicy that selects
+# a pod isolates it, so they are listed): 50061 gRPC, 50062 SPIFFE, 8080/8443 the public console's proxy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: risk-guard-signals-fence, namespace: openshell}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: risk-guard}}
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{protocol: TCP, port: 50061}, {protocol: TCP, port: 50062}, {protocol: TCP, port: 8080}, {protocol: TCP, port: 8443}]
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: siem}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: signal-forwarder}}
+      ports: [{protocol: TCP, port: 50063}]

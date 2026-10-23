@@ -671,18 +671,31 @@ def install_retention():
 
 
 SIGNALS_URL = "http://risk-guard.openshell.svc.cluster.local:50063/v1/signals"
+FORWARDER_URL = "http://signal-forwarder.siem.svc.cluster.local:8088/webhook"
 CHANNEL = "risk-guard-signals"
 SIGNAL_MONITOR = "Repeated refusals: 3 or more in 5 minutes, per sandbox (asks Risk Guard to quarantine)"
 
 
-def signals_token():
-    out = subprocess.run(["kubectl", "get", "secret", "siem-signals-token", "-n", "openshell", "-o", "jsonpath={.data.token}"],
-                         capture_output=True)
+def secret_token(name, namespace):
     import base64
-    token = base64.b64decode(out.stdout).decode().strip()
+    out = subprocess.run(["kubectl", "get", "secret", name, "-n", namespace, "-o", "jsonpath={.data.token}"], capture_output=True)
+    return base64.b64decode(out.stdout).decode().strip()
+
+
+def signals_target():
+    """Where the alert's webhook goes and the token it carries. With the SIEM-side forwarder deployed (mutual TLS to Risk Guard) it goes to the forwarder; otherwise straight to
+    Risk Guard's token-protected port."""
+    token = secret_token("signal-forwarder-token", "siem")
+    if len(token) == 64:
+        return FORWARDER_URL, token
+    token = secret_token("siem-signals-token", "openshell")
     if len(token) != 64:
-        raise SystemExit("Secret siem-signals-token not found; run scripts/aks/25-enable-signals.ps1 first.")
-    return token
+        raise SystemExit("No signals token found; run scripts/aks/25-enable-signals.ps1 first.")
+    return SIGNALS_URL, token
+
+
+def signals_token():
+    return signals_target()[1]
 
 
 def install_signals():
@@ -692,8 +705,8 @@ def install_signals():
     configs = found.get("config_list") or []
     channel_body = {"config": {"name": CHANNEL, "description": "Asks Risk Guard to quarantine a workload for a while (tighten only).",
                                "config_type": "webhook", "is_enabled": True,
-                               "webhook": {"url": SIGNALS_URL, "header_params": {"Content-Type": "application/json",
-                                                                                 "Authorization": "Bearer " + signals_token()}}}}
+                               "webhook": {"url": signals_target()[0], "header_params": {"Content-Type": "application/json",
+                                                                                         "Authorization": "Bearer " + signals_target()[1]}}}}
     if configs:
         channel_id = configs[0]["config_id"]
         opensearch("PUT", f"/_plugins/_notifications/configs/{channel_id}", channel_body)

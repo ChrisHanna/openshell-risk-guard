@@ -15,6 +15,7 @@
     "placement-profile.json",
     "hardening-baseline.json",
     "hardened-profile.json",
+    "promotion-policy.json",
     "console-acme.sh",
     "console-nginx.conf"
   ],
