@@ -504,6 +504,14 @@ impl SupervisorMiddleware for RiskGuardMiddlewareService {
             }
         };
 
+        if let Some(ocsf) = &self.ocsf {
+            ocsf.record_decision(
+                &eval.sandbox_id,
+                eval.outcome == DecisionOutcome::Deny,
+                eval.risk_score,
+                &log_path,
+            );
+        }
         if let Some(ocsf) = &self.ocsf
             && eval.outcome == DecisionOutcome::Deny
         {

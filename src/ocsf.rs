@@ -54,6 +54,16 @@ pub enum Occurrence {
         silent_for_ms: Option<i64>,
         at_ms: i64,
     },
+    /// What one sandbox's workload did in the last interval: every decision, allowed or refused, counted. Sent once a minute per active sandbox.
+    Activity {
+        sandbox_id: String,
+        window_ms: i64,
+        allowed: u32,
+        refused: u32,
+        max_score: u32,
+        distinct_paths: u32,
+        at_ms: i64,
+    },
     /// A signal from a SIEM and what became of it.
     Signal {
         signal_id: String,
@@ -85,9 +95,72 @@ pub struct OcsfConfig {
     pub version: String,
 }
 
+/// How many different paths one sandbox is counted for in an interval; beyond this the count saturates (a scanner is already obvious at this number).
+const MAX_PATHS: usize = 512;
+
+#[derive(Default)]
+struct Bucket {
+    allowed: u32,
+    refused: u32,
+    max_score: u32,
+    paths: std::collections::HashSet<String>,
+}
+
+/// Per-sandbox counts of decisions, kept in memory and emptied once a minute. Recording is a lock, a hash lookup and a few increments.
+#[derive(Default)]
+pub struct ActivityCounters {
+    buckets: std::sync::Mutex<std::collections::HashMap<String, Bucket>>,
+    since_ms: std::sync::atomic::AtomicI64,
+}
+
+impl ActivityCounters {
+    pub fn record(&self, sandbox_id: &str, refused: bool, score: u32, path: &str) {
+        let Ok(mut buckets) = self.buckets.lock() else {
+            return;
+        };
+        let bucket = buckets.entry(sandbox_id.to_string()).or_default();
+        if refused {
+            bucket.refused = bucket.refused.saturating_add(1);
+        } else {
+            bucket.allowed = bucket.allowed.saturating_add(1);
+        }
+        bucket.max_score = bucket.max_score.max(score);
+        if bucket.paths.len() < MAX_PATHS {
+            bucket.paths.insert(path.to_string());
+        }
+    }
+
+    /// Empty the counters into one occurrence per sandbox that did anything. A sandbox that did nothing produces nothing (silence is visible as a missing summary).
+    pub fn take(&self, now_ms: i64) -> Vec<Occurrence> {
+        let since = self.since_ms.swap(now_ms, Ordering::Relaxed);
+        let window_ms = if since > 0 {
+            (now_ms - since).max(1)
+        } else {
+            60_000
+        };
+        let drained = match self.buckets.lock() {
+            Ok(mut buckets) => std::mem::take(&mut *buckets),
+            Err(_) => return Vec::new(),
+        };
+        drained
+            .into_iter()
+            .map(|(sandbox_id, bucket)| Occurrence::Activity {
+                sandbox_id,
+                window_ms,
+                allowed: bucket.allowed,
+                refused: bucket.refused,
+                max_score: bucket.max_score,
+                distinct_paths: u32::try_from(bucket.paths.len()).unwrap_or(u32::MAX),
+                at_ms: now_ms,
+            })
+            .collect()
+    }
+}
+
 pub struct OcsfEmitter {
     queue: mpsc::Sender<Occurrence>,
     dropped: AtomicU64,
+    activity: ActivityCounters,
 }
 
 impl OcsfEmitter {
@@ -97,9 +170,28 @@ impl OcsfEmitter {
         let emitter = Arc::new(Self {
             queue,
             dropped: AtomicU64::new(0),
+            activity: ActivityCounters::default(),
         });
         tokio::spawn(run(config, store, receiver, Arc::clone(&emitter)));
+        // Once a minute, turn the counters into events.
+        let counting = Arc::clone(&emitter);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(60));
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                let now_ms = crate::store::now_wall_ms();
+                for occurrence in counting.activity.take(now_ms) {
+                    counting.emit(occurrence);
+                }
+            }
+        });
         emitter
+    }
+
+    /// Count one decision toward its sandbox's activity summary. Cheap, never waits on the network.
+    pub fn record_decision(&self, sandbox_id: &str, refused: bool, score: u32, path: &str) {
+        self.activity.record(sandbox_id, refused, score, path);
     }
 
     /// Hand an event over. Never waits: a full queue drops the event and counts it.
@@ -190,9 +282,9 @@ async fn run(
 
 fn sandbox_of(occurrence: &Occurrence) -> Option<&str> {
     match occurrence {
-        Occurrence::Decision { sandbox_id, .. } | Occurrence::Tunnel { sandbox_id, .. } => {
-            Some(sandbox_id)
-        }
+        Occurrence::Decision { sandbox_id, .. }
+        | Occurrence::Tunnel { sandbox_id, .. }
+        | Occurrence::Activity { sandbox_id, .. } => Some(sandbox_id),
         Occurrence::Signal { sandbox_id, .. } => sandbox_id.as_deref(),
     }
 }
@@ -329,6 +421,50 @@ pub fn to_ocsf(
                         "gate": "tunnel", "kind": kind, "agent_id": identity.agent_id, "run_id": identity.run_id,
                         "task_profile": identity.task_profile, "spiffe_id": spiffe, "reason": reason,
                         "refused": refused, "silent_for_ms": silent_for_ms,
+                    }},
+                })
+                .as_object()
+                .cloned()
+                .unwrap_or_default(),
+            );
+            Value::Object(event)
+        }
+        Occurrence::Activity {
+            sandbox_id,
+            window_ms,
+            allowed,
+            refused,
+            max_score,
+            distinct_paths,
+            at_ms,
+        } => {
+            let spiffe = spiffe_id(sandbox_id, trust_domain);
+            let total = allowed + refused;
+            let ratio = if total > 0 {
+                f64::from(*refused) / f64::from(total)
+            } else {
+                0.0
+            };
+            let mut event = base(version, *at_ms);
+            event.extend(
+                json!({
+                    "category_uid": 6, "category_name": "Application Activity",
+                    "class_uid": 6003, "class_name": "API Activity",
+                    "activity_id": 99, "activity_name": "Activity summary",
+                    "type_uid": 600_399, "type_name": "API Activity: Other",
+                    "severity_id": 1, "severity": "Informational",
+                    "status_id": 1, "status": "Success",
+                    "message": format!("Workload activity: {total} decisions ({refused} refused), highest score {max_score}, {distinct_paths} distinct paths"),
+                    "status_detail": "risk_guard_summary",
+                    "risk_score": max_score,
+                    "api": {"operation": "activity_summary", "service": {"name": "risk-guard"}},
+                    "actor": actor(identity, spiffe.as_deref()),
+                    "container": {"uid": sandbox_id},
+                    "unmapped": {"risk_guard": {
+                        "gate": "summary", "agent_id": identity.agent_id, "run_id": identity.run_id,
+                        "task_profile": identity.task_profile, "spiffe_id": spiffe,
+                        "window_seconds": window_ms / 1000, "allowed": allowed, "refused": refused, "total": total,
+                        "refusal_ratio": ratio, "max_score": max_score, "distinct_paths": distinct_paths,
                     }},
                 })
                 .as_object()
@@ -525,6 +661,109 @@ mod tests {
             event["unmapped"]["risk_guard"]["target_agent_id"],
             "agent-7"
         );
+    }
+
+    #[test]
+    fn counters_turn_into_one_summary_per_active_sandbox_and_then_start_again() {
+        let counters = ActivityCounters::default();
+        counters.record("sbx-1", false, 5, "/a");
+        counters.record("sbx-1", false, 9, "/b");
+        counters.record("sbx-1", true, 100, "/a");
+        counters.record("sbx-2", false, 1, "/c");
+        let mut taken = counters.take(1_000_000);
+        taken.sort_by_key(|o| sandbox_of(o).map(str::to_string));
+        assert_eq!(taken.len(), 2);
+        let Occurrence::Activity {
+            sandbox_id,
+            allowed,
+            refused,
+            max_score,
+            distinct_paths,
+            window_ms,
+            ..
+        } = &taken[0]
+        else {
+            panic!("an activity summary")
+        };
+        assert_eq!(
+            (
+                sandbox_id.as_str(),
+                *allowed,
+                *refused,
+                *max_score,
+                *distinct_paths
+            ),
+            ("sbx-1", 2, 1, 100, 2)
+        );
+        assert_eq!(*window_ms, 60_000, "the first window defaults to a minute");
+        // Nothing happened since: nothing is sent, and the next window is measured from the last take.
+        assert!(counters.take(1_060_000).is_empty());
+        counters.record("sbx-1", false, 0, "/a");
+        let again = counters.take(1_120_000);
+        let Occurrence::Activity {
+            window_ms, allowed, ..
+        } = &again[0]
+        else {
+            panic!("an activity summary")
+        };
+        assert_eq!((*window_ms, *allowed), (60_000, 1));
+    }
+
+    #[test]
+    fn the_distinct_path_count_saturates_instead_of_growing_without_bound() {
+        let counters = ActivityCounters::default();
+        for n in 0..(MAX_PATHS + 200) {
+            counters.record("sbx", false, 0, &format!("/p/{n}"));
+        }
+        let taken = counters.take(1);
+        let Occurrence::Activity {
+            distinct_paths,
+            allowed,
+            ..
+        } = &taken[0]
+        else {
+            panic!("an activity summary")
+        };
+        assert_eq!(*distinct_paths as usize, MAX_PATHS);
+        assert_eq!(
+            *allowed as usize,
+            MAX_PATHS + 200,
+            "every decision is still counted"
+        );
+    }
+
+    #[test]
+    fn recording_a_decision_costs_microseconds_not_milliseconds() {
+        let counters = ActivityCounters::default();
+        let started = std::time::Instant::now();
+        for n in 0..100_000 {
+            counters.record("sbx", n % 7 == 0, 10, if n % 2 == 0 { "/a" } else { "/b" });
+        }
+        let per_call = started.elapsed() / 100_000;
+        println!("record() takes {per_call:?} per decision");
+        assert!(
+            per_call < Duration::from_micros(20),
+            "{per_call:?} per decision is far too slow for the decision path"
+        );
+    }
+
+    #[test]
+    fn a_summary_event_carries_the_workload_the_counts_and_the_refusal_share() {
+        let summary = Occurrence::Activity {
+            sandbox_id: "sbx-1".into(),
+            window_ms: 60_000,
+            allowed: 8,
+            refused: 2,
+            max_score: 100,
+            distinct_paths: 4,
+            at_ms: 5,
+        };
+        let event = to_ocsf(&summary, &identity(), Some("example.org"), "0.1.0");
+        assert_eq!(event["unmapped"]["risk_guard"]["gate"], "summary");
+        assert_eq!(event["unmapped"]["risk_guard"]["total"], 10);
+        assert_eq!(event["unmapped"]["risk_guard"]["refusal_ratio"], 0.2);
+        assert_eq!(event["actor"]["user"]["name"], "agent-7");
+        assert_eq!(event["status_detail"], "risk_guard_summary");
     }
 
     #[test]

@@ -496,6 +496,7 @@ impl ExtAuthzService {
             }
         };
 
+        let summary_path = raw.path.clone();
         let store = Arc::clone(&self.store);
         let detector = Arc::clone(&self.detector);
         let gateway_id = self.enroller.gateway_id().to_string();
@@ -512,6 +513,14 @@ impl ExtAuthzService {
             }),
         )
         .await;
+        if let (Some(ocsf), Ok(Ok(Ok(evaluation)))) = (&self.ocsf, &evaluated) {
+            ocsf.record_decision(
+                &evaluation.sandbox_id,
+                evaluation.outcome == DecisionOutcome::Deny,
+                evaluation.risk_score,
+                &summary_path,
+            );
+        }
         match evaluated {
             Ok(Ok(Ok(evaluation))) if evaluation.outcome == DecisionOutcome::Deny => {
                 Ok(deny(&evaluation.reason_code))
