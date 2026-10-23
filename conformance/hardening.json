@@ -1,6 +1,6 @@
 {
   "test": "hardening",
-  "run_at": "2026-10-23T02:04:14+00:00",
+  "run_at": "2026-10-23T02:30:20+00:00",
   "checks": [
     "non_root",
     "no_privilege_escalation",
@@ -91,7 +91,7 @@
       "excepted": []
     },
     "sandbox-workload-pod": {
-      "pods": 2,
+      "pods": 1,
       "failed": [],
       "excepted": [
         {
@@ -197,7 +197,7 @@
       ]
     },
     "sandbox-supervisor-pod": {
-      "pods": 2,
+      "pods": 1,
       "failed": [],
       "excepted": [
         {

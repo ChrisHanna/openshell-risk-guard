@@ -1,9 +1,9 @@
 {
   "test": "failure_containment",
-  "run_at": "2026-10-23T01:22:08+00:00",
+  "run_at": "2026-10-23T02:31:43+00:00",
   "deployment": {
-    "risk_guard_image": "openshell-risk-guard:95cd158",
-    "repository_commit": "9f65898"
+    "risk_guard_image": "openshell-risk-guard:d35b248",
+    "repository_commit": "d35b248"
   },
   "summary": {
     "live_passed": 7,

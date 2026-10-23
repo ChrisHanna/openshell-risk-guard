@@ -1,6 +1,6 @@
 {
   "test": "placement",
-  "run_at": "2026-10-23T02:03:23+00:00",
+  "run_at": "2026-10-23T02:29:41+00:00",
   "profile": "hardened-placement",
   "scope_note": "node separation only; the nodes share a control plane and cluster administrators",
   "placement": {
@@ -427,7 +427,7 @@
       }
     ],
     "sandbox_pod_tokens": {
-      "sandbox_pods_checked": 4,
+      "sandbox_pods_checked": 2,
       "sandbox_pods_with_api_token_mounted": 0
     }
   },

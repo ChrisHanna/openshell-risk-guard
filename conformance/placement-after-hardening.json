@@ -1,6 +1,6 @@
 {
   "test": "placement",
-  "run_at": "2026-10-23T01:47:39+00:00",
+  "run_at": "2026-10-23T02:30:21+00:00",
   "profile": "hardened-placement",
   "scope_note": "node separation only; the nodes share a control plane and cluster administrators",
   "placement": {

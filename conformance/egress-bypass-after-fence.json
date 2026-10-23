@@ -1,8 +1,8 @@
 {
   "test": "egress_bypass",
-  "run_at": "2026-10-23T01:27:00+00:00",
+  "run_at": "2026-10-23T02:34:41+00:00",
   "deployment": {
-    "risk_guard_image": "openshell-risk-guard:95cd158",
+    "risk_guard_image": "openshell-risk-guard:d35b248",
     "network_policies": [
       "egress-demo-only-via-proxy",
       "openshell-sandbox-ssh",
@@ -14,16 +14,16 @@
   },
   "destination_side": {
     "before": {
-      "destructive_hits": 4,
+      "destructive_hits": 0,
       "counters": {
-        "GET": 267,
+        "GET": 34,
         "DELETE": 0
       }
     },
     "after": {
-      "destructive_hits": 5,
+      "destructive_hits": 1,
       "counters": {
-        "GET": 268,
+        "GET": 36,
         "DELETE": 0
       }
     },
