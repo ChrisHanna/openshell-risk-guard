@@ -50,7 +50,7 @@ tonic-prost = "0.14"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1.10", features = ["v4"] }
-x509-parser = "0.17"
+x509-parser = "0.18"
 
 [dev-dependencies]
 # Test-only: generate throwaway RSA keys at run time so no private key is ever committed.
