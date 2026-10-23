@@ -317,32 +317,32 @@ def install_signals():
             raise SystemExit("channel NOT created: " + json.dumps(created)[:300])
         print(f"webhook channel '{CHANNEL}': created")
 
+    top = "ctx.results.0.aggregations.by_sandbox.buckets.0"
     message = json.dumps({
-        "signal_id": "opensearch-{{ctx.alert.id}}", "source": "opensearch-alerting", "alert_id": "{{ctx.alert.id}}",
-        "sandbox_id": "{{ctx.alert.agg_alert_content.bucket_keys.0}}", "action": "quarantine", "ttl_seconds": 600,
+        "signal_id": "opensearch-{{" + top + ".key}}-{{ctx.periodEnd}}", "source": "opensearch-alerting",
+        "alert_id": "repeated-refusals", "sandbox_id": "{{" + top + ".key}}", "action": "quarantine", "ttl_seconds": 600,
         "reason": "three or more Risk Guard refusals for one sandbox in five minutes"})
-    body = {"type": "monitor", "name": SIGNAL_MONITOR, "monitor_type": "bucket_level_monitor", "enabled": True,
+    # A query-level monitor: its message can name the worst offender from the search result (ctx.results). A bucket-level monitor, which would handle every
+    # offender, did not fill in its alert's bucket in the message on this OpenSearch version (the body arrived with empty fields; the webhook channel was
+    # checked by capturing the real request). The cost: one sandbox per run, and a repeat is throttled for ten minutes.
+    body = {"type": "monitor", "name": SIGNAL_MONITOR, "monitor_type": "query_level_monitor", "enabled": True,
             "schedule": {"period": {"interval": 1, "unit": "MINUTES"}},
             "inputs": [{"search": {"indices": [INDEX], "query": {"size": 0, "query": {"bool": {"filter": [
                 {"wildcard": {"status_detail.keyword": "middleware_denied*"}},
                 {"range": {"time": {"gte": "{{period_end}}||-5m", "lte": "{{period_end}}", "format": "epoch_millis"}}}]}},
-                "aggregations": {"composite_agg": {"composite": {"sources": [{"sandbox": {"terms": {"field": "container.uid.keyword"}}}]}}}}}}],
-            "triggers": [{"bucket_level_trigger": {
+                "aggregations": {"by_sandbox": {"terms": {"field": "container.uid.keyword", "min_doc_count": 3, "size": 1, "order": {"_count": "desc"}}}}}}}],
+            "triggers": [{"query_level_trigger": {
                 "name": "A sandbox keeps being refused", "severity": "1",
-                "condition": {"buckets_path": {"_count": "_count"}, "parent_bucket_path": "composite_agg",
-                              "script": {"source": "params._count >= 3", "lang": "painless"}},
+                "condition": {"script": {"source": "ctx.results[0].aggregations.by_sandbox.buckets.size() > 0", "lang": "painless"}},
                 "actions": [{"name": "Ask Risk Guard to quarantine", "destination_id": channel_id,
                              "subject_template": {"source": "Risk Guard signal", "lang": "mustache"},
                              "message_template": {"source": message, "lang": "mustache"},
-                             "action_execution_policy": {"action_execution_scope": {"per_alert": {"actionable_alerts": ["NEW"]}}}}]}}]}
+                             "throttle_enabled": True, "throttle": {"value": 10, "unit": "MINUTES"}}]}}]}
     existing = opensearch("POST", "/_plugins/_alerting/monitors/_search", {"query": {"match_phrase": {"monitor.name": "Repeated refusals"}}})
-    hits = (existing.get("hits") or {}).get("hits") or []
-    if hits:
-        result = opensearch("PUT", f"/_plugins/_alerting/monitors/{hits[0]['_id']}", body)
-        print("alert monitor: updated" if "_id" in result else "alert monitor NOT updated: " + json.dumps(result)[:300])
-    else:
-        result = opensearch("POST", "/_plugins/_alerting/monitors", body)
-        print("alert monitor: created" if "_id" in result else "alert monitor NOT created: " + json.dumps(result)[:300])
+    for hit in (existing.get("hits") or {}).get("hits") or []:
+        opensearch("DELETE", f"/_plugins/_alerting/monitors/{hit['_id']}")
+    result = opensearch("POST", "/_plugins/_alerting/monitors", body)
+    print("alert monitor: created" if "_id" in result else "alert monitor NOT created: " + json.dumps(result)[:300])
 
 
 def main():
