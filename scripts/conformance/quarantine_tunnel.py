@@ -88,7 +88,7 @@ def risk_guard(*args, **kw):
 
 
 def deployment_revision():
-    image = kubectl("get", "deploy/risk-guard", "-o", "jsonpath={.spec.template.spec.containers[0].image}").stdout.strip()
+    image = kubectl("get", "deploy/risk-guard", "-o", "jsonpath={.spec.template.spec.containers[?(@.name==\"risk-guard\")].image}").stdout.strip()
     helm = subprocess.run(["helm", "-n", NAMESPACE, "history", "openshell", "--max", "1", "-o", "json"], capture_output=True, text=True)
     revision = json.loads(helm.stdout)[0]["revision"] if helm.returncode == 0 and helm.stdout.strip() else None
     return {"risk_guard_image": image, "gateway_helm_revision": revision,

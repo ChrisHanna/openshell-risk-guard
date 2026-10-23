@@ -144,8 +144,8 @@ above gives the part of it that matters here, with no decryption and no exposure
 namespace, with no header or body logging, a read-only filesystem, a network policy like the one above, and a CA key held only by that proxy.
 
 Limits: sandboxes are identified by pod address, not by a certificate (OpenShell's proxy chaining sends none), so this is as strong as
-the network's refusal to forge source addresses. Plain HTTP is not chained through the proxy. OpenShell's own pods are not otherwise
-fenced by network policy, so a sandbox that could reach the internet some other way is not stopped by this gate.
+the network's refusal to forge source addresses. Plain HTTP is not chained through the proxy. The agent pod is fenced by OpenShell's own policy, and the
+supervisor by our Cilium `supervisor-fence.yaml`; both were tested for bypass routes ([architecture](architecture.md#network-policy-in-force-what-stops-a-direct-route)). A compromised supervisor can still reach in-cluster plain-HTTP services directly.
 
 ## What was verified
 

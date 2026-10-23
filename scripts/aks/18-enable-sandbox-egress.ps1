@@ -64,6 +64,7 @@ if ($Remove) {
     Save-State @{ svidSandboxEgress = $false }
     Invoke-Native kubectl @('delete', 'deploy/sandbox-egress', 'svc/sandbox-egress', 'configmap/sandbox-egress-config', 'sa/sandbox-egress', '-n', $ns, '--ignore-not-found') -AllowFailure | Out-Null
     Invoke-Native kubectl @('delete', 'clusterspiffeid', 'risk-guard-sandbox-egress', '--ignore-not-found') -AllowFailure | Out-Null
+    Invoke-Native kubectl @('delete', 'ciliumnetworkpolicy', 'supervisor-egress-fence', '-n', $ns, '--ignore-not-found') -AllowFailure | Out-Null
     Write-Note 'Re-run 04-deploy-risk-guard.ps1 to drop the proxy trust and the pod-reading service account.'
     return
 }
@@ -71,6 +72,12 @@ if ($Remove) {
 Write-Step 'Deploying the sandbox egress proxy'
 Invoke-KubectlApply ((Get-Content (Join-Path $script:RepoRoot 'deploy/aks/sandbox-egress.yaml') -Raw).Replace('__TRUST_DOMAIN__', $trustDomain))
 Invoke-Native kubectl @('rollout', 'status', 'deploy/sandbox-egress', '-n', $ns, '--timeout=300s') | Out-Null
+
+Write-Step 'Fencing the supervisors (they can no longer bypass the proxy)'
+# OpenShell's own policy lets supervisors reach anywhere; this Cilium policy denies the internet, metadata, the API server, SPIRE and Risk Guard's SPIFFE port.
+if (Invoke-Native kubectl @('get', 'crd', 'ciliumnetworkpolicies.cilium.io', '-o', 'name') -AllowFailure) {
+    Invoke-KubectlApply (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/supervisor-fence.yaml') -Raw)
+} else { Write-Note 'Cilium is not installed: the supervisor fence was skipped, so a compromised supervisor could reach the internet directly.' }
 
 Write-Step 'Redeploying Risk Guard to answer its checks'
 Save-State @{ svidSandboxEgress = $true; svidTunnelRestrictionMode = $RestrictionMode }

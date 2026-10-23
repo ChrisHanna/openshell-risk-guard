@@ -109,11 +109,36 @@ workload follows it to new sandboxes. Sandboxes that were deleted keep their rec
   lives only there is invisible.
 * Gate 3 sees a destination address and port, not a path (the tunnel is encrypted). OpenShell supports a TLS-intercepting upstream
   proxy, which would show paths; this deployment's Envoy does not do that. Gate 3 also cannot see traffic that does not go through
-  the proxy, and sandbox pods are not individually fenced by network policy here.
+  the proxy; the network policies below close the direct routes, with one documented gap (a compromised supervisor can still reach
+  in-cluster plain-HTTP services directly).
 * A compromised supervisor that stops calling Risk Guard is not detected by gates 1 and 2. Gate 3 limits the damage only for workloads
   an operator quarantines, or for restrictions you choose to enforce.
 * It is not a separate hardware trust domain (compare NVIDIA Sentry on a BlueField DPU). See [positioning](positioning.md).
 * Detection has been measured on the author's own agents only. See [detection results](detection-results.md).
+
+## Network policy in force (what stops a direct route)
+
+Measured by `scripts/conformance/egress_bypass.py` (19 cases; reports in `conformance/`).
+
+| Pod class | Policy | Effect |
+|---|---|---|
+| Agent (Kata workload pod) | `openshell-sandbox-workloads` (OpenShell creates and validates it; do not edit) | Egress denied; ingress only from its own supervisor on TCP 5500. The agent can reach nothing itself. |
+| Supervisor | `openshell-sandbox-supervisors` (OpenShell) allows all egress; **`supervisor-egress-fence`** (ours, Cilium) denies the internet, the metadata address, the Kubernetes API, the SPIRE server and Risk Guard's SPIFFE port | Standard NetworkPolicies are additive and cannot narrow an allow-all, so the fence uses Cilium deny rules. The supervisor still reaches the gateway, Risk Guard's middleware port and the tunnel proxy. |
+| Tunnel proxy (`sandbox-egress`) | `sandbox-egress` | Ingress only from supervisors; egress to Risk Guard and approved destinations. |
+| SPIFFE demo workloads | `egress-demo-only-via-proxy` | Egress only through the per-request proxy. |
+
+Limits: the fence needs Cilium (script 18 skips it with a warning otherwise). A supervisor that is compromised can still reach an
+in-cluster plain-HTTP destination directly (the one `documented` case in the report). Network policy does not make the node pools
+separate trust domains.
+
+## Quarantine: what is guaranteed, and when
+
+* **New tunnels:** refused immediately once the operator quarantine is written (Risk Guard re-reads it on every check).
+* **Tunnels already open:** not cut at that instant. Envoy ends every tunnel after `max_stream_duration` (120 s), so the longest an
+  existing connection can outlive a quarantine is 120 s. Measured: a long-lived connection failed 111.5 s after quarantine
+  (`conformance/quarantine-tunnel*.json`).
+* **What the client sees:** a refused new tunnel shows as a TLS handshake timeout after about 10 s, not an HTTP error.
+* A short lifetime also bounds every legitimate long stream to 120 s; raise it deliberately if a workload needs more.
 
 ## Deployed shape (AKS)
 
