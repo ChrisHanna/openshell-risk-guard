@@ -62,9 +62,9 @@ function Invoke-OpenSearch([string]$Method, [string]$Path, [string]$Json = '') {
 Write-Step 'Preparing the OCSF index'
 # A template, so the next index has a proper date for `time`, integer class and severity ids, and no replica a single node cannot hold. The current index is
 # replaced (it holds only demo events, and fills again as soon as sandboxes run).
-$template = '{"index_patterns":["ocsf-*"],"template":{"settings":{"number_of_replicas":0},"mappings":{"properties":{"time":{"type":"date","format":"epoch_millis"},"class_uid":{"type":"integer"},"severity_id":{"type":"integer"},"activity_id":{"type":"integer"}}}},"priority":100}'
+$template = '{"index_patterns":["ocsf-*"],"template":{"settings":{"number_of_replicas":0,"index.plugins.index_state_management.rollover_alias":"ocsf-openshell"},"mappings":{"properties":{"time":{"type":"date","format":"epoch_millis"},"class_uid":{"type":"integer"},"severity_id":{"type":"integer"},"activity_id":{"type":"integer"}}}},"priority":100}'
 Invoke-OpenSearch 'PUT' '/_index_template/ocsf' $template | Out-Null
-Invoke-OpenSearch 'DELETE' '/ocsf-openshell' | Out-Null
+# (The index itself is no longer deleted here: it may now be an alias for rolled-over indices. scripts/siem/install_content.py --retention manages them.)
 
 Write-Step 'Read-only role and viewer user'
 $role = '{"cluster_permissions":["cluster_composite_ops_ro"],"index_permissions":[{"index_patterns":["ocsf-*"],"allowed_actions":["read","indices:admin/mappings/get","indices:admin/resolve/index","indices:monitor/settings/get"]},{"index_patterns":[".kibana",".kibana_*"],"allowed_actions":["read"]}],"tenant_permissions":[{"tenant_patterns":["global_tenant"],"allowed_actions":["kibana_all_read"]}]}'

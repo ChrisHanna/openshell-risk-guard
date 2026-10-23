@@ -232,6 +232,9 @@ pub enum Commands {
         server_name: Option<String>,
         #[arg(long, default_value_t = 3)]
         timeout_secs: u64,
+        /// What to check: empty is readiness (the decision store answers); `liveness` is the process alone, with no database access.
+        #[arg(long, default_value = "")]
+        service: String,
     },
     /// Generate a local-test CA, server certificate/key and resource HMAC key (never overwrites).
     LocalSecretsGenerate {
@@ -289,6 +292,29 @@ pub enum Commands {
         context_id: Option<String>,
         #[arg(long)]
         out: PathBuf,
+    },
+    /// Take a verified snapshot of the decision database (safe while Risk Guard runs): integrity-checked, with a SHA-256 file beside it.
+    Backup {
+        #[arg(long)]
+        db: PathBuf,
+        /// The new backup file; it must not exist.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Check a backup file against its checksum and its integrity, without touching any database.
+    BackupVerify {
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// Replace the decision database with a verified backup. Stop Risk Guard first. Everything decided since the backup is lost.
+    Restore {
+        #[arg(long)]
+        from: PathBuf,
+        #[arg(long)]
+        db: PathBuf,
+        /// Replace an existing database.
+        #[arg(long)]
+        force: bool,
     },
     /// Replay a bundle from nothing and report whether the same decisions and reason codes come out. Exits non-zero if they do not.
     ReplayVerify {
@@ -1371,12 +1397,14 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             tls_ca,
             server_name,
             timeout_secs,
+            service,
         } => {
-            crate::sidecar::probe_health(
+            crate::sidecar::probe_health_service(
                 &endpoint,
                 tls_ca.as_deref(),
                 server_name.as_deref(),
                 std::time::Duration::from_secs(timeout_secs.max(1)),
+                &service,
             )
             .await?;
             Ok(serde_json::json!({"status": "SERVING", "endpoint": endpoint}).to_string())
@@ -1448,6 +1476,21 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                 "problems": bundle.history.problems, "content_hash": bundle.content_hash,
             })
             .to_string())
+        }
+
+        Commands::Backup { db, out } => {
+            let report = crate::backup::backup(&db, &out)?;
+            Ok(serde_json::to_string_pretty(&report)?)
+        }
+
+        Commands::BackupVerify { file } => {
+            let report = crate::backup::verify(&file)?;
+            Ok(serde_json::to_string_pretty(&report)?)
+        }
+
+        Commands::Restore { from, db, force } => {
+            let report = crate::backup::restore(&from, &db, force)?;
+            Ok(serde_json::to_string_pretty(&report)?)
         }
 
         Commands::ReplayVerify {

@@ -173,24 +173,34 @@ __SIGNALS_ARGS__
               containerPort: 50061
 __SVID_CONTAINER_PORT__
 __SIGNALS_CONTAINER_PORT__
-          # Kubernetes' built-in gRPC probe cannot speak TLS and this listener is TLS-only, so the probe is the
-          # binary itself: `health-check` calls grpc.health.v1 over TLS and succeeds only when the decision
-          # store answers (NOT_SERVING means evaluations are already failing closed).
+          # Kubernetes' built-in gRPC probe cannot speak TLS and this listener is TLS-only, so the probe is the binary itself (`health-check`).
+          # Three probes with three jobs:
+          #   startup   - gives a slow start (a large database, a recovery after a crash) up to 150 s before the other probes begin;
+          #   readiness - "can this process give a valid decision?": the decision store answers through the read connection. Failing it removes
+          #               the pod from service (the gateway then fails closed); it never restarts the pod;
+          #   liveness  - "is the process answering?" only (service `liveness`, no database access), so a slow disk or a busy writer
+          #               cannot cause a restart loop. Six misses at 20 s are two minutes of a process that does not answer at all.
+          startupProbe:
+            exec:
+              command: ["/usr/local/bin/openshell-risk-guard", "health-check", "--endpoint=https://127.0.0.1:50061",
+                        "--tls-ca=/etc/openshell-risk-guard/ca/ca.crt", "--server-name=risk-guard.openshell.svc"]
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 30
           readinessProbe:
             exec:
               command: ["/usr/local/bin/openshell-risk-guard", "health-check", "--endpoint=https://127.0.0.1:50061",
                         "--tls-ca=/etc/openshell-risk-guard/ca/ca.crt", "--server-name=risk-guard.openshell.svc"]
             periodSeconds: 10
             timeoutSeconds: 5
+            failureThreshold: 2
           livenessProbe:
             exec:
               command: ["/usr/local/bin/openshell-risk-guard", "health-check", "--endpoint=https://127.0.0.1:50061",
-                        "--tls-ca=/etc/openshell-risk-guard/ca/ca.crt", "--server-name=risk-guard.openshell.svc"]
-            initialDelaySeconds: 15
+                        "--tls-ca=/etc/openshell-risk-guard/ca/ca.crt", "--server-name=risk-guard.openshell.svc", "--service=liveness"]
             periodSeconds: 20
             timeoutSeconds: 5
-            failureThreshold: 3
-__SIGNALS_ENV__
+            failureThreshold: 6
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532

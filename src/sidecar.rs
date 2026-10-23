@@ -218,6 +218,20 @@ pub async fn probe_health(
     server_name: Option<&str>,
     timeout: std::time::Duration,
 ) -> Result<()> {
+    probe_health_service(endpoint, ca_pem, server_name, timeout, "").await
+}
+
+/// The health service a liveness probe asks for: answered by the process alone, without the database.
+pub const LIVENESS_SERVICE: &str = "liveness";
+
+/// Like [`probe_health`], for a named service: `""` is readiness (the decision store answers), `"liveness"` is the process alone.
+pub async fn probe_health_service(
+    endpoint: &str,
+    ca_pem: Option<&Path>,
+    server_name: Option<&str>,
+    timeout: std::time::Duration,
+    service: &str,
+) -> Result<()> {
     let mut builder = Endpoint::from_shared(endpoint.to_string())
         .map_err(|err| {
             RiskGuardError::InvalidArgument(format!("invalid endpoint '{endpoint}': {err}"))
@@ -250,7 +264,7 @@ pub async fn probe_health(
     let response = grpc
         .unary(
             tonic::Request::new(HealthCheckRequest {
-                service: String::new(),
+                service: service.to_string(),
             }),
             http::uri::PathAndQuery::from_static("/grpc.health.v1.Health/Check"),
             tonic_prost::ProstCodec::<HealthCheckRequest, HealthCheckResponse>::default(),
@@ -287,13 +301,21 @@ impl HealthServer {
     ) -> std::result::Result<HealthCheckResponse, tonic::Status> {
         let known = [
             "",
+            LIVENESS_SERVICE,
             "openshell.middleware.v1.SupervisorMiddleware",
             "openshell.gateway_interceptor.v1.GatewayInterceptor",
         ];
         if !known.contains(&request.service.as_str()) {
             return Err(tonic::Status::not_found("unknown service"));
         }
-        let healthy = tokio::task::spawn_blocking(move || store.verify_pragmas().is_ok())
+        // Liveness asks only "is the process answering?". It never touches the database: a slow disk or a busy writer must make the pod
+        // unready (it stops receiving work), not get it killed and restarted in a loop.
+        if request.service == LIVENESS_SERVICE {
+            return Ok(HealthCheckResponse { status: SERVING });
+        }
+        // Readiness asks "can this process give a valid decision?". It reads through the read connection, so a long write in progress
+        // does not make a healthy process look broken.
+        let healthy = tokio::task::spawn_blocking(move || store.readiness().is_ok())
             .await
             .unwrap_or(false);
         Ok(HealthCheckResponse {

@@ -7,6 +7,7 @@
 pub mod adaptive;
 pub mod adaptive_controls;
 pub mod auth;
+pub mod backup;
 pub mod cli;
 pub mod dashboard;
 pub mod detector;

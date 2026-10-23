@@ -30,7 +30,7 @@ def exec_in_pod(command, body=None):
 
 def opensearch(method, path, body=None):
     command = (f"curl -sk -X {method} -u admin:$OPENSEARCH_PASSWORD -H 'Content-Type: application/json' "
-               f"--data-binary @- https://opensearch-cluster-master:9200{path}")
+               f"--data-binary @- 'https://opensearch-cluster-master:9200{path}'")
     out = exec_in_pod(command, json.dumps(body).encode() if body is not None else b"")
     try:
         return json.loads(out)
@@ -223,6 +223,65 @@ def install_report():
     return name, "created" if "created" in out else "NOT created: " + out[:200]
 
 
+RETENTION_DAYS = 14
+POLICY = "ocsf-retention"
+FIRST_INDEX = INDEX + "-000001"
+
+TEMPLATE = {
+    "index_patterns": ["ocsf-*"], "priority": 100,
+    "template": {
+        "settings": {"number_of_replicas": 0, "index.plugins.index_state_management.rollover_alias": INDEX},
+        "mappings": {"properties": {"time": {"type": "date", "format": "epoch_millis"}, "class_uid": {"type": "integer"},
+                                    "severity_id": {"type": "integer"}, "activity_id": {"type": "integer"}}}}}
+
+
+def install_retention():
+    """Keep the events for RETENTION_DAYS and no longer: the index rolls over daily (or at 5 GB) and an index older than the limit is deleted.
+    The name the collector writes to (`ocsf-openshell`) becomes an alias for the newest index, so nothing else changes. The first run moves the existing
+    events into the first index (a few seconds of events written during the swap can be lost; run it when the demo is quiet)."""
+    policy = {"policy": {
+        "description": f"OCSF events: roll over daily or at 5 GB, delete after {RETENTION_DAYS} days",
+        "default_state": "hot",
+        "states": [
+            {"name": "hot", "actions": [{"rollover": {"min_index_age": "1d", "min_primary_shard_size": "5gb"}}],
+             "transitions": [{"state_name": "delete", "conditions": {"min_index_age": f"{RETENTION_DAYS}d"}}]},
+            {"name": "delete", "actions": [{"delete": {}}], "transitions": []}],
+        "ism_template": [{"index_patterns": [INDEX + "-*"], "priority": 100}]}}
+    existing = opensearch("GET", f"/_plugins/_ism/policies/{POLICY}")
+    if "_seq_no" in existing:
+        result = opensearch("PUT", f"/_plugins/_ism/policies/{POLICY}?if_seq_no={existing['_seq_no']}&if_primary_term={existing['_primary_term']}", policy)
+    else:
+        result = opensearch("PUT", f"/_plugins/_ism/policies/{POLICY}", policy)
+    print("retention policy:", "ok" if "_id" in result else "NOT set: " + json.dumps(result)[:200])
+    print("index template:", "ok" if opensearch("PUT", "/_index_template/ocsf", TEMPLATE).get("acknowledged") else "NOT set")
+
+    alias = opensearch("GET", f"/_alias/{INDEX}")
+    already = isinstance(alias, dict) and any(isinstance(v, dict) and "aliases" in v for v in alias.values()) and "error" not in alias
+    if already:
+        print(f"rollover: '{INDEX}' is already an alias")
+        return
+    before = opensearch("GET", f"/{INDEX}/_count").get("count")
+    if before is None:
+        # Nothing has been written yet: start the first index with the alias.
+        made = opensearch("PUT", f"/{FIRST_INDEX}", {"aliases": {INDEX: {"is_write_index": True}}})
+        print("rollover: first index created" if made.get("acknowledged") else "rollover NOT set up: " + json.dumps(made)[:200])
+        return
+    print(f"rollover: moving {before} existing events into {FIRST_INDEX}")
+    made = opensearch("PUT", f"/{FIRST_INDEX}", {})
+    if not made.get("acknowledged"):
+        raise SystemExit("could not create the first index: " + json.dumps(made)[:200])
+    moved = opensearch("POST", "/_reindex?wait_for_completion=true&refresh=true", {"source": {"index": INDEX}, "dest": {"index": FIRST_INDEX}})
+    # An error answer has neither number; treating "None equals None" as success once lost every event, so insist on real numbers.
+    if "error" in moved or moved.get("failures") or moved.get("total") is None or moved.get("total") != moved.get("created"):
+        raise SystemExit("reindex incomplete; the original index was not touched: " + json.dumps(moved)[:300])
+    swapped = opensearch("POST", "/_aliases", {"actions": [
+        {"remove_index": {"index": INDEX}},
+        {"add": {"index": FIRST_INDEX, "alias": INDEX, "is_write_index": True}}]})
+    print("rollover: swapped" if swapped.get("acknowledged") else "swap FAILED: " + json.dumps(swapped)[:200])
+    after = opensearch("GET", f"/{INDEX}/_count").get("count")
+    print(f"events before {before}, after {after}")
+
+
 SIGNALS_URL = "http://risk-guard.openshell.svc.cluster.local:50063/v1/signals"
 CHANNEL = "risk-guard-signals"
 SIGNAL_MONITOR = "Repeated refusals: 3 or more in 5 minutes, per sandbox (asks Risk Guard to quarantine)"
@@ -289,6 +348,9 @@ def install_signals():
 def main():
     if "--signals" in sys.argv:
         install_signals()
+        return
+    if "--retention" in sys.argv:
+        install_retention()
         return
     imported = dashboards_import("\n".join(json.dumps(o) for o in build_objects()) + "\n")
     errors = imported.get("errors") or []

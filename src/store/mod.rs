@@ -190,6 +190,18 @@ impl SqliteRiskStore {
         Ok((journal_mode, synchronous, foreign_keys))
     }
 
+    /// Can this process read its decision store? Used by the readiness probe. It goes through the read connection, never the writer, so a long
+    /// write (or a slow disk under it) does not block the probe's answer or make a healthy process look broken.
+    pub fn readiness(&self) -> Result<()> {
+        let conn = self.lock_read_conn()?;
+        conn.query_row(
+            "SELECT COUNT(*) FROM (SELECT 1 FROM sqlite_master LIMIT 1)",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        Ok(())
+    }
+
     /// Inventory reflects governed epochs, not a claim about live gateway lifecycle.
     pub fn operator_inventory(&self, now_ms: i64) -> Result<serde_json::Value> {
         let mut conn = self.lock_read_conn()?;
@@ -2374,6 +2386,25 @@ mod tests {
         BaselineMaturity, REASON_BEHAVIORAL_RISK_DENIED, REASON_BEHAVIORAL_RISK_RESTRICTED,
         TwoStepProofResult,
     };
+
+    #[test]
+    fn readiness_does_not_wait_for_the_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SqliteRiskStore::open(dir.path().join("rg.db")).unwrap());
+        let writer = store.lock_conn().unwrap();
+        let other = Arc::clone(&store);
+        let handle = std::thread::spawn(move || other.readiness());
+        let started = std::time::Instant::now();
+        while !handle.is_finished() && started.elapsed() < std::time::Duration::from_secs(2) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            handle.is_finished(),
+            "a probe must not queue behind a long write"
+        );
+        drop(writer);
+        handle.join().unwrap().unwrap();
+    }
 
     struct ScriptedDetector<F> {
         calls: AtomicUsize,

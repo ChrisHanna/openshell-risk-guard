@@ -116,6 +116,10 @@ RISK_GUARD_FILL = {
     '__SVID_VOLUME__': chr(10).join(['        - name: spire-bundle', '          configMap:', '            name: spire-bundle', '            optional: true']),
     '__SVID_POD_SPEC__': '      serviceAccountName: risk-guard-tunnels',
     '__CONSOLE_ENV__': chr(10).join(['          env:', '            - name: RISK_GUARD_SANDBOX_SPIFFE_TRUST_DOMAIN', '              value: x']),
+    '__SIGNALS_ARGS__': '            - --signals-listen=0.0.0.0:50063',
+    '__SIGNALS_SERVICE_PORT__': '    - name: signals' + chr(10) + '      port: 50063' + chr(10) + '      targetPort: signals',
+    '__SIGNALS_CONTAINER_PORT__': '            - name: signals' + chr(10) + '              containerPort: 50063',
+    '__SIGNALS_ENV__': chr(10).join(['          env:', '            - name: RISK_GUARD_SIGNALS_TOKEN', '              valueFrom:', '                secretKeyRef: {name: siem-signals-token, key: token}']),
 }
 
 

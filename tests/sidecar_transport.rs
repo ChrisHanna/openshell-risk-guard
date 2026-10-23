@@ -206,6 +206,31 @@ async fn tls_plus_gateway_jwt_is_required_on_every_supervisor_call() {
         .await
         .expect("health over TLS");
     assert_eq!(health.into_inner().status, SERVING);
+
+    // Liveness is its own service, answered by the process alone; an unknown name is refused.
+    grpc.ready().await.unwrap();
+    let live: tonic::Response<HealthCheckResponse> = grpc
+        .unary(
+            tonic::Request::new(HealthCheckRequest {
+                service: "liveness".into(),
+            }),
+            http::uri::PathAndQuery::from_static("/grpc.health.v1.Health/Check"),
+            tonic_prost::ProstCodec::default(),
+        )
+        .await
+        .expect("liveness over TLS");
+    assert_eq!(live.into_inner().status, SERVING);
+    grpc.ready().await.unwrap();
+    let unknown: Result<tonic::Response<HealthCheckResponse>, _> = grpc
+        .unary(
+            tonic::Request::new(HealthCheckRequest {
+                service: "no-such-service".into(),
+            }),
+            http::uri::PathAndQuery::from_static("/grpc.health.v1.Health/Check"),
+            tonic_prost::ProstCodec::default(),
+        )
+        .await;
+    assert_eq!(unknown.unwrap_err().code(), Code::NotFound);
 }
 
 #[tokio::test]
