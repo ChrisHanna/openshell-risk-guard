@@ -67,7 +67,7 @@ Invoke-OpenSearch 'PUT' '/_index_template/ocsf' $template | Out-Null
 Invoke-OpenSearch 'DELETE' '/ocsf-openshell' | Out-Null
 
 Write-Step 'Read-only role and viewer user'
-$role = '{"cluster_permissions":["cluster_composite_ops_ro"],"index_permissions":[{"index_patterns":["ocsf-*"],"allowed_actions":["read","indices:admin/mappings/get","indices:admin/resolve/index","indices:monitor/settings/get"]}],"tenant_permissions":[{"tenant_patterns":["global_tenant"],"allowed_actions":["kibana_all_read"]}]}'
+$role = '{"cluster_permissions":["cluster_composite_ops_ro"],"index_permissions":[{"index_patterns":["ocsf-*"],"allowed_actions":["read","indices:admin/mappings/get","indices:admin/resolve/index","indices:monitor/settings/get"]},{"index_patterns":[".kibana",".kibana_*"],"allowed_actions":["read"]}],"tenant_permissions":[{"tenant_patterns":["global_tenant"],"allowed_actions":["kibana_all_read"]}]}'
 Invoke-OpenSearch 'PUT' '/_plugins/_security/api/roles/ocsf_reader' $role | Out-Null
 $haveViewer = Invoke-Native kubectl @('get', 'secret', 'opensearch-viewer', '-n', $ns, '-o', 'name') -AllowFailure
 if (-not $haveViewer) {
