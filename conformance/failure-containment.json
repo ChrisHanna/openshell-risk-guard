@@ -2,9 +2,8 @@
   "test": "failure_containment",
   "run_at": "2026-10-23T01:22:08+00:00",
   "deployment": {
-    "risk_guard_image": "acropenshell63169.azurecr.io/openshell-risk-guard:95cd158",
-    "repository_commit": "9f65898",
-    "cluster_context": "aks-openshell-demo"
+    "risk_guard_image": "openshell-risk-guard:95cd158",
+    "repository_commit": "9f65898"
   },
   "summary": {
     "live_passed": 7,

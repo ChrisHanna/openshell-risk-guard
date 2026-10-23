@@ -119,6 +119,7 @@ Where this document says "the sandboxed process", it means the program running i
   support, used for credential-less token grants and shown in the console; Risk Guard does not verify it. A task profile can also list
   the hostnames its sandboxes may open an encrypted connection to (`approved_egress_hosts`), checked at the tunnel gate outside the supervisor
   (shadow by default).
+- **Containment is tested, not assumed.** `scripts/conformance/` holds runners that produce machine-readable reports in `conformance/`: whether a sandbox or a compromised supervisor can bypass the proxy (and the Cilium fence that closes most routes), how long an open tunnel survives a quarantine (at most 120 s), how the system behaves when Risk Guard, its database or its credentials fail, and where the security services run and what the sandbox service accounts may change. The threat model, with the gaps stated, is in [Deployment security](docs/deployment-security.md); the placement decision is [ADR 0001](docs/adr/0001-security-placement.md).
 - **Network only.** Risk Guard scores HTTP/S requests that OpenShell inspects.
   Filesystem and process behavior are enforced statically by OpenShell
   (Landlock and policy), not scored.

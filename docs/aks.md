@@ -69,6 +69,10 @@ secrets), and prints the next step. Windows PowerShell 5.1 and PowerShell 7 are 
 | 13 | `13-register-agent-identity.ps1` | Registers an Entra application for an agent; its client secret goes only to Key Vault; its application ID becomes a workload. |
 | 14 | `14-build-agent-image.ps1` | Builds the NeMo Agent Toolkit agent image in the registry. |
 | 16 | `16-deploy-fleet.ps1` | Runs the three-agent fleet inside the cluster, so it keeps going when no workstation is on. |
+| 17 | `17-deploy-spire.ps1` | SPIRE and Risk Guard's SPIFFE listener (X.509-SVID over mutual TLS). |
+| 18 | `18-enable-sandbox-egress.ps1` | The tunnel gate for OpenShell sandboxes (Envoy `sandbox-egress`) and the Cilium supervisor fence. |
+| 19, 20 | `19-enable-sandbox-spiffe.ps1`, `20-deploy-token-grant-demo.ps1` | A SPIFFE identity per sandbox, and the credential-less token-grant demo. |
+| 21 | `21-harden-placement.ps1` | Optional (dry run unless `-Apply`; costs one node): moves Risk Guard, the proxies and the SPIRE server to their own node pool. See [ADR 0001](adr/0001-security-placement.md). |
 | – | `99-teardown.ps1 -Yes` | Deletes the resource group. |
 
 The gateway validates every registered extension when it starts, so Risk Guard (step 4) must be running before step 5.

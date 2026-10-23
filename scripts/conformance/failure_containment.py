@@ -144,8 +144,8 @@ def live_case(name, failure, expected, send, must_be):
 def deployment():
     image = kubectl("get", "deploy/risk-guard", "-o", "jsonpath={.spec.template.spec.containers[?(@.name==\"risk-guard\")].image}").stdout.strip()
     commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip() or None
-    context = subprocess.run(["kubectl", "config", "current-context"], capture_output=True, text=True).stdout.strip()
-    return {"risk_guard_image": image, "repository_commit": commit, "cluster_context": context}
+    # The registry host is left out: the report names the build, not the account it was pushed to.
+    return {"risk_guard_image": image.split("/", 1)[-1], "repository_commit": commit}
 
 
 def main():

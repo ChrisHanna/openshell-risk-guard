@@ -1,8 +1,8 @@
 {
   "test": "egress_bypass",
-  "run_at": "2026-10-23T00:40:02+00:00",
+  "run_at": "2026-10-23T01:27:00+00:00",
   "deployment": {
-    "risk_guard_image": "mcr.microsoft.com/azurelinux/base/nginx:1.30.6-1-azl3.0.20261015",
+    "risk_guard_image": "openshell-risk-guard:95cd158",
     "network_policies": [
       "egress-demo-only-via-proxy",
       "openshell-sandbox-ssh",
@@ -14,16 +14,16 @@
   },
   "destination_side": {
     "before": {
-      "destructive_hits": 3,
+      "destructive_hits": 4,
       "counters": {
-        "GET": 223,
+        "GET": 267,
         "DELETE": 0
       }
     },
     "after": {
-      "destructive_hits": 4,
+      "destructive_hits": 5,
       "counters": {
-        "GET": 224,
+        "GET": 268,
         "DELETE": 0
       }
     },

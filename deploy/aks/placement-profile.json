@@ -1,0 +1,14 @@
+{
+  "name": "hardened-placement",
+  "description": "Risk Guard and the services it relies on run on their own nodes, away from sandboxes and demo workloads. A different node limits what one compromised node gives an attacker. It does not give a separate Kubernetes control plane, a separate cluster administrator or a separate trust domain.",
+  "node_pool": "security",
+  "node_labels": {"workload-class": "security"},
+  "node_taint": "workload-class=security:NoSchedule",
+  "security_workloads": [
+    {"kind": "deployment", "name": "risk-guard"},
+    {"kind": "deployment", "name": "sandbox-egress"},
+    {"kind": "deployment", "name": "egress-proxy"},
+    {"kind": "statefulset", "name": "spire-server"}
+  ],
+  "per_node_daemons_allowed_on_security_nodes": ["spire-agent", "spire-spiffe-csi-driver"]
+}

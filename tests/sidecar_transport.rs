@@ -315,7 +315,9 @@ fn local_secrets_are_private_and_never_overwritten() {
 async fn expired_misdirected_and_foreign_tokens_are_refused() {
     let dir = tempfile::tempdir().unwrap();
     let running = start(&dir.path().join("secrets")).await;
-    let channel = tls_channel(running.addr, &running.ca_pem).await.expect("TLS handshake");
+    let channel = tls_channel(running.addr, &running.ca_pem)
+        .await
+        .expect("TLS handshake");
     let mut client = SupervisorMiddlewareClient::new(channel);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -332,17 +334,28 @@ async fn expired_misdirected_and_foreign_tokens_are_refused() {
         sandbox_id: Some(SANDBOX.to_string()),
     };
     let sign = |issuer: &JwtTestIssuer, claims: &ExtensionJwtClaims| {
-        issuer.mint_with_claims(Some(EXTENSION_JWT_TYP), claims).unwrap()
+        issuer
+            .mint_with_claims(Some(EXTENSION_JWT_TYP), claims)
+            .unwrap()
     };
 
     let control = sign(&running.issuer, &claims(AUDIENCE, now, now + 300));
     let expired = sign(&running.issuer, &claims(AUDIENCE, now - 600, now - 300));
     let misdirected = sign(&running.issuer, &claims("urn:someone:else", now, now + 300));
-    let foreign = sign(&JwtTestIssuer::new(GATEWAY), &claims(AUDIENCE, now, now + 300));
+    let foreign = sign(
+        &JwtTestIssuer::new(GATEWAY),
+        &claims(AUDIENCE, now, now + 300),
+    );
 
-    let ok = client.evaluate_http_request(evaluation(Some(&control), "tok-control")).await;
+    let ok = client
+        .evaluate_http_request(evaluation(Some(&control), "tok-control"))
+        .await;
     assert!(ok.is_ok(), "the control token must be accepted: {ok:?}");
-    for (name, token) in [("expired", expired), ("wrong audience", misdirected), ("foreign signature", foreign)] {
+    for (name, token) in [
+        ("expired", expired),
+        ("wrong audience", misdirected),
+        ("foreign signature", foreign),
+    ] {
         let error = client
             .evaluate_http_request(evaluation(Some(&token), &format!("tok-{name}")))
             .await

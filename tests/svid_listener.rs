@@ -997,10 +997,18 @@ async fn a_request_is_not_forwarded_when_risk_guard_cannot_write_its_state() {
     let channel = connect(&running, Some((&cert, &key))).await.unwrap();
     let workload = "spiffe://example.org/ns/prod/sa/release-bot";
 
-    let before = check(channel.clone(), workload, "GET", "/repos/org/docs-site/issues")
-        .await
-        .unwrap();
-    assert!(before.ok_response.is_some(), "the control request must pass: {before:?}");
+    let before = check(
+        channel.clone(),
+        workload,
+        "GET",
+        "/repos/org/docs-site/issues",
+    )
+    .await
+    .unwrap();
+    assert!(
+        before.ok_response.is_some(),
+        "the control request must pass: {before:?}"
+    );
 
     let other = rusqlite::Connection::open(&db_path).unwrap();
     let tables: Vec<String> = other
@@ -1021,7 +1029,11 @@ async fn a_request_is_not_forwarded_when_risk_guard_cannot_write_its_state() {
 
     // A different request: the control request's id is already recorded, and a repeat of it is answered from the record.
     match check(channel, workload, "GET", "/repos/org/docs-site/releases").await {
-        Err(status) => assert_eq!(status.code(), Code::Unavailable, "an error the proxy treats as a failure to authorize"),
+        Err(status) => assert_eq!(
+            status.code(),
+            Code::Unavailable,
+            "an error the proxy treats as a failure to authorize"
+        ),
         Ok(response) => assert!(
             response.ok_response.is_none(),
             "a request must not be forwarded when its decision could not be recorded: {response:?}"

@@ -81,7 +81,7 @@ def policies_in_force():
 
 def deployment():
     image = kubectl("get", "deploy/risk-guard", "-o", "jsonpath={.spec.template.spec.containers[?(@.name==\"risk-guard\")].image}").stdout.strip()
-    return {"risk_guard_image": image, "network_policies": policies_in_force()}
+    return {"risk_guard_image": image.split("/", 1)[-1], "network_policies": policies_in_force()}
 
 
 def supervisor_probe(pod, label, commands, wait=90):
