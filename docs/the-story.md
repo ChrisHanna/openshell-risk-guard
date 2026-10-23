@@ -41,6 +41,8 @@ flowchart LR
 5. **Change safely.** Loosening needs a second person ([two-person approval](two-person.md)). Moving from shadow to enforce needs evidence ([promotion gate](promotion-gate.md)). State can be backed up and restored ([recovery](recovery.md)).
 6. **Prove.** The red-team catalog and fuzzer run in CI; an agent that attacks the live system turns any gap it finds into a permanent test ([red team](red-team.md), [red-team agent](red-team-agent.md)). Models for anomaly detection are trained and compared on synthetic traces ([ML training](ml-training.md)).
 
+Short version of who does what: [who blocks, who recommends](who-does-what.md).
+
 ## Why each piece is there
 
 - Without **OpenShell**, there is no boundary to narrow. Risk Guard never widens what it allows.
