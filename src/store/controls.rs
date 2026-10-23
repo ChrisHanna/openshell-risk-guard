@@ -271,9 +271,15 @@ impl SqliteRiskStore {
             "mode": if mature == 0 { "watching" } else if mature == profiles.len() { "enforcing" } else { "mixed" },
             "what": "Scores how unusual a call is for its workload (rate, new routes, new resources). It can only refuse once a task profile has learned enough; until then it records a score and never refuses on rarity alone.",
             "profiles": learning,
-            "evidence": {"refused_24h": reason(REASON_BEHAVIORAL_RISK_DENIED) + reason(REASON_BEHAVIORAL_RISK_RESTRICTED), "scored_but_not_enforceable_24h": reason(REASON_BASELINE_INSUFFICIENT), "calls_24h": total_24h},
+            "evidence": {"refused_24h": reason(REASON_BEHAVIORAL_RISK_DENIED), "scored_but_not_enforceable_24h": reason(REASON_BASELINE_INSUFFICIENT), "calls_24h": total_24h},
             "data": {"state": if mature == profiles.len() && !profiles.is_empty() { "ok" } else { "not_enough_data" },
                      "note": format!("{mature} of {} task profiles have learned enough (20 sessions and 200 requests each). Until a profile has, OpenShell policy and the approved lists above are what protect it.", profiles.len())},
+        }));
+        controls.push(json!({
+            "id": "latched_restriction", "source": "rule", "name": "Latched restriction (after a refused action)", "mode": "enforcing",
+            "what": "When a high-impact action is refused, that scope is locked for the workload: its later calls in the scope are refused until a person clears the lock (two people when two-person approval is on). It follows the workload into new sandboxes.",
+            "evidence": {"refused_24h": reason(REASON_BEHAVIORAL_RISK_RESTRICTED), "calls_24h": total_24h},
+            "data": {"state": "ok", "note": "Needs no history."},
         }));
         controls.push(json!({
             "id": "adaptive_learning", "source": "learned", "name": "Adaptive learning", "mode": "watching",
