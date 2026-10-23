@@ -159,6 +159,7 @@ spec:
       labels:
         app.kubernetes.io/name: egress-proxy
     spec:
+      automountServiceAccountToken: false
       serviceAccountName: egress-proxy
       nodeSelector:
         kubernetes.azure.com/agentpool: nodepool1
@@ -171,6 +172,12 @@ spec:
       containers:
         - name: envoy
           image: envoyproxy/envoy:v1.36.0
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
           args: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]
           ports:
             - name: egress

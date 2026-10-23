@@ -6,6 +6,27 @@
 # The scripts (token-issuer.js, protected-service.js) are not copied into this repository: scripts/aks/20-deploy-token-grant-demo.ps1
 # downloads them from OpenShell at the pinned commit into the ConfigMap spiffe-token-demo-scripts. Rendered by that script, which fills
 # __TRUST_DOMAIN__.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: token-issuer
+  namespace: openshell
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alpha
+  namespace: openshell
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: beta
+  namespace: openshell
+automountServiceAccountToken: false
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,6 +42,8 @@ spec:
       labels:
         app.kubernetes.io/name: token-issuer
     spec:
+      serviceAccountName: token-issuer
+      automountServiceAccountToken: false
       nodeSelector:
         kubernetes.azure.com/agentpool: nodepool1
       securityContext:
@@ -32,6 +55,12 @@ spec:
       containers:
         - name: token-issuer
           image: node:22-alpine
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 192Mi
           command: ["node", "/demo/token-issuer.js"]
           ports:
             - name: http
@@ -96,6 +125,8 @@ spec:
       labels:
         app.kubernetes.io/name: alpha
     spec:
+      serviceAccountName: alpha
+      automountServiceAccountToken: false
       nodeSelector:
         kubernetes.azure.com/agentpool: nodepool1
       securityContext:
@@ -107,6 +138,12 @@ spec:
       containers:
         - name: alpha
           image: node:22-alpine
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 192Mi
           command: ["node", "/demo/protected-service.js"]
           ports:
             - name: http
@@ -166,6 +203,8 @@ spec:
       labels:
         app.kubernetes.io/name: beta
     spec:
+      serviceAccountName: beta
+      automountServiceAccountToken: false
       nodeSelector:
         kubernetes.azure.com/agentpool: nodepool1
       securityContext:
@@ -177,6 +216,12 @@ spec:
       containers:
         - name: beta
           image: node:22-alpine
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 192Mi
           command: ["node", "/demo/protected-service.js"]
           ports:
             - name: http

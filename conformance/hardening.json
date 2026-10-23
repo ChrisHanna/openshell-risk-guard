@@ -1,0 +1,701 @@
+{
+  "test": "hardening",
+  "run_at": "2026-10-23T02:04:14+00:00",
+  "checks": [
+    "non_root",
+    "no_privilege_escalation",
+    "drop_all_capabilities",
+    "seccomp",
+    "read_only_root",
+    "requests",
+    "memory_limit",
+    "dedicated_service_account",
+    "no_api_token_unless_needed",
+    "no_host_access",
+    "no_privileged",
+    "secret_mounts_restricted"
+  ],
+  "static": {
+    "deployment/egress-demo": {
+      "file": "deploy/aks/egress-demo.yaml",
+      "failed": [],
+      "excepted": []
+    },
+    "deployment/egress-proxy": {
+      "file": "deploy/aks/egress-proxy.yaml",
+      "failed": [],
+      "excepted": []
+    },
+    "deployment/risk-guard-fixture": {
+      "file": "deploy/aks/fixture.yaml",
+      "failed": [],
+      "excepted": []
+    },
+    "deployment/agent-fleet": {
+      "file": "deploy/aks/fleet.yaml",
+      "failed": [],
+      "excepted": []
+    },
+    "deployment/risk-guard": {
+      "file": "deploy/aks/risk-guard.yaml",
+      "failed": [],
+      "excepted": [
+        {
+          "check": "no_api_token_unless_needed",
+          "subject": "pod",
+          "detail": "the Kubernetes API token is mounted",
+          "reason": "With the sandbox tunnel gate on, Risk Guard turns a tunnel's source address into a sandbox by reading supervisor pods. It does that as the service account risk-guard-tunnels, which can only get, list and watch pods. Without the gate the pod has no token."
+        }
+      ]
+    },
+    "deployment/sandbox-egress": {
+      "file": "deploy/aks/sandbox-egress.yaml",
+      "failed": [],
+      "excepted": []
+    },
+    "deployment/svid-demo": {
+      "file": "deploy/aks/svid-demo.yaml",
+      "failed": [],
+      "excepted": []
+    },
+    "deployment/token-issuer": {
+      "file": "deploy/aks/token-grant-demo.yaml",
+      "failed": [],
+      "excepted": []
+    },
+    "deployment/alpha": {
+      "file": "deploy/aks/token-grant-demo.yaml",
+      "failed": [],
+      "excepted": []
+    },
+    "deployment/beta": {
+      "file": "deploy/aks/token-grant-demo.yaml",
+      "failed": [],
+      "excepted": []
+    }
+  },
+  "live": {
+    "agent-fleet": {
+      "pods": 1,
+      "failed": [],
+      "excepted": []
+    },
+    "alpha": {
+      "pods": 1,
+      "failed": [],
+      "excepted": []
+    },
+    "beta": {
+      "pods": 1,
+      "failed": [],
+      "excepted": []
+    },
+    "sandbox-workload-pod": {
+      "pods": 2,
+      "failed": [],
+      "excepted": [
+        {
+          "check": "requests",
+          "subject": "openshell-sandbox-bootstrap",
+          "detail": "missing cpu or memory request",
+          "reason": "Created by OpenShell's Kubernetes driver from the sandbox's template; its memory and CPU come from the Kata runtime class and the VM, not container requests."
+        },
+        {
+          "check": "memory_limit",
+          "subject": "openshell-sandbox-bootstrap",
+          "detail": "no memory limit",
+          "reason": "Same as requests: the micro-VM is sized by the runtime class."
+        },
+        {
+          "check": "requests",
+          "subject": "workspace-init",
+          "detail": "missing cpu or memory request",
+          "reason": "Created by OpenShell's Kubernetes driver from the sandbox's template; its memory and CPU come from the Kata runtime class and the VM, not container requests."
+        },
+        {
+          "check": "memory_limit",
+          "subject": "workspace-init",
+          "detail": "no memory limit",
+          "reason": "Same as requests: the micro-VM is sized by the runtime class."
+        },
+        {
+          "check": "read_only_root",
+          "subject": "agent",
+          "detail": "the root filesystem is writable",
+          "reason": "The agent's root filesystem is writable by design (its workspace). Inside the micro-VM, Landlock and OpenShell's policy confine what it can write."
+        },
+        {
+          "check": "requests",
+          "subject": "agent",
+          "detail": "missing cpu or memory request",
+          "reason": "Created by OpenShell's Kubernetes driver from the sandbox's template; its memory and CPU come from the Kata runtime class and the VM, not container requests."
+        },
+        {
+          "check": "memory_limit",
+          "subject": "agent",
+          "detail": "no memory limit",
+          "reason": "Same as requests: the micro-VM is sized by the runtime class."
+        }
+      ]
+    },
+    "egress-demo": {
+      "pods": 1,
+      "failed": [],
+      "excepted": []
+    },
+    "egress-proxy": {
+      "pods": 1,
+      "failed": [],
+      "excepted": []
+    },
+    "openshell": {
+      "pods": 1,
+      "failed": [],
+      "excepted": [
+        {
+          "check": "no_api_token_unless_needed",
+          "subject": "pod",
+          "detail": "the Kubernetes API token is mounted",
+          "reason": "The OpenShell gateway creates and deletes sandbox pods through the Kubernetes API."
+        },
+        {
+          "check": "secret_mounts_restricted",
+          "subject": "volume tls-cert",
+          "detail": "secret mode 0o644 is wider than 0440",
+          "reason": "The OpenShell chart mounts its TLS and client-CA secrets with the default file mode. Not changed here because the chart owns the pod; tighten through chart values when it exposes them."
+        },
+        {
+          "check": "secret_mounts_restricted",
+          "subject": "volume peer-client-tls",
+          "detail": "secret mode 0o644 is wider than 0440",
+          "reason": "The OpenShell chart mounts its TLS and client-CA secrets with the default file mode. Not changed here because the chart owns the pod; tighten through chart values when it exposes them."
+        },
+        {
+          "check": "secret_mounts_restricted",
+          "subject": "volume tls-client-ca",
+          "detail": "secret mode 0o644 is wider than 0440",
+          "reason": "The OpenShell chart mounts its TLS and client-CA secrets with the default file mode. Not changed here because the chart owns the pod; tighten through chart values when it exposes them."
+        },
+        {
+          "check": "read_only_root",
+          "subject": "openshell-gateway",
+          "detail": "the root filesystem is writable",
+          "reason": "The OpenShell chart's gateway container writes to its root filesystem. Not changed here because the chart owns the pod."
+        },
+        {
+          "check": "requests",
+          "subject": "openshell-gateway",
+          "detail": "missing cpu or memory request",
+          "reason": "The OpenShell chart sets no resource requests for the gateway container by default."
+        },
+        {
+          "check": "memory_limit",
+          "subject": "openshell-gateway",
+          "detail": "no memory limit",
+          "reason": "The OpenShell chart sets no memory limit for the gateway container by default."
+        }
+      ]
+    },
+    "sandbox-supervisor-pod": {
+      "pods": 2,
+      "failed": [],
+      "excepted": [
+        {
+          "check": "requests",
+          "subject": "supervisor",
+          "detail": "missing cpu or memory request",
+          "reason": "Created by OpenShell's Kubernetes driver; it sets no requests."
+        },
+        {
+          "check": "memory_limit",
+          "subject": "supervisor",
+          "detail": "no memory limit",
+          "reason": "Created by OpenShell's Kubernetes driver; it sets no limits."
+        }
+      ]
+    },
+    "risk-guard": {
+      "pods": 1,
+      "failed": [],
+      "excepted": [
+        {
+          "check": "no_api_token_unless_needed",
+          "subject": "pod",
+          "detail": "the Kubernetes API token is mounted",
+          "reason": "With the sandbox tunnel gate on, Risk Guard turns a tunnel's source address into a sandbox by reading supervisor pods. It does that as the service account risk-guard-tunnels, which can only get, list and watch pods. Without the gate the pod has no token."
+        }
+      ]
+    },
+    "risk-guard-fixture": {
+      "pods": 1,
+      "failed": [],
+      "excepted": []
+    },
+    "sandbox-egress": {
+      "pods": 2,
+      "failed": [],
+      "excepted": []
+    },
+    "spire-agent": {
+      "pods": 4,
+      "failed": [],
+      "excepted": [
+        {
+          "check": "no_api_token_unless_needed",
+          "subject": "pod",
+          "detail": "the Kubernetes API token is mounted",
+          "reason": "The SPIRE agent attests workloads by asking the kubelet and the API server who a process is."
+        },
+        {
+          "check": "no_host_access",
+          "subject": "pod",
+          "detail": "uses the host network, PID or IPC namespace",
+          "reason": "The agent shares the host PID namespace and publishes its socket through a hostPath, because that is how it identifies a workload's process."
+        },
+        {
+          "check": "no_host_access",
+          "subject": "volume spire-agent-socket-dir",
+          "detail": "hostPath volume",
+          "reason": "The agent shares the host PID namespace and publishes its socket through a hostPath, because that is how it identifies a workload's process."
+        },
+        {
+          "check": "non_root",
+          "subject": "ensure-alternate-names",
+          "detail": "may run as root",
+          "reason": "The agent runs as root to read other processes' attributes."
+        },
+        {
+          "check": "no_privilege_escalation",
+          "subject": "ensure-alternate-names",
+          "detail": "allowPrivilegeEscalation is not false",
+          "reason": "As for non_root. Also: chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "drop_all_capabilities",
+          "subject": "ensure-alternate-names",
+          "detail": "capabilities are not all dropped",
+          "reason": "As for non_root."
+        },
+        {
+          "check": "seccomp",
+          "subject": "ensure-alternate-names",
+          "detail": "no seccomp profile",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "read_only_root",
+          "subject": "ensure-alternate-names",
+          "detail": "the root filesystem is writable",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "requests",
+          "subject": "ensure-alternate-names",
+          "detail": "missing cpu or memory request",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "memory_limit",
+          "subject": "ensure-alternate-names",
+          "detail": "no memory limit",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "non_root",
+          "subject": "spire-agent",
+          "detail": "may run as root",
+          "reason": "The agent runs as root to read other processes' attributes."
+        },
+        {
+          "check": "no_privilege_escalation",
+          "subject": "spire-agent",
+          "detail": "allowPrivilegeEscalation is not false",
+          "reason": "As for non_root. Also: chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "drop_all_capabilities",
+          "subject": "spire-agent",
+          "detail": "capabilities are not all dropped",
+          "reason": "As for non_root."
+        },
+        {
+          "check": "seccomp",
+          "subject": "spire-agent",
+          "detail": "no seccomp profile",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "read_only_root",
+          "subject": "spire-agent",
+          "detail": "the root filesystem is writable",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "requests",
+          "subject": "spire-agent",
+          "detail": "missing cpu or memory request",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "memory_limit",
+          "subject": "spire-agent",
+          "detail": "no memory limit",
+          "reason": "Chart recommendations are off (see spire-server)."
+        }
+      ]
+    },
+    "spire-server": {
+      "pods": 1,
+      "failed": [],
+      "excepted": [
+        {
+          "check": "no_api_token_unless_needed",
+          "subject": "pod",
+          "detail": "the Kubernetes API token is mounted",
+          "reason": "SPIRE's server and controller manager use the Kubernetes API (token review, pod and service account lookups, publishing the trust bundle)."
+        },
+        {
+          "check": "no_privilege_escalation",
+          "subject": "chown",
+          "detail": "allowPrivilegeEscalation is not false",
+          "reason": "SPIRE chart installed with its recommendations switched off (global.spire.recommendations.enabled=false). Turning them on needs the CA subject set, which changes the CA; deferred until SPIRE can be re-issued on purpose."
+        },
+        {
+          "check": "drop_all_capabilities",
+          "subject": "chown",
+          "detail": "capabilities are not all dropped",
+          "reason": "As for no_privilege_escalation."
+        },
+        {
+          "check": "seccomp",
+          "subject": "chown",
+          "detail": "no seccomp profile",
+          "reason": "As for no_privilege_escalation."
+        },
+        {
+          "check": "read_only_root",
+          "subject": "chown",
+          "detail": "the root filesystem is writable",
+          "reason": "As for no_privilege_escalation."
+        },
+        {
+          "check": "requests",
+          "subject": "chown",
+          "detail": "missing cpu or memory request",
+          "reason": "As for no_privilege_escalation."
+        },
+        {
+          "check": "memory_limit",
+          "subject": "chown",
+          "detail": "no memory limit",
+          "reason": "As for no_privilege_escalation."
+        },
+        {
+          "check": "no_privilege_escalation",
+          "subject": "spire-server",
+          "detail": "allowPrivilegeEscalation is not false",
+          "reason": "SPIRE chart installed with its recommendations switched off (global.spire.recommendations.enabled=false). Turning them on needs the CA subject set, which changes the CA; deferred until SPIRE can be re-issued on purpose."
+        },
+        {
+          "check": "drop_all_capabilities",
+          "subject": "spire-server",
+          "detail": "capabilities are not all dropped",
+          "reason": "As for no_privilege_escalation."
+        },
+        {
+          "check": "seccomp",
+          "subject": "spire-server",
+          "detail": "no seccomp profile",
+          "reason": "As for no_privilege_escalation."
+        },
+        {
+          "check": "read_only_root",
+          "subject": "spire-server",
+          "detail": "the root filesystem is writable",
+          "reason": "As for no_privilege_escalation."
+        },
+        {
+          "check": "requests",
+          "subject": "spire-server",
+          "detail": "missing cpu or memory request",
+          "reason": "As for no_privilege_escalation."
+        },
+        {
+          "check": "memory_limit",
+          "subject": "spire-server",
+          "detail": "no memory limit",
+          "reason": "As for no_privilege_escalation."
+        },
+        {
+          "check": "no_privilege_escalation",
+          "subject": "spire-controller-manager",
+          "detail": "allowPrivilegeEscalation is not false",
+          "reason": "SPIRE chart installed with its recommendations switched off (global.spire.recommendations.enabled=false). Turning them on needs the CA subject set, which changes the CA; deferred until SPIRE can be re-issued on purpose."
+        },
+        {
+          "check": "drop_all_capabilities",
+          "subject": "spire-controller-manager",
+          "detail": "capabilities are not all dropped",
+          "reason": "As for no_privilege_escalation."
+        },
+        {
+          "check": "seccomp",
+          "subject": "spire-controller-manager",
+          "detail": "no seccomp profile",
+          "reason": "As for no_privilege_escalation."
+        },
+        {
+          "check": "read_only_root",
+          "subject": "spire-controller-manager",
+          "detail": "the root filesystem is writable",
+          "reason": "As for no_privilege_escalation."
+        },
+        {
+          "check": "requests",
+          "subject": "spire-controller-manager",
+          "detail": "missing cpu or memory request",
+          "reason": "As for no_privilege_escalation."
+        },
+        {
+          "check": "memory_limit",
+          "subject": "spire-controller-manager",
+          "detail": "no memory limit",
+          "reason": "As for no_privilege_escalation."
+        }
+      ]
+    },
+    "spire-spiffe-csi-driver": {
+      "pods": 4,
+      "failed": [],
+      "excepted": [
+        {
+          "check": "no_api_token_unless_needed",
+          "subject": "pod",
+          "detail": "the Kubernetes API token is mounted",
+          "reason": "The CSI driver's registrar talks to the kubelet and the API server."
+        },
+        {
+          "check": "no_host_access",
+          "subject": "volume spire-agent-socket-dir",
+          "detail": "hostPath volume",
+          "reason": "A CSI node driver has to mount into pods through hostPath directories under the kubelet."
+        },
+        {
+          "check": "no_host_access",
+          "subject": "volume spiffe-csi-socket-dir",
+          "detail": "hostPath volume",
+          "reason": "A CSI node driver has to mount into pods through hostPath directories under the kubelet."
+        },
+        {
+          "check": "no_host_access",
+          "subject": "volume mountpoint-dir",
+          "detail": "hostPath volume",
+          "reason": "A CSI node driver has to mount into pods through hostPath directories under the kubelet."
+        },
+        {
+          "check": "no_host_access",
+          "subject": "volume kubelet-plugin-registration-dir",
+          "detail": "hostPath volume",
+          "reason": "A CSI node driver has to mount into pods through hostPath directories under the kubelet."
+        },
+        {
+          "check": "non_root",
+          "subject": "spiffe-csi-driver",
+          "detail": "may run as root",
+          "reason": "The CSI driver performs mounts, which needs root."
+        },
+        {
+          "check": "no_privilege_escalation",
+          "subject": "spiffe-csi-driver",
+          "detail": "allowPrivilegeEscalation is not false",
+          "reason": "As for non_root."
+        },
+        {
+          "check": "seccomp",
+          "subject": "spiffe-csi-driver",
+          "detail": "no seccomp profile",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "no_privileged",
+          "subject": "spiffe-csi-driver",
+          "detail": "privileged",
+          "reason": "The CSI driver mounts into other pods' filesystems, which needs privileged mode (mount propagation). This is the one genuinely privileged component."
+        },
+        {
+          "check": "requests",
+          "subject": "spiffe-csi-driver",
+          "detail": "missing cpu or memory request",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "memory_limit",
+          "subject": "spiffe-csi-driver",
+          "detail": "no memory limit",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "non_root",
+          "subject": "node-driver-registrar",
+          "detail": "may run as root",
+          "reason": "The CSI driver performs mounts, which needs root."
+        },
+        {
+          "check": "no_privilege_escalation",
+          "subject": "node-driver-registrar",
+          "detail": "allowPrivilegeEscalation is not false",
+          "reason": "As for non_root."
+        },
+        {
+          "check": "drop_all_capabilities",
+          "subject": "node-driver-registrar",
+          "detail": "capabilities are not all dropped",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "seccomp",
+          "subject": "node-driver-registrar",
+          "detail": "no seccomp profile",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "read_only_root",
+          "subject": "node-driver-registrar",
+          "detail": "the root filesystem is writable",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "requests",
+          "subject": "node-driver-registrar",
+          "detail": "missing cpu or memory request",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "memory_limit",
+          "subject": "node-driver-registrar",
+          "detail": "no memory limit",
+          "reason": "Chart recommendations are off (see spire-server)."
+        }
+      ]
+    },
+    "spire-spiffe-oidc-discovery-provider": {
+      "pods": 1,
+      "failed": [],
+      "excepted": [
+        {
+          "check": "no_api_token_unless_needed",
+          "subject": "pod",
+          "detail": "the Kubernetes API token is mounted",
+          "reason": "The provider reads the SPIRE agent's workload API through a CSI volume and the API server for its configuration."
+        },
+        {
+          "check": "non_root",
+          "subject": "spiffe-oidc-discovery-provider",
+          "detail": "may run as root",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "no_privilege_escalation",
+          "subject": "spiffe-oidc-discovery-provider",
+          "detail": "allowPrivilegeEscalation is not false",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "drop_all_capabilities",
+          "subject": "spiffe-oidc-discovery-provider",
+          "detail": "capabilities are not all dropped",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "seccomp",
+          "subject": "spiffe-oidc-discovery-provider",
+          "detail": "no seccomp profile",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "read_only_root",
+          "subject": "spiffe-oidc-discovery-provider",
+          "detail": "the root filesystem is writable",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "requests",
+          "subject": "spiffe-oidc-discovery-provider",
+          "detail": "missing cpu or memory request",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "memory_limit",
+          "subject": "spiffe-oidc-discovery-provider",
+          "detail": "no memory limit",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "non_root",
+          "subject": "nginx",
+          "detail": "may run as root",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "no_privilege_escalation",
+          "subject": "nginx",
+          "detail": "allowPrivilegeEscalation is not false",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "drop_all_capabilities",
+          "subject": "nginx",
+          "detail": "capabilities are not all dropped",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "seccomp",
+          "subject": "nginx",
+          "detail": "no seccomp profile",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "read_only_root",
+          "subject": "nginx",
+          "detail": "the root filesystem is writable",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "requests",
+          "subject": "nginx",
+          "detail": "missing cpu or memory request",
+          "reason": "Chart recommendations are off (see spire-server)."
+        },
+        {
+          "check": "memory_limit",
+          "subject": "nginx",
+          "detail": "no memory limit",
+          "reason": "Chart recommendations are off (see spire-server)."
+        }
+      ]
+    },
+    "svid-demo": {
+      "pods": 1,
+      "failed": [],
+      "excepted": []
+    },
+    "token-issuer": {
+      "pods": 1,
+      "failed": [],
+      "excepted": []
+    }
+  },
+  "pod_security_labels": {
+    "pod-security.kubernetes.io/audit": "restricted",
+    "pod-security.kubernetes.io/warn": "restricted"
+  },
+  "summary": {
+    "workloads_checked": {
+      "static": 10,
+      "live": 17
+    },
+    "unexplained_failures": [],
+    "documented_exceptions": 87,
+    "exceptions_no_longer_needed": []
+  }
+}

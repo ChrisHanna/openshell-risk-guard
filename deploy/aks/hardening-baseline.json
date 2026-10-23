@@ -1,0 +1,66 @@
+{
+  "_about": "Documented exceptions to the Kubernetes hardening baseline checked by scripts/conformance/hardening.py. Keyed by workload name, then by check. An exception that no longer matches a finding is reported, so this list cannot quietly go stale. Workloads we write have almost none; the rest belong to the OpenShell chart, its driver and the SPIRE chart.",
+  "exceptions": {
+    "risk-guard": {
+      "no_api_token_unless_needed": "With the sandbox tunnel gate on, Risk Guard turns a tunnel's source address into a sandbox by reading supervisor pods. It does that as the service account risk-guard-tunnels, which can only get, list and watch pods. Without the gate the pod has no token."
+    },
+    "openshell": {
+      "no_api_token_unless_needed": "The OpenShell gateway creates and deletes sandbox pods through the Kubernetes API.",
+      "secret_mounts_restricted": "The OpenShell chart mounts its TLS and client-CA secrets with the default file mode. Not changed here because the chart owns the pod; tighten through chart values when it exposes them.",
+      "read_only_root": "The OpenShell chart's gateway container writes to its root filesystem. Not changed here because the chart owns the pod.",
+      "requests": "The OpenShell chart sets no resource requests for the gateway container by default.",
+      "memory_limit": "The OpenShell chart sets no memory limit for the gateway container by default."
+    },
+    "sandbox-workload-pod": {
+      "requests": "Created by OpenShell's Kubernetes driver from the sandbox's template; its memory and CPU come from the Kata runtime class and the VM, not container requests.",
+      "memory_limit": "Same as requests: the micro-VM is sized by the runtime class.",
+      "read_only_root": "The agent's root filesystem is writable by design (its workspace). Inside the micro-VM, Landlock and OpenShell's policy confine what it can write."
+    },
+    "sandbox-supervisor-pod": {
+      "requests": "Created by OpenShell's Kubernetes driver; it sets no requests.",
+      "memory_limit": "Created by OpenShell's Kubernetes driver; it sets no limits."
+    },
+    "spire-server": {
+      "no_api_token_unless_needed": "SPIRE's server and controller manager use the Kubernetes API (token review, pod and service account lookups, publishing the trust bundle).",
+      "no_privilege_escalation": "SPIRE chart installed with its recommendations switched off (global.spire.recommendations.enabled=false). Turning them on needs the CA subject set, which changes the CA; deferred until SPIRE can be re-issued on purpose.",
+      "drop_all_capabilities": "As for no_privilege_escalation.",
+      "seccomp": "As for no_privilege_escalation.",
+      "read_only_root": "As for no_privilege_escalation.",
+      "requests": "As for no_privilege_escalation.",
+      "memory_limit": "As for no_privilege_escalation."
+    },
+    "spire-agent": {
+      "no_api_token_unless_needed": "The SPIRE agent attests workloads by asking the kubelet and the API server who a process is.",
+      "no_host_access": "The agent shares the host PID namespace and publishes its socket through a hostPath, because that is how it identifies a workload's process.",
+      "non_root": "The agent runs as root to read other processes' attributes.",
+      "no_privilege_escalation": "As for non_root. Also: chart recommendations are off (see spire-server).",
+      "drop_all_capabilities": "As for non_root.",
+      "seccomp": "Chart recommendations are off (see spire-server).",
+      "read_only_root": "Chart recommendations are off (see spire-server).",
+      "requests": "Chart recommendations are off (see spire-server).",
+      "memory_limit": "Chart recommendations are off (see spire-server)."
+    },
+    "spire-spiffe-csi-driver": {
+      "no_api_token_unless_needed": "The CSI driver's registrar talks to the kubelet and the API server.",
+      "no_host_access": "A CSI node driver has to mount into pods through hostPath directories under the kubelet.",
+      "non_root": "The CSI driver performs mounts, which needs root.",
+      "no_privilege_escalation": "As for non_root.",
+      "no_privileged": "The CSI driver mounts into other pods' filesystems, which needs privileged mode (mount propagation). This is the one genuinely privileged component.",
+      "seccomp": "Chart recommendations are off (see spire-server).",
+      "drop_all_capabilities": "Chart recommendations are off (see spire-server).",
+      "read_only_root": "Chart recommendations are off (see spire-server).",
+      "requests": "Chart recommendations are off (see spire-server).",
+      "memory_limit": "Chart recommendations are off (see spire-server)."
+    },
+    "spire-spiffe-oidc-discovery-provider": {
+      "no_api_token_unless_needed": "The provider reads the SPIRE agent's workload API through a CSI volume and the API server for its configuration.",
+      "non_root": "Chart recommendations are off (see spire-server).",
+      "no_privilege_escalation": "Chart recommendations are off (see spire-server).",
+      "drop_all_capabilities": "Chart recommendations are off (see spire-server).",
+      "seccomp": "Chart recommendations are off (see spire-server).",
+      "read_only_root": "Chart recommendations are off (see spire-server).",
+      "requests": "Chart recommendations are off (see spire-server).",
+      "memory_limit": "Chart recommendations are off (see spire-server)."
+    }
+  }
+}

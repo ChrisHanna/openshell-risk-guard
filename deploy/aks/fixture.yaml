@@ -56,6 +56,13 @@ spec:
       port: 18081
       targetPort: http
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: risk-guard-fixture
+  namespace: openshell
+automountServiceAccountToken: false
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -73,6 +80,11 @@ spec:
       labels:
         app.kubernetes.io/name: risk-guard-fixture
     spec:
+      serviceAccountName: risk-guard-fixture
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: fixture
           image: __PYTHON_IMAGE__
@@ -88,6 +100,7 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532
+            readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]

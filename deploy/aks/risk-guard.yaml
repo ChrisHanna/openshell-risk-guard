@@ -29,6 +29,13 @@ spec:
     requests:
       storage: 2Gi
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: risk-guard
+  namespace: openshell
+automountServiceAccountToken: false
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -54,6 +61,8 @@ spec:
 __SVID_POD_SPEC__
       securityContext:
         fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
         - name: baseline-import
           image: __IMAGE__
@@ -61,6 +70,12 @@ __SVID_POD_SPEC__
             - baseline-import
             - --db=/var/lib/openshell-risk-guard/risk-guard.db
             - --profile=/etc/openshell-risk-guard/baseline/baseline.json
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532
@@ -79,6 +94,12 @@ __SVID_POD_SPEC__
         - name: baseline-import-support
           image: __IMAGE__
           args: [baseline-import, --db=/var/lib/openshell-risk-guard/risk-guard.db, --profile=/etc/openshell-risk-guard/baseline/support.json]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
           securityContext: &baseline-security
             runAsNonRoot: true
             runAsUser: 65532
@@ -96,16 +117,34 @@ __SVID_POD_SPEC__
         - name: baseline-import-release
           image: __IMAGE__
           args: [baseline-import, --db=/var/lib/openshell-risk-guard/risk-guard.db, --profile=/etc/openshell-risk-guard/baseline/release.json]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
           securityContext: *baseline-security
           volumeMounts: *baseline-mounts
         - name: baseline-import-cloud
           image: __IMAGE__
           args: [baseline-import, --db=/var/lib/openshell-risk-guard/risk-guard.db, --profile=/etc/openshell-risk-guard/baseline/cloud.json]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
           securityContext: *baseline-security
           volumeMounts: *baseline-mounts
         - name: baseline-import-token
           image: __IMAGE__
           args: [baseline-import, --db=/var/lib/openshell-risk-guard/risk-guard.db, --profile=/etc/openshell-risk-guard/baseline/token.json]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
           securityContext: *baseline-security
           volumeMounts: *baseline-mounts
       containers:
@@ -219,6 +258,7 @@ __CONSOLE_ENV__
         - name: ext-jwt
           secret:
             secretName: openshell-jwt-keys
+            defaultMode: 0440
             items:
               - key: public.pem
                 path: public.pem

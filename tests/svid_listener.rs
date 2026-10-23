@@ -628,6 +628,18 @@ async fn tunnel_check(channel: Channel, source_ip: &str) -> CheckResponse {
 }
 
 async fn tunnel_check_to(channel: Channel, source_ip: &str, destination: &str) -> CheckResponse {
+    tunnel_check_as(channel, source_ip, destination, "")
+        .await
+        .unwrap()
+}
+
+/// A tunnel check that also claims an identity in the `principal` field, which the tunnel path must ignore.
+async fn tunnel_check_as(
+    channel: Channel,
+    source_ip: &str,
+    destination: &str,
+    principal: &str,
+) -> Result<CheckResponse, tonic::Status> {
     let mut grpc = tonic::client::Grpc::new(channel);
     grpc.ready().await.unwrap();
     grpc.unary(
@@ -640,7 +652,7 @@ async fn tunnel_check_to(channel: Channel, source_ip: &str, destination: &str) -
                         }),
                     }),
                     service: String::new(),
-                    principal: String::new(),
+                    principal: principal.to_string(),
                 }),
                 request: Some(AttributeRequest {
                     http: Some(HttpRequest {
@@ -659,8 +671,7 @@ async fn tunnel_check_to(channel: Channel, source_ip: &str, destination: &str) -
         tonic_prost::ProstCodec::<CheckRequest, CheckResponse>::default(),
     )
     .await
-    .unwrap()
-    .into_inner()
+    .map(tonic::Response::into_inner)
 }
 
 /// A sandbox with an active epoch, bound to a workload when `agent` is given.
@@ -1039,5 +1050,60 @@ async fn a_request_is_not_forwarded_when_risk_guard_cannot_write_its_state() {
             "a request must not be forwarded when its decision could not be recorded: {response:?}"
         ),
     }
+    running.stop.notify_one();
+}
+
+/// Identity sources stay apart on the tunnel path: only the connection's source address says whose tunnel it is. A principal the caller
+/// claims, or a certificate from a workload that is not a listed proxy, changes nothing.
+#[tokio::test]
+async fn a_claimed_identity_cannot_change_whose_tunnel_it_is_and_only_listed_proxies_may_ask() {
+    let authority = Authority::new();
+    let proxy_id = "spiffe://example.org/ns/edge/sa/sandbox-egress";
+    let running = start_full(
+        &authority,
+        &[TRUST_DOMAIN],
+        &[proxy_id],
+        Some((tunnel_table(), TunnelMode::Enforce)),
+    )
+    .await;
+    enrol_sandbox(&running.store, "sbx-open", Some("workload-open"));
+    let (cert, key) = authority.svid(&[proxy_id]);
+    let channel = connect(&running, Some((&cert, &key))).await.unwrap();
+    let claimed = "spiffe://example.org/ns/prod/sa/release-bot";
+
+    // An unknown address stays unknown whatever identity it claims, including a known sandbox's.
+    for principal in [claimed, "sbx-open", "workload-open", proxy_id] {
+        let refused = tunnel_check_as(channel.clone(), "10.9.9.9", "93.184.216.34:443", principal)
+            .await
+            .unwrap();
+        assert!(
+            refused.denied_response.is_some(),
+            "{principal:?} must not lend an unknown address a sandbox"
+        );
+    }
+    // A quarantined sandbox stays quarantined, however its tunnel's caller describes itself.
+    running
+        .store
+        .quarantine_workload("workload-open", "ops@example.org", "test", 1)
+        .unwrap();
+    for principal in ["", claimed, "sbx-restricted"] {
+        let refused = tunnel_check_as(channel.clone(), "10.0.0.1", "93.184.216.34:443", principal)
+            .await
+            .unwrap();
+        assert!(
+            refused.denied_response.is_some(),
+            "a claimed principal {principal:?} must not lift a quarantine"
+        );
+    }
+
+    // A workload with a perfectly good SVID is not a proxy: it cannot ask on a sandbox's behalf.
+    let (workload_cert, workload_key) = authority.svid(&[claimed]);
+    let workload = connect(&running, Some((&workload_cert, &workload_key)))
+        .await
+        .unwrap();
+    let error = tunnel_check_as(workload, "10.0.0.1", "93.184.216.34:443", "")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), Code::PermissionDenied);
     running.stop.notify_one();
 }

@@ -53,6 +53,7 @@ spec:
       labels:
         app.kubernetes.io/name: svid-demo
     spec:
+      automountServiceAccountToken: false
       serviceAccountName: svid-demo
       # The SPIFFE CSI driver shares the agent's unix socket with the pod, which a Kata micro-VM cannot do, so this runs on the
       # ordinary node pool.
@@ -67,6 +68,12 @@ spec:
       containers:
         - name: spiffe-helper
           image: ghcr.io/spiffe/spiffe-helper:0.12.1
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
           args: ["-config", "/etc/spiffe-helper/helper.conf"]
           securityContext:
             allowPrivilegeEscalation: false
@@ -84,6 +91,12 @@ spec:
               mountPath: /certs
         - name: caller
           image: __IMAGE__
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
           command: ["/bin/bash", "-c"]
           args:
             - |

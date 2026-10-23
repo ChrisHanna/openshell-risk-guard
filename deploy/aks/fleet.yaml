@@ -5,6 +5,13 @@
 # It holds the cluster's own gateway client certificate (Secret openshell-client-tls, read-only) and nothing else: no
 # Kubernetes API access, no registry credentials, no model key (the key lives in the gateway's provider and is injected
 # on the way out).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-fleet
+  namespace: openshell
+automountServiceAccountToken: false
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,11 +32,13 @@ spec:
       labels:
         app.kubernetes.io/name: agent-fleet
     spec:
+      serviceAccountName: agent-fleet
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -76,6 +85,7 @@ spec:
         - name: client-tls
           secret:
             secretName: openshell-client-tls
+            defaultMode: 0440
         - name: state
           configMap:
             name: agent-fleet-state

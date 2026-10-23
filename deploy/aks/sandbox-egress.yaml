@@ -193,6 +193,7 @@ spec:
       labels:
         app.kubernetes.io/name: sandbox-egress
     spec:
+      automountServiceAccountToken: false
       serviceAccountName: sandbox-egress
       nodeSelector:
         kubernetes.azure.com/agentpool: nodepool1
@@ -205,6 +206,12 @@ spec:
       containers:
         - name: envoy
           image: envoyproxy/envoy:v1.36.0
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
           args: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]
           ports:
             - name: tunnels

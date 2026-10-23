@@ -42,6 +42,9 @@ pub struct JwtAuthVerifier {
     pub expected_gateway_id: String,
     pub expected_audience: String,
     pub decoding_key: Option<DecodingKey>,
+    /// Gateway keys that are being retired. Accepted only while the operator leaves them in the key file after the current key (the first
+    /// one); removing them from the file and restarting ends their validity. They are verified exactly like the current key: no relaxed rules.
+    pub previous_decoding_keys: Vec<DecodingKey>,
     pub allow_insecure_local_test: bool,
     pub clock_skew_secs: u64,
 }
@@ -52,6 +55,7 @@ impl fmt::Debug for JwtAuthVerifier {
             .field("expected_gateway_id", &self.expected_gateway_id)
             .field("expected_audience", &self.expected_audience)
             .field("has_decoding_key", &self.decoding_key.is_some())
+            .field("previous_keys", &self.previous_decoding_keys.len())
             .field("allow_insecure_local_test", &self.allow_insecure_local_test)
             .field("clock_skew_secs", &self.clock_skew_secs)
             .finish()
@@ -86,14 +90,36 @@ impl JwtAuthVerifier {
             ));
         }
 
-        let decoding_key = DecodingKey::from_ed_pem(public_key_pem).map_err(|err| {
-            RiskGuardError::InvalidArgument(format!("invalid Ed25519 public key PEM: {err}"))
+        // The file may hold several public keys: the current one first, then any that are being retired during a rotation.
+        let text = std::str::from_utf8(public_key_pem).map_err(|_| {
+            RiskGuardError::InvalidArgument("the public key file is not valid text".to_string())
         })?;
+        let mut keys = Vec::new();
+        for block in text.split_inclusive("-----END PUBLIC KEY-----") {
+            if !block.contains("-----BEGIN PUBLIC KEY-----") {
+                continue;
+            }
+            keys.push(
+                DecodingKey::from_ed_pem(block.trim().as_bytes()).map_err(|err| {
+                    RiskGuardError::InvalidArgument(format!(
+                        "invalid Ed25519 public key PEM: {err}"
+                    ))
+                })?,
+            );
+        }
+        let mut keys = keys.into_iter();
+        let decoding_key = keys.next().ok_or_else(|| {
+            RiskGuardError::InvalidArgument(
+                "invalid Ed25519 public key PEM: no key found".to_string(),
+            )
+        })?;
+        let previous_decoding_keys: Vec<DecodingKey> = keys.collect();
 
         Ok(Self {
             expected_gateway_id,
             expected_audience,
             decoding_key: Some(decoding_key),
+            previous_decoding_keys,
             allow_insecure_local_test: false,
             clock_skew_secs: DEFAULT_CLOCK_SKEW_SECS,
         })
@@ -111,6 +137,7 @@ impl JwtAuthVerifier {
             expected_gateway_id: expected_gateway_id.into(),
             expected_audience: expected_audience.into(),
             decoding_key: None,
+            previous_decoding_keys: Vec::new(),
             allow_insecure_local_test: true,
             clock_skew_secs: DEFAULT_CLOCK_SKEW_SECS,
         }
@@ -198,10 +225,20 @@ impl JwtAuthVerifier {
         validation.validate_aud = false;
         validation.set_required_spec_claims(&["iss", "aud", "sub", "iat", "exp", "jti"]);
 
-        let token_data =
-            decode::<ExtensionJwtClaims>(token, decoding_key, &validation).map_err(|err| {
-                RiskGuardError::Unauthenticated(format!("JWT verification failed: {err}"))
-            })?;
+        // The current key first, then any being retired. Each is a full strict verification: a key that does not verify the signature is
+        // skipped, nothing else is relaxed, and with no key left the error is the current key's.
+        let mut verified = decode::<ExtensionJwtClaims>(token, decoding_key, &validation);
+        if verified.is_err() {
+            for previous in &self.previous_decoding_keys {
+                if let Ok(data) = decode::<ExtensionJwtClaims>(token, previous, &validation) {
+                    verified = Ok(data);
+                    break;
+                }
+            }
+        }
+        let token_data = verified.map_err(|err| {
+            RiskGuardError::Unauthenticated(format!("JWT verification failed: {err}"))
+        })?;
         let claims = token_data.claims;
 
         let expected_issuer = self.expected_issuer();

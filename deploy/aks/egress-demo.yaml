@@ -115,6 +115,7 @@ spec:
       labels:
         app.kubernetes.io/name: egress-demo
     spec:
+      automountServiceAccountToken: false
       serviceAccountName: egress-demo
       nodeSelector:
         kubernetes.azure.com/agentpool: nodepool1
@@ -127,6 +128,12 @@ spec:
       containers:
         - name: spiffe-helper
           image: ghcr.io/spiffe/spiffe-helper:0.12.1
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
           args: ["-config", "/etc/demo/helper.conf"]
           securityContext:
             allowPrivilegeEscalation: false
@@ -144,6 +151,12 @@ spec:
               mountPath: /certs
         - name: caller
           image: python:3.12-slim
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
           command: ["/bin/sh", "-c"]
           args:
             - |

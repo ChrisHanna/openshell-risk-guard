@@ -109,7 +109,8 @@ if ($entraTenant -and $entraClient -and $entraAdmins.Count) {
 }
 # SPIFFE workload identity: set up once by 17-deploy-spire.ps1, which records the trust domain. Without it Risk Guard serves only
 # the gateway and supervisors; with it, a second mutual-TLS listener identifies callers by the SPIFFE ID in their X.509-SVID.
-$svid = @{ args = ''; servicePort = ''; containerPort = ''; mount = ''; volume = ''; podSpec = '' }
+# Risk Guard runs as its own service account with no API token, unless the tunnel gate below needs to read supervisor pods.
+$svid = @{ args = ''; servicePort = ''; containerPort = ''; mount = ''; volume = ''; podSpec = "      serviceAccountName: risk-guard`n      automountServiceAccountToken: false" }
 $svidDomain = Get-StateValue 'svidTrustDomain'
 if ($svidDomain) {
     $svid.args = "            - --svid-listen=0.0.0.0:50062`n            - --svid-bundle=/etc/spire/bundle/bundle.crt`n            - --svid-trust-domain=$svidDomain"
@@ -136,6 +137,8 @@ if ($svidDomain -and (Get-StateValue 'sandboxSpiffe')) {
     $consoleEnv = "          env:`n            - name: RISK_GUARD_SANDBOX_SPIFFE_TRUST_DOMAIN`n              value: $svidDomain`n            - name: RISK_GUARD_SANDBOX_SPIFFE_SINCE_MS`n              value: `"$since`""
 }
 $manifest = (Get-Content (Join-Path $script:RepoRoot 'deploy/aks/risk-guard.yaml') -Raw).Replace('__IMAGE__', $image).Replace('__CONSOLE_SIGNIN_ARGS__', $signIn).Replace('__SVID_ARGS__', $svid.args).Replace('__SVID_SERVICE_PORT__', $svid.servicePort).Replace('__SVID_CONTAINER_PORT__', $svid.containerPort).Replace('__SVID_MOUNT__', $svid.mount).Replace('__SVID_VOLUME__', $svid.volume).Replace('__SVID_POD_SPEC__', $svid.podSpec).Replace('__CONSOLE_ENV__', $consoleEnv)
+# Pod Security Admission: warn and audit against the Restricted standard, never enforce. SPIRE's node daemons (a privileged CSI driver, an agent with the host PID namespace) and the OpenShell gateway share this namespace and could not be admitted under an enforcing label; the exceptions are listed in deploy/aks/hardening-baseline.json.
+Invoke-Native kubectl @('label', 'namespace', $ns, 'pod-security.kubernetes.io/warn=restricted', 'pod-security.kubernetes.io/audit=restricted', '--overwrite') | Out-Null
 Invoke-KubectlApply $manifest
 Invoke-Native kubectl @('rollout', 'restart', 'deploy/risk-guard', '-n', $ns) | Out-Null
 Invoke-Native kubectl @('rollout', 'status', 'deploy/risk-guard', '-n', $ns, '--timeout=300s') | Out-Null
