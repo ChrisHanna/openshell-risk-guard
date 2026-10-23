@@ -150,13 +150,23 @@ async fn start_full(
     proxies: &[&str],
     tunnels: Option<(Arc<dyn PodResolver>, TunnelMode)>,
 ) -> Running {
+    let store = Arc::new(SqliteRiskStore::open_in_memory().unwrap());
+    start_on(store, authority, trust_domains, proxies, tunnels).await
+}
+
+async fn start_on(
+    store: Arc<SqliteRiskStore>,
+    authority: &Authority,
+    trust_domains: &[&str],
+    proxies: &[&str],
+    tunnels: Option<(Arc<dyn PodResolver>, TunnelMode)>,
+) -> Running {
     let dir = tempfile::tempdir().unwrap();
     let secrets = dir.path().join("secrets");
     sidecar::generate_local_secrets(&secrets, &["127.0.0.1".into(), "localhost".into()]).unwrap();
     let bundle = dir.path().join("bundle.pem");
     std::fs::write(&bundle, authority.bundle()).unwrap();
 
-    let store = Arc::new(SqliteRiskStore::open_in_memory().unwrap());
     let mut baseline = build_standard_corpus().default_baseline;
     baseline.normalizer_version = "v1".into();
     store.store_baseline(&baseline).unwrap();
@@ -969,6 +979,53 @@ async fn a_task_can_only_open_tunnels_to_the_hosts_it_approves_when_the_rule_enf
             response.ok_response.is_some(),
             "shadow must not refuse {destination}: {response:?}"
         );
+    }
+    running.stop.notify_one();
+}
+
+/// Failure containment: when Risk Guard cannot record or read its own state it must not forward the request. The database is a real file;
+/// a second connection then makes every write fail the way a full disk or a read-only volume would, while reads still work.
+#[tokio::test]
+async fn a_request_is_not_forwarded_when_risk_guard_cannot_write_its_state() {
+    let authority = Authority::new();
+    let proxy_id = "spiffe://example.org/ns/edge/sa/egress-proxy";
+    let db_dir = tempfile::tempdir().unwrap();
+    let db_path = db_dir.path().join("risk-guard.db");
+    let store = Arc::new(SqliteRiskStore::open(&db_path).unwrap());
+    let running = start_on(store, &authority, &[TRUST_DOMAIN], &[proxy_id], None).await;
+    let (cert, key) = authority.svid(&[proxy_id]);
+    let channel = connect(&running, Some((&cert, &key))).await.unwrap();
+    let workload = "spiffe://example.org/ns/prod/sa/release-bot";
+
+    let before = check(channel.clone(), workload, "GET", "/repos/org/docs-site/issues")
+        .await
+        .unwrap();
+    assert!(before.ok_response.is_some(), "the control request must pass: {before:?}");
+
+    let other = rusqlite::Connection::open(&db_path).unwrap();
+    let tables: Vec<String> = other
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert!(!tables.is_empty());
+    for table in &tables {
+        other
+            .execute_batch(&format!(
+                "CREATE TRIGGER fail_{table} BEFORE INSERT ON \"{table}\" BEGIN SELECT RAISE(ABORT, 'disk full'); END;"
+            ))
+            .unwrap();
+    }
+
+    // A different request: the control request's id is already recorded, and a repeat of it is answered from the record.
+    match check(channel, workload, "GET", "/repos/org/docs-site/releases").await {
+        Err(status) => assert_eq!(status.code(), Code::Unavailable, "an error the proxy treats as a failure to authorize"),
+        Ok(response) => assert!(
+            response.ok_response.is_none(),
+            "a request must not be forwarded when its decision could not be recorded: {response:?}"
+        ),
     }
     running.stop.notify_one();
 }

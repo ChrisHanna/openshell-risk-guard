@@ -11,7 +11,9 @@ use openshell_core::proto::{
     Decision, HttpRequestEvaluation, HttpRequestTarget, Process, RequestContext,
     SupervisorMiddlewarePhase,
 };
-use openshell_risk_guard::auth::JwtTestIssuer;
+use openshell_risk_guard::auth::{
+    EXTENSION_JWT_TYP, ExtensionCallerKind, ExtensionJwtClaims, JwtTestIssuer,
+};
 use openshell_risk_guard::detector::{InteractionRiskDetector, compute_baseline_hash};
 use openshell_risk_guard::fixture::build_standard_corpus;
 use openshell_risk_guard::middleware_service::RiskGuardMiddlewareService;
@@ -305,4 +307,46 @@ fn local_secrets_are_private_and_never_overwritten() {
         "existing key untouched"
     );
     assert!(sidecar::resource_hmac_key(Some(&out.join("hmac.key")), false).is_ok());
+}
+
+/// Failure containment: a token that is expired, meant for another service, or signed by someone else is refused with `Unauthenticated`,
+/// whatever else is correct about the call. (The contract: the supervisor then fails closed, because the extension is configured that way.)
+#[tokio::test]
+async fn expired_misdirected_and_foreign_tokens_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let running = start(&dir.path().join("secrets")).await;
+    let channel = tls_channel(running.addr, &running.ca_pem).await.expect("TLS handshake");
+    let mut client = SupervisorMiddlewareClient::new(channel);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let claims = |audience: &str, issued: i64, expires: i64| ExtensionJwtClaims {
+        iss: running.issuer.issuer(),
+        aud: audience.to_string(),
+        sub: format!("spiffe://openshell/sandbox/{SANDBOX}"),
+        iat: issued,
+        exp: expires,
+        jti: format!("jti-{issued}-{expires}-{audience}"),
+        caller_kind: ExtensionCallerKind::Supervisor,
+        sandbox_id: Some(SANDBOX.to_string()),
+    };
+    let sign = |issuer: &JwtTestIssuer, claims: &ExtensionJwtClaims| {
+        issuer.mint_with_claims(Some(EXTENSION_JWT_TYP), claims).unwrap()
+    };
+
+    let control = sign(&running.issuer, &claims(AUDIENCE, now, now + 300));
+    let expired = sign(&running.issuer, &claims(AUDIENCE, now - 600, now - 300));
+    let misdirected = sign(&running.issuer, &claims("urn:someone:else", now, now + 300));
+    let foreign = sign(&JwtTestIssuer::new(GATEWAY), &claims(AUDIENCE, now, now + 300));
+
+    let ok = client.evaluate_http_request(evaluation(Some(&control), "tok-control")).await;
+    assert!(ok.is_ok(), "the control token must be accepted: {ok:?}");
+    for (name, token) in [("expired", expired), ("wrong audience", misdirected), ("foreign signature", foreign)] {
+        let error = client
+            .evaluate_http_request(evaluation(Some(&token), &format!("tok-{name}")))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), Code::Unauthenticated, "{name}: {error:?}");
+    }
 }

@@ -1,0 +1,169 @@
+{
+  "test": "failure_containment",
+  "run_at": "2026-10-23T01:22:08+00:00",
+  "deployment": {
+    "risk_guard_image": "acropenshell63169.azurecr.io/openshell-risk-guard:95cd158",
+    "repository_commit": "9f65898",
+    "cluster_context": "aks-openshell-demo"
+  },
+  "summary": {
+    "live_passed": 7,
+    "live_total": 7,
+    "test_cases_passed": 6,
+    "test_cases_not_run": 0,
+    "failed": []
+  },
+  "cases": [
+    {
+      "kind": "live",
+      "case": "control: the allowed read goes through",
+      "failure": "none",
+      "expected": "200 from the destination",
+      "observed": {
+        "status": 200,
+        "body": "{\"name\": \"review\", \"owner\": \"local\", \"default_branch\": \"main\", \"open_issues\": 4, \"local_fixture\": true}"
+      },
+      "class": "allowed",
+      "reason": null,
+      "destructive_requests_that_reached_the_destination": 0,
+      "pass": true
+    },
+    {
+      "kind": "live",
+      "case": "a destructive call is refused by policy",
+      "failure": "none (the policy decides)",
+      "expected": "denied with a stable reason, nothing reaches the destination",
+      "observed": {
+        "status": 403,
+        "body": "denied by Risk Guard: behavioral_risk_restricted"
+      },
+      "class": "policy denial",
+      "reason": "behavioral_risk_restricted",
+      "destructive_requests_that_reached_the_destination": 0,
+      "pass": true
+    },
+    {
+      "kind": "live",
+      "case": "the client presents a certificate that is not in the trust bundle",
+      "failure": "an invalid client certificate",
+      "expected": "the handshake is refused; nothing reaches the destination",
+      "observed": {
+        "error": "SSLError",
+        "detail": "[SSL: SSLV3_ALERT_CERTIFICATE_UNKNOWN] ssl/tls alert certificate unknown (_ssl.c:2580)"
+      },
+      "class": "transport failure",
+      "reason": "SSLError",
+      "destructive_requests_that_reached_the_destination": 0,
+      "pass": true
+    },
+    {
+      "kind": "live",
+      "case": "the client presents no certificate",
+      "failure": "no client identity",
+      "expected": "the handshake is refused; nothing reaches the destination",
+      "observed": {
+        "error": "SSLError",
+        "detail": "[SSL: TLSV13_ALERT_CERTIFICATE_REQUIRED] tlsv13 alert certificate required (_ssl.c:2580)"
+      },
+      "class": "transport failure",
+      "reason": "SSLError",
+      "destructive_requests_that_reached_the_destination": 0,
+      "pass": true
+    },
+    {
+      "kind": "live",
+      "case": "Risk Guard is unreachable from the proxy: a destructive call",
+      "failure": "authorization times out or cannot connect",
+      "expected": "denied (fail closed), nothing reaches the destination",
+      "observed": {
+        "status": 403,
+        "body": ""
+      },
+      "class": "transport failure",
+      "reason": "HTTP 403 with no reason from Risk Guard",
+      "destructive_requests_that_reached_the_destination": 0,
+      "pass": true
+    },
+    {
+      "kind": "live",
+      "case": "Risk Guard is unreachable from the proxy: a harmless read",
+      "failure": "authorization times out or cannot connect",
+      "expected": "denied (fail closed), nothing reaches the destination",
+      "observed": {
+        "status": 403,
+        "body": ""
+      },
+      "class": "transport failure",
+      "reason": "HTTP 403 with no reason from Risk Guard",
+      "destructive_requests_that_reached_the_destination": 0,
+      "pass": true
+    },
+    {
+      "kind": "live",
+      "case": "recovery: once Risk Guard is reachable again the allowed read works",
+      "failure": "none",
+      "expected": "200",
+      "observed": {
+        "status": 200,
+        "body": "{\"name\": \"review\", \"owner\": \"local\", \"default_branch\": \"main\", \"open_issues\": 4, \"local_fixture\": true}"
+      },
+      "class": "allowed",
+      "reason": null,
+      "pass": true
+    },
+    {
+      "kind": "test",
+      "case": "Risk Guard cannot write its state (full disk, read-only volume)",
+      "failure": "every database write fails",
+      "expected": "the request is not forwarded (the proxy gets an unavailable error and fails closed)",
+      "reason": "risk state unavailable",
+      "test": "svid_listener::a_request_is_not_forwarded_when_risk_guard_cannot_write_its_state",
+      "pass": true
+    },
+    {
+      "kind": "test",
+      "case": "expired, misdirected or foreign-signed supervisor token",
+      "failure": "an invalid token on a supervisor call",
+      "expected": "refused as Unauthenticated, whatever else is correct",
+      "reason": "JWT verification failed",
+      "test": "sidecar_transport::expired_misdirected_and_foreign_tokens_are_refused",
+      "pass": true
+    },
+    {
+      "kind": "test",
+      "case": "no token, another sandbox's token, a gateway token on a supervisor call",
+      "failure": "missing or wrongly scoped credentials",
+      "expected": "Unauthenticated or PermissionDenied",
+      "reason": "caller kind and sandbox are enforced per call",
+      "test": "sidecar_transport::tls_plus_gateway_jwt_is_required_on_every_supervisor_call",
+      "pass": true
+    },
+    {
+      "kind": "test",
+      "case": "unknown workload identity (none, wrong trust domain, a workload posing as a proxy)",
+      "failure": "an identity Risk Guard cannot verify",
+      "expected": "denied, or refused outright for a pretend proxy",
+      "reason": "no verified SPIFFE identity / trust domain not accepted",
+      "test": "svid_listener::a_trusted_proxy_gets_allow_and_deny_decisions_for_the_workload_it_verified",
+      "pass": true
+    },
+    {
+      "kind": "test",
+      "case": "certificate that does not chain to the trust bundle, or names another trust domain",
+      "failure": "an invalid client certificate",
+      "expected": "the handshake or the call is refused",
+      "reason": "certificate rejected",
+      "test": "svid_listener::certificates_that_do_not_chain_to_the_bundle_or_name_another_trust_domain_are_refused",
+      "pass": true
+    },
+    {
+      "kind": "test",
+      "case": "unknown sandbox opens a tunnel",
+      "failure": "a tunnel from an address that is not a known sandbox",
+      "expected": "denied",
+      "reason": "the source is not a known sandbox",
+      "test": "svid_listener::a_sandbox_tunnel_is_carried_unless_the_sandbox_is_unknown_quarantined_or_restricted_in_enforce_mode",
+      "pass": true
+    }
+  ]
+}
