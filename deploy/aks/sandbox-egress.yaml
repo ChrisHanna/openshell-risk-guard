@@ -97,6 +97,12 @@ data:
                             - match: { connect_matcher: {} }
                               route:
                                 cluster: destination
+                                # A tunnel is checked when it is opened, so a workload quarantined later keeps the tunnels it has. This bounds
+                                # that: no tunnel lives longer than this, so quarantine takes full effect within it (and the supervisor's next
+                                # CONNECT is refused). Measured by scripts/conformance/quarantine_tunnel.py. Lower it to tighten the bound, at
+                                # the cost of more reconnects.
+                                max_stream_duration:
+                                  max_stream_duration: 120s
                                 upgrade_configs:
                                   - upgrade_type: CONNECT
                                     connect_config: {}

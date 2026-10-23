@@ -1,0 +1,37 @@
+{
+  "test": "quarantine_after_tunnel_open",
+  "run_at": "2026-10-23T00:24:31+00:00",
+  "deployment": {
+    "risk_guard_image": "mcr.microsoft.com/azurelinux/base/nginx:1.30.6-1-azl3.0.20261015",
+    "gateway_helm_revision": 11,
+    "tunnel_restriction_mode": 0
+  },
+  "destination": "integrate.api.nvidia.com",
+  "events": 113,
+  "before_quarantine": {
+    "fresh_ok": 19,
+    "persistent_ok": 20
+  },
+  "seconds_until_first_failure": {
+    "fresh_connections": 10.4,
+    "long_lived_connection": null
+  },
+  "after_quarantine": {
+    "fresh_requests": 5,
+    "fresh_refused": 5,
+    "fresh_failure_milliseconds": [
+      10057,
+      10060,
+      10051,
+      10037,
+      10067
+    ],
+    "fresh_failure_detail": [
+      "TimeoutError: _ssl.c:983: The handshake operation timed out"
+    ],
+    "long_lived_requests": 30,
+    "long_lived_succeeded": 30
+  },
+  "after_release_ok": true,
+  "interpretation": "An open long-lived connection kept working after quarantine (30 requests succeeded); quarantine stopped new connections but did not end the existing one inside the 60s window. Existing tunnels persist until they close."
+}
