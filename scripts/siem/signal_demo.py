@@ -16,15 +16,14 @@ import subprocess
 import sys
 import uuid
 
-URL = "http://risk-guard.openshell.svc.cluster.local:50063/v1/signals"
+sys.path.insert(0, __import__("os").path.dirname(__file__))
+import install_content as siem  # noqa: E402  (finds where the alert's webhook goes: the SIEM-side forwarder, or Risk Guard directly)
+
+URL, _ = siem.signals_target()
 
 
 def token():
-    out = subprocess.run(["kubectl", "get", "secret", "siem-signals-token", "-n", "openshell", "-o", "jsonpath={.data.token}"], capture_output=True)
-    value = base64.b64decode(out.stdout).decode().strip()
-    if len(value) != 64:
-        sys.exit("Secret siem-signals-token not found; run scripts/aks/25-enable-signals.ps1 first.")
-    return value
+    return siem.signals_target()[1]
 
 
 def call(method, url, body=None):
@@ -47,6 +46,8 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     if args.list:
+        if URL.endswith("/webhook"):
+            sys.exit("With the forwarder in front of Risk Guard there is no list endpoint on this path (the forwarder only forwards). See the API Activity events in the SIEM, or Risk Guard's logs.")
         code, body = call("GET", URL + "?limit=20")
         print(code)
         for row in body.get("signals", []):

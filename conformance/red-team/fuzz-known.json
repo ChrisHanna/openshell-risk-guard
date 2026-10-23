@@ -1,0 +1,4 @@
+{
+  "about": "Mutations of must-refuse calls that Risk Guard allows today. Each entry is a documented gap: it must carry a reason, and the fuzz test fails if one starts being refused (so this list cannot go stale) or if a new one appears (so a gap cannot arrive unnoticed).",
+  "variants": []
+}

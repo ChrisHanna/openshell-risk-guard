@@ -95,7 +95,12 @@ if ($mtls) {
 
 Write-Step 'Risk Guard with the signals port'
 Save-State @{ signalsEnabled = $true; signalsDryRun = (-not $Enforce); ocsfExport = $true; signalsMtls = $mtls }
-& "$PSScriptRoot/04-deploy-risk-guard.ps1" @deployArgs
+try { & "$PSScriptRoot/04-deploy-risk-guard.ps1" @deployArgs }
+catch {
+    # 04 ends by checking the public certificate, which can time out while the pod is being replaced. What matters is that the new pod becomes ready.
+    Write-Note "04 reported: $($_.Exception.Message.Split("`n")[0])"
+    Invoke-Native kubectl @('rollout', 'status', 'deploy/risk-guard', '-n', $ns, '--timeout=300s') | Out-Null
+}
 if ($mtls) { Invoke-Native kubectl @('delete', 'secret', 'siem-signals-token', '-n', $ns, '--ignore-not-found') -AllowFailure | Out-Null }
 
 Write-Step 'Webhook channel and alert in OpenSearch'

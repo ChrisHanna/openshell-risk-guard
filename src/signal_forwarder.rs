@@ -47,6 +47,18 @@ struct State_ {
     digest: [u8; 32],
 }
 
+/// An error with the reasons beneath it ("builder error" alone says nothing).
+fn chain(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(next) = source {
+        text.push_str(": ");
+        text.push_str(&next.to_string());
+        source = next.source();
+    }
+    text
+}
+
 fn digest_of(token: &str) -> [u8; 32] {
     let mut mac =
         Hmac::<Sha256>::new_from_slice(token.as_bytes()).expect("HMAC accepts this key length");
@@ -85,20 +97,24 @@ fn mtls_client(config: &ForwarderConfig) -> Result<reqwest::Client> {
         })
     };
     let mut identity = read(&config.svid_cert, "SVID certificate")?;
+    // The certificate file may not end in a newline; without one the key's header would join the certificate's footer and neither would parse.
+    if !identity.ends_with(&[10]) {
+        identity.push(10); // a newline
+    }
     identity.extend_from_slice(&read(&config.svid_key, "SVID key")?);
     let ca = reqwest::Certificate::from_pem(&read(&config.server_ca, "server CA")?)
-        .map_err(|error| RiskGuardError::Internal(format!("server CA: {error}")))?;
+        .map_err(|error| RiskGuardError::Internal(format!("server CA: {}", chain(&error))))?;
     reqwest::Client::builder()
         .https_only(true)
         .tls_built_in_root_certs(false)
         .add_root_certificate(ca)
         .identity(
             reqwest::Identity::from_pem(&identity)
-                .map_err(|error| RiskGuardError::Internal(format!("SVID: {error}")))?,
+                .map_err(|error| RiskGuardError::Internal(format!("SVID: {}", chain(&error))))?,
         )
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .map_err(|error| RiskGuardError::Internal(format!("client: {error}")))
+        .map_err(|error| RiskGuardError::Internal(format!("client: {}", chain(&error))))
 }
 
 async fn webhook(State(state): State<State_>, headers: HeaderMap, body: Bytes) -> Response {

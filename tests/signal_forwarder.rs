@@ -85,7 +85,8 @@ async fn start(risk_guard_up: bool) -> Setup {
     let ca_file = dir.path().join("ca.crt");
     std::fs::write(&ca_file, authority.cert.pem()).unwrap();
     let (svid, svid_key) = authority.svid(FORWARDER_ID);
-    std::fs::write(dir.path().join("svid.pem"), svid).unwrap();
+    // spiffe-helper's files need not end in a newline; the forwarder must cope.
+    std::fs::write(dir.path().join("svid.pem"), svid.trim_end()).unwrap();
     std::fs::write(dir.path().join("svid_key.pem"), svid_key).unwrap();
 
     let rg_port = free_port();
