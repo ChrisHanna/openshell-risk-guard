@@ -18,7 +18,7 @@ config:
 
 resources:
   requests: {cpu: 250m, memory: 512Mi}
-  limits: {memory: 1Gi}
+  limits: {cpu: null, memory: 1Gi}   # null removes the chart's default 100m CPU limit, which is below the request
 service: {type: ClusterIP}
 nodeSelector: {workload-class: siem}
 tolerations:

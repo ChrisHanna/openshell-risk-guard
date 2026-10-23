@@ -28,6 +28,8 @@ extraEnvs:
 persistence:
   enabled: true
   size: 20Gi
+  # The chart's root "chown" init container conflicts with running as non-root; fsGroup (below) already makes the volume writable.
+  enableInitChown: false
 
 nodeSelector: {workload-class: siem}
 tolerations:

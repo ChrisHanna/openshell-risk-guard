@@ -53,7 +53,7 @@ Each record carries the sandbox name and ID, the URL, the method, and the OpenSh
 3. A short guide for vendors in both directions: *consume* the OCSF and OTLP output, and *extend* OpenShell by implementing the middleware or interceptor
    contract (Risk Guard is the worked example).
 
-## Reference SIEM for the demo (prepared, not yet deployed)
+## Reference SIEM for the demo (deployed on the cluster; gateway export not yet switched on)
 
 `deploy/aks/siem/` and scripts `22-deploy-siem.ps1` and `23-enable-ocsf-export.ps1` build a demonstration pipeline: the gateway and supervisors send OCSF as OTLP to
 an OpenTelemetry Collector, which writes documents to a single-node OpenSearch, viewed in OpenSearch Dashboards. Placement and controls:
@@ -67,7 +67,13 @@ an OpenTelemetry Collector, which writes documents to a single-node OpenSearch, 
   subscription or managed service). It uses a self-signed certificate and one node.
 
 Validated offline: the Helm values render against the real charts, the collector configuration passes `otelcol-contrib validate` (and a deliberately bad value
-is rejected), and the network policies match the rendered pod labels. Not yet run on the cluster.
+is rejected), and the network policies match the rendered pod labels.
+
+Deployed and checked on the cluster: the three pods run on the dedicated node, OpenSearch reports green, and three synthetic OCSF-shaped records sent to the collector from a
+short-lived test pod arrived in the `ocsf-openshell` index as parsed documents (then deleted). Problems found and fixed on the way: the chart's root init container
+conflicted with running as non-root (disabled; the volume is writable through `fsGroup`), and Dashboards' default CPU limit was below its request.
+Still to do: index settings (a single node cannot hold a replica, so the index shows yellow; `time` is stored as a number, not a date), and switching the gateway export on
+(`23-enable-ocsf-export.ps1`).
 
 ## What this does not claim
 
