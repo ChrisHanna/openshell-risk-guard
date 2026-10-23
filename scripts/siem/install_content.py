@@ -52,17 +52,22 @@ def search_source(query):
 INDEX_REF = [{"name": "kibanaSavedObjectMeta.searchSourceJSON.index", "type": "index-pattern", "id": PATTERN_ID}]
 
 
-def saved_search(oid, title, description, query):
-    return {"id": oid, "type": "search", "migrationVersion": {"search": "7.9.3"}, "references": INDEX_REF,
+def index_ref(pattern_id):
+    return [{"name": "kibanaSavedObjectMeta.searchSourceJSON.index", "type": "index-pattern", "id": pattern_id}]
+
+
+def saved_search(oid, title, description, query, pattern_id=PATTERN_ID,
+                 columns=("container.name", "http_request.http_method", "http_request.url.path", "status_detail", "severity")):
+    return {"id": oid, "type": "search", "migrationVersion": {"search": "7.9.3"}, "references": index_ref(pattern_id),
             "attributes": {"title": title, "description": description, "hits": 0,
-                           "columns": ["container.name", "http_request.http_method", "http_request.url.path", "status_detail", "severity"],
+                           "columns": list(columns),
                            "sort": [["time", "desc"]], "version": 1,
                            "kibanaSavedObjectMeta": {"searchSourceJSON": search_source(query)}}}
 
 
-def visualization(oid, title, vis_type, aggs, params, query=""):
+def visualization(oid, title, vis_type, aggs, params, query="", pattern_id=PATTERN_ID):
     state = {"title": title, "type": vis_type, "aggs": aggs, "params": params}
-    return {"id": oid, "type": "visualization", "migrationVersion": {"visualization": "7.10.0"}, "references": INDEX_REF,
+    return {"id": oid, "type": "visualization", "migrationVersion": {"visualization": "7.10.0"}, "references": index_ref(pattern_id),
             "attributes": {"title": title, "visState": json.dumps(state), "uiStateJSON": "{}", "description": "", "version": 1,
                            "kibanaSavedObjectMeta": {"searchSourceJSON": search_source(query)}}}
 
@@ -113,6 +118,127 @@ def pattern_fields():
     return fields
 
 
+def metric_agg(agg_id, kind, field, schema="metric"):
+    return {"id": agg_id, "enabled": True, "type": kind, "schema": schema, "params": {"field": field}}
+
+
+LINE_PARAMS = dict(BAR_PARAMS, type="line", seriesParams=[
+    {"show": True, "type": "line", "mode": "normal", "data": {"label": "Average risk score", "id": "1"}, "valueAxis": "ValueAxis-1",
+     "drawLinesBetweenPoints": True, "lineWidth": 2, "showCircles": True},
+    {"show": True, "type": "line", "mode": "normal", "data": {"label": "Highest risk score", "id": "3"}, "valueAxis": "ValueAxis-1",
+     "drawLinesBetweenPoints": True, "lineWidth": 2, "showCircles": True}])
+
+# Risk Guard's own events (src/ocsf.rs). Every one has unmapped.risk_guard.gate: middleware, tunnel or signal.
+RG_ALL = "unmapped.risk_guard.gate:*"
+RG_MIDDLEWARE = 'unmapped.risk_guard.gate:"middleware"'
+RG_TUNNEL = 'unmapped.risk_guard.gate:"tunnel"'
+RG_SIGNAL = 'unmapped.risk_guard.gate:"signal"'
+RG_FIELD = "unmapped.risk_guard."
+
+
+def dashboard(oid, title, description, grid, time_from="now-24h"):
+    """grid: (object id, type, x, y, w, h) per panel."""
+    panels, refs = [], []
+    for i, (target, kind, x, y, w, h) in enumerate(grid):
+        panels.append({"version": "3.9.0", "gridData": {"x": x, "y": y, "w": w, "h": h, "i": str(i)}, "panelIndex": str(i),
+                       "embeddableConfig": {}, "panelRefName": f"panel_{i}"})
+        refs.append({"name": f"panel_{i}", "type": kind, "id": target})
+    return {"id": oid, "type": "dashboard", "migrationVersion": {"dashboard": "7.9.3"}, "references": refs,
+            "attributes": {"title": title, "description": description, "hits": 0, "panelsJSON": json.dumps(panels),
+                           "optionsJSON": json.dumps({"hidePanelTitles": False, "useMargins": True}), "version": 1, "timeRestore": True,
+                           "timeTo": "now", "timeFrom": time_from, "refreshInterval": {"pause": False, "value": 30000},
+                           "kibanaSavedObjectMeta": {"searchSourceJSON": json.dumps({"query": {"language": "kuery", "query": ""}, "filter": []})}}}
+
+
+def build_risk_guard_objects():
+    cols = ("actor.user.name", "unmapped.risk_guard.gate", "status_detail", "risk_score", "message")
+    objects = [
+        saved_search("rg2-search-all", "Risk Guard's own events", "Everything Risk Guard sent: refusals, tunnel refusals and signals, with the workload and score.", RG_ALL, columns=cols),
+        saved_search("rg2-search-signals", "Signals received from the SIEM", "Each signal and what became of it.", RG_SIGNAL, columns=cols),
+        saved_search("rg2-search-tunnel", "Tunnel refusals and silent supervisors", "Sandboxes the network path refused, or would refuse in enforce mode.", RG_TUNNEL, columns=cols),
+    ]
+    workload = terms("2", "actor.user.name.keyword", "bucket", 10)
+    objects += [
+        visualization("rg2-total", "Risk Guard events", "metric", [COUNT], METRIC_PARAMS, RG_ALL),
+        visualization("rg2-middleware", "Refused at the middleware", "metric", [COUNT], METRIC_PARAMS, RG_MIDDLEWARE),
+        visualization("rg2-tunnel", "Tunnel events", "metric", [COUNT], METRIC_PARAMS, RG_TUNNEL),
+        visualization("rg2-signals", "Signals received", "metric", [COUNT], METRIC_PARAMS, RG_SIGNAL),
+        visualization("rg2-workloads", "Workloads seen", "metric", [metric_agg("1", "cardinality", "actor.user.name.keyword")], METRIC_PARAMS, RG_ALL),
+        visualization("rg2-reasons-time", "Middleware refusals over time, by reason", "histogram",
+                      [COUNT, TIME_BUCKET, terms("3", RG_FIELD + "reason_code.keyword", "group")], BAR_PARAMS, RG_MIDDLEWARE),
+        visualization("rg2-score-time", "Risk score of refused requests", "line",
+                      [metric_agg("1", "avg", "risk_score"), TIME_BUCKET, metric_agg("3", "max", "risk_score")], LINE_PARAMS, RG_MIDDLEWARE),
+        visualization("rg2-by-workload", "Workloads: events and highest score", "table",
+                      [COUNT, workload, metric_agg("3", "max", "risk_score")], TABLE_PARAMS, RG_ALL),
+        visualization("rg2-by-task", "Events by task profile", "pie", [COUNT, terms("2", RG_FIELD + "task_profile.keyword", "segment")], PIE_PARAMS, RG_ALL),
+        visualization("rg2-gates", "Where Risk Guard acted", "pie", [COUNT, terms("2", RG_FIELD + "gate.keyword", "segment")], PIE_PARAMS, RG_ALL),
+        visualization("rg2-features", "Signals behind refusals", "table", [COUNT, terms("2", RG_FIELD + "signals.feature.keyword", "bucket", 10)], TABLE_PARAMS, RG_MIDDLEWARE),
+        visualization("rg2-tunnel-kinds", "Tunnel events over time, by kind", "histogram",
+                      [COUNT, TIME_BUCKET, terms("3", RG_FIELD + "kind.keyword", "group")], BAR_PARAMS, RG_TUNNEL),
+        visualization("rg2-signal-outcomes", "Signals over time, by outcome", "histogram",
+                      [COUNT, TIME_BUCKET, terms("3", RG_FIELD + "outcome.keyword", "group")], BAR_PARAMS, RG_SIGNAL),
+        visualization("rg2-signal-sources", "Who sent signals, and which workloads they named", "table",
+                      [COUNT, terms("2", RG_FIELD + "source.keyword", "bucket", 5), terms("3", RG_FIELD + "target_agent_id.keyword", "bucket", 10)], TABLE_PARAMS, RG_SIGNAL),
+    ]
+    decisions = dashboard("rg2-dashboard-decisions", "Risk Guard: decisions and workloads",
+                          "What Risk Guard refused, for which workload, at what score and why. Uses Risk Guard's own events (workload, SPIFFE ID, task profile, score, reason).", [
+        ("rg2-total", "visualization", 0, 0, 10, 7), ("rg2-middleware", "visualization", 10, 0, 10, 7), ("rg2-tunnel", "visualization", 20, 0, 10, 7),
+        ("rg2-signals", "visualization", 30, 0, 9, 7), ("rg2-workloads", "visualization", 39, 0, 9, 7),
+        ("rg2-reasons-time", "visualization", 0, 7, 24, 14), ("rg2-score-time", "visualization", 24, 7, 24, 14),
+        ("rg2-by-workload", "visualization", 0, 21, 24, 14), ("rg2-features", "visualization", 24, 21, 24, 14),
+        ("rg2-by-task", "visualization", 0, 35, 16, 13), ("rg2-gates", "visualization", 16, 35, 16, 13),
+        ("rg2-search-all", "search", 0, 48, 48, 14)])
+    signals = dashboard("rg2-dashboard-signals", "Risk Guard: quarantine and signals",
+                        "Tunnels refused, supervisors that went quiet, and the signals the SIEM sent (applied, dry run, limited or unknown).", [
+        ("rg2-tunnel", "visualization", 0, 0, 16, 7), ("rg2-signals", "visualization", 16, 0, 16, 7), ("rg2-workloads", "visualization", 32, 0, 16, 7),
+        ("rg2-tunnel-kinds", "visualization", 0, 7, 24, 14), ("rg2-signal-outcomes", "visualization", 24, 7, 24, 14),
+        ("rg2-signal-sources", "visualization", 0, 21, 48, 12),
+        ("rg2-search-signals", "search", 0, 33, 48, 13), ("rg2-search-tunnel", "search", 0, 46, 48, 13)], time_from="now-7d")
+    return objects + [decisions, signals]
+
+
+SYNTHETIC = "ocsf-synthetic"
+
+
+def synthetic_pattern():
+    """An index pattern for the synthetic traces (scripts/ml/opensearch_ad.py), only when that index exists."""
+    meta = "&".join(f"meta_fields={m}" for m in ("_source", "_id", "_type", "_index", "_score"))
+    out = exec_in_pod(f"curl -s -u admin:$OPENSEARCH_PASSWORD 'http://localhost:5601/api/index_patterns/_fields_for_wildcard?pattern={SYNTHETIC}&{meta}'")
+    try:
+        fields = json.loads(out).get("fields", [])
+    except ValueError:
+        fields = []
+    if not fields:
+        return []
+    return [{"id": SYNTHETIC, "type": "index-pattern", "migrationVersion": {"index-pattern": "7.6.0"}, "references": [],
+             "attributes": {"title": SYNTHETIC, "timeFieldName": "time", "fields": json.dumps(fields)}}]
+
+
+def build_synthetic_objects():
+    pattern = synthetic_pattern()
+    if not pattern:
+        return []
+    def vis(oid, title, kind, aggs, params, query=""):
+        return visualization(oid, title, kind, aggs, params, query, pattern_id=SYNTHETIC)
+    attack = "unmapped.label:attack"
+    objects = pattern + [
+        vis("ml-events", "Synthetic events", "metric", [COUNT], METRIC_PARAMS),
+        vis("ml-attacks", "Of which attacks", "metric", [COUNT], METRIC_PARAMS, attack),
+        vis("ml-by-agent", "Calls over time, by agent", "histogram", [COUNT, TIME_BUCKET, terms("3", "actor.user.name", "group")], BAR_PARAMS),
+        vis("ml-attacks-time", "Injected attacks over time, by kind", "histogram", [COUNT, TIME_BUCKET, terms("3", "unmapped.attack", "group")], BAR_PARAMS, attack),
+        vis("ml-attack-table", "Attack episodes by kind and agent", "table",
+            [metric_agg("1", "cardinality", "unmapped.episode"), terms("2", "unmapped.attack", "bucket", 6), terms("3", "actor.user.name", "bucket", 4)], TABLE_PARAMS, attack),
+    ]
+    board = dashboard("ml-dashboard-synthetic", "Model training: the synthetic data",
+                      "SYNTHETIC. Generated traffic for the four sample agents with injected attacks (scripts/ml). Open Anomaly Detection to see the detector trained on it. "
+                      "Set the time range to January 2027, where the data sits.", [
+        ("ml-events", "visualization", 0, 0, 24, 7), ("ml-attacks", "visualization", 24, 0, 24, 7),
+        ("ml-by-agent", "visualization", 0, 7, 48, 14), ("ml-attacks-time", "visualization", 0, 21, 48, 14),
+        ("ml-attack-table", "visualization", 0, 35, 48, 12)], time_from="2027-01-14T00:00:00.000Z")
+    board["attributes"]["timeTo"] = "2027-01-18T00:00:00.000Z"
+    return objects + [board]
+
+
 def build_objects():
     objects = [{
         "id": PATTERN_ID, "type": "index-pattern", "migrationVersion": {"index-pattern": "7.6.0"}, "references": [],
@@ -150,7 +276,7 @@ def build_objects():
                        "version": 1, "timeRestore": True, "timeTo": "now", "timeFrom": "now-24h",
                        "refreshInterval": {"pause": False, "value": 30000},
                        "kibanaSavedObjectMeta": {"searchSourceJSON": json.dumps({"query": {"language": "kuery", "query": ""}, "filter": []})}}})
-    return objects
+    return objects + build_risk_guard_objects() + build_synthetic_objects()
 
 
 def feature(name, field="metadata.uid.keyword"):

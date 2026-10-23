@@ -28,6 +28,16 @@ It is safe to run again; it updates what it made and skips what exists. It runs 
 | Alert monitor | Middleware failures: 3 or more in 5 minutes | Checks every 5 minutes. Fires when Risk Guard could not answer (so the request was refused) at least three times in the last five minutes. |
 | Report | Risk Guard daily overview | A daily PDF of the dashboard, under **Reporting**. |
 
+## Dashboards built on Risk Guard's own events
+
+| Dashboard | Shows |
+|---|---|
+| **Risk Guard: decisions and workloads** | Events, middleware refusals, tunnel events, signals and workloads seen; refusals over time by reason; the risk score of refused requests (average and highest); each workload's events and highest score; the signals behind refusals; events by task profile and by where Risk Guard acted |
+| **Risk Guard: quarantine and signals** | Tunnels refused or would-be-refused, silent supervisors, and the signals the SIEM sent (applied, dry run, limited or unknown), who sent them and which workloads they named |
+| **Model training: the synthetic data** | The generated traffic and injected attacks behind the anomaly detector. Its data sits in January 2027, so the dashboard opens on that range |
+
+They are installed by `python scripts/siem/install_content.py` along with the first dashboard. The workload names are what Risk Guard knows the agents as (for the fleet, their application IDs).
+
 Two words in the data that matter: a **refusal** (`middleware_denied:...`) means Risk Guard decided the behaviour was too risky. A **failure** (`middleware_failed`) means Risk Guard did not answer in time or at all, and OpenShell refused because the middleware is set to fail closed. They need different responses: refusals are the guard working; failures are the guard having a bad moment.
 
 ## What to expect, honestly
