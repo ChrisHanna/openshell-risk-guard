@@ -476,6 +476,11 @@ impl SupervisorMiddleware for RiskGuardMiddlewareService {
             .normalize(&raw_input)
             .map_err(map_risk_guard_error)?;
 
+        let (route_host, route_method, route_template) = (
+            normalized.host.clone(),
+            normalized.method.clone(),
+            normalized.route_template.clone(),
+        );
         let store = Arc::clone(&self.store);
         let detector = Arc::clone(&self.detector);
         let require_agent = self.require_agent_identity;
@@ -509,7 +514,9 @@ impl SupervisorMiddleware for RiskGuardMiddlewareService {
                 &eval.sandbox_id,
                 eval.outcome == DecisionOutcome::Deny,
                 eval.risk_score,
-                &log_path,
+                &route_host,
+                &route_method,
+                &route_template,
             );
         }
         if let Some(ocsf) = &self.ocsf

@@ -384,6 +384,17 @@ impl ExtAuthzService {
             Some(_) => ("allow", ""),
         };
         tracing::info!(%sandbox_id, destination, verdict, reason, "sandbox tunnel checked");
+        if let Some(ocsf) = &self.ocsf {
+            ocsf.record_tunnel(
+                &sandbox_id,
+                destination,
+                match (verdict, reason.is_empty()) {
+                    ("deny", _) => crate::ocsf::TunnelOutcome::Refused,
+                    (_, false) => crate::ocsf::TunnelOutcome::Shadow,
+                    _ => crate::ocsf::TunnelOutcome::Allowed,
+                },
+            );
+        }
         if let Some(ocsf) = &self.ocsf
             && !reason.is_empty()
         {
@@ -496,7 +507,11 @@ impl ExtAuthzService {
             }
         };
 
-        let summary_path = raw.path.clone();
+        let (route_host, route_method, route_template) = (
+            normalized.host.clone(),
+            normalized.method.clone(),
+            normalized.route_template.clone(),
+        );
         let store = Arc::clone(&self.store);
         let detector = Arc::clone(&self.detector);
         let gateway_id = self.enroller.gateway_id().to_string();
@@ -518,7 +533,9 @@ impl ExtAuthzService {
                 &evaluation.sandbox_id,
                 evaluation.outcome == DecisionOutcome::Deny,
                 evaluation.risk_score,
-                &summary_path,
+                &route_host,
+                &route_method,
+                &route_template,
             );
         }
         match evaluated {

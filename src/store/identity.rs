@@ -46,6 +46,28 @@ fn binding_info(tx: &Transaction, sandbox_id: &str) -> rusqlite::Result<Value> {
 }
 
 impl SqliteRiskStore {
+    /// Change the name people see for an agent. Decisions are keyed on the agent_id, which does not change.
+    pub fn rename_agent(&self, agent_id: &str, display_name: &str) -> Result<()> {
+        if display_name.trim().is_empty()
+            || display_name.len() > 256
+            || display_name.chars().any(char::is_control)
+        {
+            return Err(RiskGuardError::InvalidArgument(
+                "display_name must contain 1..256 bytes without control characters".into(),
+            ));
+        }
+        let changed = self.lock_conn()?.execute(
+            "UPDATE agents SET display_name = ?2 WHERE agent_id = ?1",
+            params![agent_id, display_name],
+        )?;
+        if changed == 0 {
+            return Err(RiskGuardError::InvalidArgument(format!(
+                "agent '{agent_id}' not found"
+            )));
+        }
+        Ok(())
+    }
+
     pub fn register_agent(&self, agent_id: &str, display_name: &str) -> Result<()> {
         identifier(agent_id, "agent_id")?;
         if display_name.trim().is_empty() || display_name.len() > 256 {

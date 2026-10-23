@@ -61,7 +61,27 @@ pub enum Occurrence {
         allowed: u32,
         refused: u32,
         max_score: u32,
-        distinct_paths: u32,
+        distinct_routes: u32,
+        at_ms: i64,
+    },
+    /// What one sandbox's workload did on one route in the last interval (host, method, route template), allowed and refused counted.
+    Route {
+        sandbox_id: String,
+        host: String,
+        method: String,
+        route: String,
+        allowed: u32,
+        refused: u32,
+        max_score: u32,
+        at_ms: i64,
+    },
+    /// Where one sandbox's workload opened (or was refused) network tunnels in the last interval.
+    Egress {
+        sandbox_id: String,
+        destination: String,
+        allowed: u32,
+        refused: u32,
+        shadow: u32,
         at_ms: i64,
     },
     /// A signal from a SIEM and what became of it.
@@ -82,6 +102,8 @@ pub enum Occurrence {
 #[derive(Debug, Clone, Default)]
 pub struct SandboxIdentity {
     pub agent_id: Option<String>,
+    /// The name an operator gave the agent (`agents.display_name`), for people to read.
+    pub display_name: Option<String>,
     pub run_id: Option<String>,
     pub task_profile: Option<String>,
 }
@@ -95,15 +117,40 @@ pub struct OcsfConfig {
     pub version: String,
 }
 
-/// How many different paths one sandbox is counted for in an interval; beyond this the count saturates (a scanner is already obvious at this number).
-const MAX_PATHS: usize = 512;
+/// How many different routes one sandbox is counted for in an interval; beyond this they are counted together as "other" (a scanner is already obvious at this number).
+const MAX_ROUTES: usize = 64;
+const MAX_DESTINATIONS: usize = 64;
+
+#[derive(Default, Clone, Copy)]
+struct RouteStat {
+    allowed: u32,
+    refused: u32,
+    max_score: u32,
+}
+
+#[derive(Default, Clone, Copy)]
+struct EgressStat {
+    allowed: u32,
+    refused: u32,
+    shadow: u32,
+}
 
 #[derive(Default)]
 struct Bucket {
     allowed: u32,
     refused: u32,
     max_score: u32,
-    paths: std::collections::HashSet<String>,
+    routes: std::collections::HashMap<(String, String, String), RouteStat>,
+    egress: std::collections::HashMap<String, EgressStat>,
+}
+
+/// What happened to one tunnel request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TunnelOutcome {
+    Allowed,
+    Refused,
+    /// Allowed now, but would be refused in enforce mode.
+    Shadow,
 }
 
 /// Per-sandbox counts of decisions, kept in memory and emptied once a minute. Recording is a lock, a hash lookup and a few increments.
@@ -114,7 +161,16 @@ pub struct ActivityCounters {
 }
 
 impl ActivityCounters {
-    pub fn record(&self, sandbox_id: &str, refused: bool, score: u32, path: &str) {
+    /// One decision on a route (host, method, route template).
+    pub fn record(
+        &self,
+        sandbox_id: &str,
+        refused: bool,
+        score: u32,
+        host: &str,
+        method: &str,
+        route: &str,
+    ) {
         let Ok(mut buckets) = self.buckets.lock() else {
             return;
         };
@@ -125,12 +181,49 @@ impl ActivityCounters {
             bucket.allowed = bucket.allowed.saturating_add(1);
         }
         bucket.max_score = bucket.max_score.max(score);
-        if bucket.paths.len() < MAX_PATHS {
-            bucket.paths.insert(path.to_string());
+        let key = (host.to_string(), method.to_string(), route.to_string());
+        let key = if bucket.routes.len() >= MAX_ROUTES && !bucket.routes.contains_key(&key) {
+            (
+                "other".to_string(),
+                "other".to_string(),
+                "other".to_string(),
+            )
+        } else {
+            key
+        };
+        let stat = bucket.routes.entry(key).or_default();
+        if refused {
+            stat.refused = stat.refused.saturating_add(1);
+        } else {
+            stat.allowed = stat.allowed.saturating_add(1);
         }
+        stat.max_score = stat.max_score.max(score);
     }
 
-    /// Empty the counters into one occurrence per sandbox that did anything. A sandbox that did nothing produces nothing (silence is visible as a missing summary).
+    /// One tunnel request to a destination (`host:port`).
+    pub fn record_tunnel(&self, sandbox_id: &str, destination: &str, outcome: TunnelOutcome) {
+        let Ok(mut buckets) = self.buckets.lock() else {
+            return;
+        };
+        let bucket = buckets.entry(sandbox_id.to_string()).or_default();
+        let key = if bucket.egress.len() >= MAX_DESTINATIONS
+            && !bucket.egress.contains_key(destination)
+        {
+            "other"
+        } else {
+            destination
+        };
+        let stat = bucket.egress.entry(key.to_string()).or_default();
+        let counter = match outcome {
+            TunnelOutcome::Allowed => &mut stat.allowed,
+            TunnelOutcome::Refused => &mut stat.refused,
+            TunnelOutcome::Shadow => &mut stat.shadow,
+        };
+        *counter = counter.saturating_add(1);
+    }
+
+    /// Empty the counters into occurrences: per sandbox that made decisions one summary, plus one row per route, and one row per destination.
+    /// A sandbox that did nothing produces nothing (silence is visible as a missing summary).
     pub fn take(&self, now_ms: i64) -> Vec<Occurrence> {
         let since = self.since_ms.swap(now_ms, Ordering::Relaxed);
         let window_ms = if since > 0 {
@@ -142,18 +235,43 @@ impl ActivityCounters {
             Ok(mut buckets) => std::mem::take(&mut *buckets),
             Err(_) => return Vec::new(),
         };
-        drained
-            .into_iter()
-            .map(|(sandbox_id, bucket)| Occurrence::Activity {
-                sandbox_id,
-                window_ms,
-                allowed: bucket.allowed,
-                refused: bucket.refused,
-                max_score: bucket.max_score,
-                distinct_paths: u32::try_from(bucket.paths.len()).unwrap_or(u32::MAX),
-                at_ms: now_ms,
-            })
-            .collect()
+        let mut out = Vec::new();
+        for (sandbox_id, bucket) in drained {
+            if bucket.allowed + bucket.refused > 0 {
+                out.push(Occurrence::Activity {
+                    sandbox_id: sandbox_id.clone(),
+                    window_ms,
+                    allowed: bucket.allowed,
+                    refused: bucket.refused,
+                    max_score: bucket.max_score,
+                    distinct_routes: u32::try_from(bucket.routes.len()).unwrap_or(u32::MAX),
+                    at_ms: now_ms,
+                });
+            }
+            for ((host, method, route), stat) in bucket.routes {
+                out.push(Occurrence::Route {
+                    sandbox_id: sandbox_id.clone(),
+                    host,
+                    method,
+                    route,
+                    allowed: stat.allowed,
+                    refused: stat.refused,
+                    max_score: stat.max_score,
+                    at_ms: now_ms,
+                });
+            }
+            for (destination, stat) in bucket.egress {
+                out.push(Occurrence::Egress {
+                    sandbox_id: sandbox_id.clone(),
+                    destination,
+                    allowed: stat.allowed,
+                    refused: stat.refused,
+                    shadow: stat.shadow,
+                    at_ms: now_ms,
+                });
+            }
+        }
+        out
     }
 }
 
@@ -189,9 +307,24 @@ impl OcsfEmitter {
         emitter
     }
 
-    /// Count one decision toward its sandbox's activity summary. Cheap, never waits on the network.
-    pub fn record_decision(&self, sandbox_id: &str, refused: bool, score: u32, path: &str) {
-        self.activity.record(sandbox_id, refused, score, path);
+    /// Count one decision toward its sandbox's activity. Cheap, never waits on the network.
+    pub fn record_decision(
+        &self,
+        sandbox_id: &str,
+        refused: bool,
+        score: u32,
+        host: &str,
+        method: &str,
+        route: &str,
+    ) {
+        self.activity
+            .record(sandbox_id, refused, score, host, method, route);
+    }
+
+    /// Count one tunnel request toward its sandbox's egress.
+    pub fn record_tunnel(&self, sandbox_id: &str, destination: &str, outcome: TunnelOutcome) {
+        self.activity
+            .record_tunnel(sandbox_id, destination, outcome);
     }
 
     /// Hand an event over. Never waits: a full queue drops the event and counts it.
@@ -284,7 +417,9 @@ fn sandbox_of(occurrence: &Occurrence) -> Option<&str> {
     match occurrence {
         Occurrence::Decision { sandbox_id, .. }
         | Occurrence::Tunnel { sandbox_id, .. }
-        | Occurrence::Activity { sandbox_id, .. } => Some(sandbox_id),
+        | Occurrence::Activity { sandbox_id, .. }
+        | Occurrence::Route { sandbox_id, .. }
+        | Occurrence::Egress { sandbox_id, .. } => Some(sandbox_id),
         Occurrence::Signal { sandbox_id, .. } => sandbox_id.as_deref(),
     }
 }
@@ -300,7 +435,7 @@ fn spiffe_id(sandbox_id: &str, trust_domain: Option<&str>) -> Option<String> {
 
 fn actor(identity: &SandboxIdentity, spiffe: Option<&str>) -> Value {
     json!({
-        "user": {"name": identity.agent_id, "uid": spiffe},
+        "user": {"name": identity.agent_id, "uid": spiffe, "full_name": identity.display_name},
         "session": {"uid": identity.run_id},
     })
 }
@@ -435,7 +570,7 @@ pub fn to_ocsf(
             allowed,
             refused,
             max_score,
-            distinct_paths,
+            distinct_routes,
             at_ms,
         } => {
             let spiffe = spiffe_id(sandbox_id, trust_domain);
@@ -454,7 +589,7 @@ pub fn to_ocsf(
                     "type_uid": 600_399, "type_name": "API Activity: Other",
                     "severity_id": 1, "severity": "Informational",
                     "status_id": 1, "status": "Success",
-                    "message": format!("Workload activity: {total} decisions ({refused} refused), highest score {max_score}, {distinct_paths} distinct paths"),
+                    "message": format!("Workload activity: {total} decisions ({refused} refused), highest score {max_score}, {distinct_routes} routes"),
                     "status_detail": "risk_guard_summary",
                     "risk_score": max_score,
                     "api": {"operation": "activity_summary", "service": {"name": "risk-guard"}},
@@ -464,7 +599,82 @@ pub fn to_ocsf(
                         "gate": "summary", "agent_id": identity.agent_id, "run_id": identity.run_id,
                         "task_profile": identity.task_profile, "spiffe_id": spiffe,
                         "window_seconds": window_ms / 1000, "allowed_calls": allowed, "refused_calls": refused, "total": total,
-                        "refusal_ratio": ratio, "max_score": max_score, "distinct_paths": distinct_paths,
+                        "refusal_ratio": ratio, "max_score": max_score, "distinct_routes": distinct_routes,
+                    }},
+                })
+                .as_object()
+                .cloned()
+                .unwrap_or_default(),
+            );
+            Value::Object(event)
+        }
+        Occurrence::Route {
+            sandbox_id,
+            host,
+            method,
+            route,
+            allowed,
+            refused,
+            max_score,
+            at_ms,
+        } => {
+            let spiffe = spiffe_id(sandbox_id, trust_domain);
+            let total = allowed + refused;
+            let mut event = base(version, *at_ms);
+            event.extend(
+                json!({
+                    "category_uid": 6, "category_name": "Application Activity",
+                    "class_uid": 6003, "class_name": "API Activity",
+                    "activity_id": 99, "activity_name": "Route activity",
+                    "type_uid": 600_399, "type_name": "API Activity: Other",
+                    "severity_id": 1, "severity": "Informational",
+                    "status_id": 1, "status": "Success",
+                    "message": format!("{method} {host}{route}: {total} calls ({refused} refused), highest score {max_score}"),
+                    "status_detail": "risk_guard_route",
+                    "risk_score": max_score,
+                    "api": {"operation": method, "service": {"name": host}},
+                    "actor": actor(identity, spiffe.as_deref()),
+                    "container": {"uid": sandbox_id},
+                    "unmapped": {"risk_guard": {
+                        "gate": "route", "agent_id": identity.agent_id, "task_profile": identity.task_profile,
+                        "host": host, "method": method, "route": route,
+                        "allowed_calls": allowed, "refused_calls": refused, "total": total, "max_score": max_score,
+                    }},
+                })
+                .as_object()
+                .cloned()
+                .unwrap_or_default(),
+            );
+            Value::Object(event)
+        }
+        Occurrence::Egress {
+            sandbox_id,
+            destination,
+            allowed,
+            refused,
+            shadow,
+            at_ms,
+        } => {
+            let spiffe = spiffe_id(sandbox_id, trust_domain);
+            let total = allowed + refused + shadow;
+            let mut event = base(version, *at_ms);
+            event.extend(
+                json!({
+                    "category_uid": 4, "category_name": "Network Activity",
+                    "class_uid": 4001, "class_name": "Network Activity",
+                    "activity_id": 99, "activity_name": "Egress activity",
+                    "type_uid": 400_199, "type_name": "Network Activity: Other",
+                    "severity_id": 1, "severity": "Informational",
+                    "status_id": 1, "status": "Success",
+                    "message": format!("Tunnels to {destination}: {total} ({refused} refused, {shadow} would be refused in enforce mode)"),
+                    "status_detail": "risk_guard_egress",
+                    "dst_endpoint": {"domain": destination},
+                    "actor": actor(identity, spiffe.as_deref()),
+                    "container": {"uid": sandbox_id},
+                    "unmapped": {"risk_guard": {
+                        "gate": "egress", "agent_id": identity.agent_id, "task_profile": identity.task_profile,
+                        "destination": destination,
+                        "allowed_calls": allowed, "refused_calls": refused, "shadow_calls": shadow, "total": total,
                     }},
                 })
                 .as_object()
@@ -552,6 +762,7 @@ mod tests {
     fn identity() -> SandboxIdentity {
         SandboxIdentity {
             agent_id: Some("agent-7".into()),
+            display_name: Some("Release bot".into()),
             run_id: Some("run-9".into()),
             task_profile: Some("repo-triage-readonly".into()),
         }
@@ -663,73 +874,137 @@ mod tests {
         );
     }
 
+    fn rows(taken: &[Occurrence]) -> (Vec<&Occurrence>, Vec<&Occurrence>, Vec<&Occurrence>) {
+        let pick = |f: fn(&Occurrence) -> bool| taken.iter().filter(|o| f(o)).collect::<Vec<_>>();
+        (
+            pick(|o| matches!(o, Occurrence::Activity { .. })),
+            pick(|o| matches!(o, Occurrence::Route { .. })),
+            pick(|o| matches!(o, Occurrence::Egress { .. })),
+        )
+    }
+
     #[test]
-    fn counters_turn_into_one_summary_per_active_sandbox_and_then_start_again() {
+    fn counters_give_a_summary_route_rows_and_egress_rows_per_sandbox_and_then_start_again() {
         let counters = ActivityCounters::default();
-        counters.record("sbx-1", false, 5, "/a");
-        counters.record("sbx-1", false, 9, "/b");
-        counters.record("sbx-1", true, 100, "/a");
-        counters.record("sbx-2", false, 1, "/c");
-        let mut taken = counters.take(1_000_000);
-        taken.sort_by_key(|o| sandbox_of(o).map(str::to_string));
-        assert_eq!(taken.len(), 2);
-        let Occurrence::Activity {
-            sandbox_id,
+        counters.record("sbx-1", false, 5, "api", "GET", "/services");
+        counters.record("sbx-1", false, 9, "api", "GET", "/services");
+        counters.record("sbx-1", true, 100, "api", "DELETE", "/services/{svc}");
+        counters.record("sbx-2", false, 1, "api", "GET", "/costs");
+        counters.record_tunnel(
+            "sbx-1",
+            "integrate.api.nvidia.com:443",
+            TunnelOutcome::Allowed,
+        );
+        counters.record_tunnel(
+            "sbx-1",
+            "integrate.api.nvidia.com:443",
+            TunnelOutcome::Allowed,
+        );
+        counters.record_tunnel("sbx-1", "evil.example:443", TunnelOutcome::Refused);
+        counters.record_tunnel(
+            "sbx-1",
+            "integrate.api.nvidia.com:443",
+            TunnelOutcome::Shadow,
+        );
+        let taken = counters.take(1_000_000);
+        let (summaries, routes, egress) = rows(&taken);
+        assert_eq!((summaries.len(), routes.len(), egress.len()), (2, 3, 2));
+
+        let Some(Occurrence::Activity {
             allowed,
             refused,
             max_score,
-            distinct_paths,
+            distinct_routes,
             window_ms,
             ..
-        } = &taken[0]
+        }) = summaries
+            .iter()
+            .find(|o| sandbox_of(o) == Some("sbx-1"))
+            .copied()
         else {
-            panic!("an activity summary")
+            panic!("a summary for sbx-1")
         };
         assert_eq!(
-            (
-                sandbox_id.as_str(),
-                *allowed,
-                *refused,
-                *max_score,
-                *distinct_paths
-            ),
-            ("sbx-1", 2, 1, 100, 2)
+            (*allowed, *refused, *max_score, *distinct_routes),
+            (2, 1, 100, 2)
         );
         assert_eq!(*window_ms, 60_000, "the first window defaults to a minute");
-        // Nothing happened since: nothing is sent, and the next window is measured from the last take.
+
+        let Some(Occurrence::Route { allowed, refused, .. }) = routes
+            .iter()
+            .find(|o| matches!(o, Occurrence::Route { sandbox_id, method, .. } if sandbox_id == "sbx-1" && method == "GET"))
+            .copied()
+        else {
+            panic!("the GET route row")
+        };
+        assert_eq!((*allowed, *refused), (2, 0));
+
+        let Some(Occurrence::Egress { allowed, refused, shadow, .. }) = egress
+            .iter()
+            .find(|o| matches!(o, Occurrence::Egress { destination, .. } if destination.starts_with("integrate")))
+            .copied()
+        else {
+            panic!("the model endpoint row")
+        };
+        assert_eq!((*allowed, *refused, *shadow), (2, 0, 1));
+
+        // Nothing since: nothing is sent, and the next window is measured from the last take.
         assert!(counters.take(1_060_000).is_empty());
-        counters.record("sbx-1", false, 0, "/a");
+        counters.record("sbx-1", false, 0, "api", "GET", "/services");
         let again = counters.take(1_120_000);
+        let (summaries, _, _) = rows(&again);
         let Occurrence::Activity {
             window_ms, allowed, ..
-        } = &again[0]
+        } = summaries[0]
         else {
-            panic!("an activity summary")
+            panic!("a summary")
         };
         assert_eq!((*window_ms, *allowed), (60_000, 1));
     }
 
     #[test]
-    fn the_distinct_path_count_saturates_instead_of_growing_without_bound() {
+    fn a_sandbox_that_only_opened_tunnels_gets_egress_rows_and_no_decision_summary() {
         let counters = ActivityCounters::default();
-        for n in 0..(MAX_PATHS + 200) {
-            counters.record("sbx", false, 0, &format!("/p/{n}"));
+        counters.record_tunnel("sbx", "a.example:443", TunnelOutcome::Allowed);
+        let taken = counters.take(1);
+        let (summaries, routes, egress) = rows(&taken);
+        assert_eq!((summaries.len(), routes.len(), egress.len()), (0, 0, 1));
+    }
+
+    #[test]
+    fn routes_and_destinations_saturate_into_other_instead_of_growing_without_bound() {
+        let counters = ActivityCounters::default();
+        for n in 0..(MAX_ROUTES + 200) {
+            counters.record("sbx", false, 0, "api", "GET", &format!("/p/{n}"));
+            counters.record_tunnel("sbx", &format!("h{n}.example:443"), TunnelOutcome::Allowed);
         }
         let taken = counters.take(1);
+        let (summaries, routes, egress) = rows(&taken);
+        assert_eq!(
+            routes.len(),
+            MAX_ROUTES + 1,
+            "the limit, plus the row that holds the rest"
+        );
+        assert_eq!(egress.len(), MAX_DESTINATIONS + 1);
         let Occurrence::Activity {
-            distinct_paths,
             allowed,
+            distinct_routes,
             ..
-        } = &taken[0]
+        } = summaries[0]
         else {
-            panic!("an activity summary")
+            panic!("a summary")
         };
-        assert_eq!(*distinct_paths as usize, MAX_PATHS);
         assert_eq!(
             *allowed as usize,
-            MAX_PATHS + 200,
+            MAX_ROUTES + 200,
             "every decision is still counted"
         );
+        assert_eq!(*distinct_routes as usize, MAX_ROUTES + 1);
+        let other = routes.iter().find_map(|o| match o {
+            Occurrence::Route { route, allowed, .. } if route == "other" => Some(*allowed),
+            _ => None,
+        });
+        assert_eq!(other, Some(200));
     }
 
     /// OpenSearch fixes a field's type when it first sees it, and rejects a document that later uses the same name for another type. All of Risk Guard's events share
@@ -764,7 +1039,25 @@ mod tests {
                 allowed: 1,
                 refused: 1,
                 max_score: 1,
-                distinct_paths: 1,
+                distinct_routes: 1,
+                at_ms: 1,
+            },
+            Occurrence::Route {
+                sandbox_id: "s".into(),
+                host: "h".into(),
+                method: "GET".into(),
+                route: "/r".into(),
+                allowed: 1,
+                refused: 1,
+                max_score: 1,
+                at_ms: 1,
+            },
+            Occurrence::Egress {
+                sandbox_id: "s".into(),
+                destination: "d:443".into(),
+                allowed: 1,
+                refused: 1,
+                shadow: 1,
                 at_ms: 1,
             },
         ];
@@ -815,7 +1108,14 @@ mod tests {
         let counters = ActivityCounters::default();
         let started = std::time::Instant::now();
         for n in 0..100_000 {
-            counters.record("sbx", n % 7 == 0, 10, if n % 2 == 0 { "/a" } else { "/b" });
+            counters.record(
+                "sbx",
+                n % 7 == 0,
+                10,
+                "api",
+                "GET",
+                if n % 2 == 0 { "/a" } else { "/b" },
+            );
         }
         let per_call = started.elapsed() / 100_000;
         println!("record() takes {per_call:?} per decision");
@@ -826,14 +1126,14 @@ mod tests {
     }
 
     #[test]
-    fn a_summary_event_carries_the_workload_the_counts_and_the_refusal_share() {
+    fn the_events_carry_the_workload_by_name_the_counts_and_the_route_or_destination() {
         let summary = Occurrence::Activity {
             sandbox_id: "sbx-1".into(),
             window_ms: 60_000,
             allowed: 8,
             refused: 2,
             max_score: 100,
-            distinct_paths: 4,
+            distinct_routes: 4,
             at_ms: 5,
         };
         let event = to_ocsf(&summary, &identity(), Some("example.org"), "0.1.0");
@@ -842,7 +1142,39 @@ mod tests {
         assert_eq!(event["unmapped"]["risk_guard"]["refused_calls"], 2);
         assert_eq!(event["unmapped"]["risk_guard"]["refusal_ratio"], 0.2);
         assert_eq!(event["actor"]["user"]["name"], "agent-7");
-        assert_eq!(event["status_detail"], "risk_guard_summary");
+        assert_eq!(event["actor"]["user"]["full_name"], "Release bot");
+
+        let route = Occurrence::Route {
+            sandbox_id: "sbx-1".into(),
+            host: "deploy-api".into(),
+            method: "DELETE".into(),
+            route: "/services/{svc}".into(),
+            allowed: 0,
+            refused: 3,
+            max_score: 100,
+            at_ms: 5,
+        };
+        let event = to_ocsf(&route, &identity(), None, "0.1.0");
+        assert_eq!(event["unmapped"]["risk_guard"]["gate"], "route");
+        assert_eq!(event["unmapped"]["risk_guard"]["route"], "/services/{svc}");
+        assert_eq!(event["unmapped"]["risk_guard"]["refused_calls"], 3);
+        assert_eq!(event["actor"]["user"]["full_name"], "Release bot");
+
+        let egress = Occurrence::Egress {
+            sandbox_id: "sbx-1".into(),
+            destination: "integrate.api.nvidia.com:443".into(),
+            allowed: 4,
+            refused: 0,
+            shadow: 1,
+            at_ms: 5,
+        };
+        let event = to_ocsf(&egress, &identity(), None, "0.1.0");
+        assert_eq!(event["unmapped"]["risk_guard"]["gate"], "egress");
+        assert_eq!(
+            event["unmapped"]["risk_guard"]["destination"],
+            "integrate.api.nvidia.com:443"
+        );
+        assert_eq!(event["unmapped"]["risk_guard"]["total"], 5);
     }
 
     #[test]

@@ -534,8 +534,19 @@ impl SqliteRiskStore {
             return Ok(None);
         };
         let identity = resolve_identity(&conn, &epoch)?;
+        let display_name = match &identity {
+            Some(identity) => conn
+                .query_row(
+                    "SELECT display_name FROM agents WHERE agent_id = ?1",
+                    params![identity.agent_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?,
+            None => None,
+        };
         Ok(Some(crate::ocsf::SandboxIdentity {
             agent_id: identity.as_ref().map(|identity| identity.agent_id.clone()),
+            display_name,
             run_id: identity.as_ref().map(|identity| identity.run_id.clone()),
             task_profile: Some(epoch.task_profile),
         }))

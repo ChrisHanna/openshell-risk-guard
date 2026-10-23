@@ -106,6 +106,28 @@ fn populated(path: &std::path::Path) -> SqliteRiskStore {
     store
 }
 
+#[test]
+fn an_agent_can_be_renamed_without_changing_what_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = populated(&dir.path().join("live.db"));
+    store.rename_agent("agent-r", "Release bot").unwrap();
+    assert_eq!(
+        store
+            .sandbox_identity("sbx-1")
+            .unwrap()
+            .unwrap()
+            .display_name
+            .as_deref(),
+        Some("Release bot")
+    );
+    assert!(store.rename_agent("no-such-agent", "x").is_err());
+    assert!(store.rename_agent("agent-r", "  ").is_err());
+    assert!(
+        restricted(&store),
+        "decisions are still keyed on the agent_id"
+    );
+}
+
 fn restricted(store: &SqliteRiskStore) -> bool {
     let view = store
         .list_restrictions(

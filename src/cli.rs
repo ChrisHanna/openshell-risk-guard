@@ -374,6 +374,15 @@ pub enum Commands {
         #[arg(long)]
         workspace: Option<String>,
     },
+    /// Change the name people see for an agent (dashboards, SIEM events). The agent_id, which decisions are keyed on, does not change.
+    AgentRename {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        agent_id: String,
+        #[arg(long)]
+        display_name: String,
+    },
     /// Create a run pinned to an agent revision, approved baseline and scoring context.
     RunCreate {
         #[arg(long)]
@@ -978,6 +987,15 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                 "listen": listen.to_string(),
             })
             .to_string())
+        }
+
+        Commands::AgentRename {
+            db,
+            agent_id,
+            display_name,
+        } => {
+            SqliteRiskStore::open(db)?.rename_agent(&agent_id, &display_name)?;
+            Ok(serde_json::json!({"agent_id": agent_id, "display_name": display_name, "status": "renamed"}).to_string())
         }
 
         Commands::AgentRegister {
