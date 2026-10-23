@@ -197,6 +197,7 @@ cargo run -- hardening-report \
 
 | Read | For |
 |---|---|
+| [How it works](docs/how-it-works.md) | The whole system on one page: decision path, state, identity, SIEM events and dashboards, signals back from the SIEM, two-person approval, promotion gate, red-team tests, deployment, and current limits |
 | [Getting started](docs/getting-started.md) | Four ways to run it, from ten minutes with sample data to a live Azure deployment; prerequisites and troubleshooting |
 | [Operating Risk Guard](docs/operations.md) | TLS and secrets, bootstrap order, protecting a new API, recovering from a false positive, metrics, rollout |
 | [Security model](docs/security-model.md) | How the sidecar sits next to OpenShell, workload ID continuity, trust boundaries, measured release gates |

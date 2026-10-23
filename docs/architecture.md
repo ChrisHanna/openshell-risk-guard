@@ -1,5 +1,7 @@
 # Architecture
 
+For the system end to end (SIEM loop, signals, approvals, red team), see [how it works](how-it-works.md).
+
 Risk Guard sits beside an OpenShell gateway. It never replaces OpenShell's policy; it adds a judgement about whether each request
 is reasonable for the job the agent was given, remembers what each workload has done, and can be asked again at the network layer.
 
