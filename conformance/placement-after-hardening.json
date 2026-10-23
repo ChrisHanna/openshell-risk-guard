@@ -1,0 +1,441 @@
+{
+  "test": "placement",
+  "run_at": "2026-10-23T01:47:39+00:00",
+  "profile": "hardened-placement",
+  "scope_note": "node separation only; the nodes share a control plane and cluster administrators",
+  "placement": {
+    "checks": [
+      {
+        "check": "deployment/risk-guard runs on a 'workload-class=security' node",
+        "nodes_now": [
+          "aks-security-25705114-vmss000000"
+        ],
+        "pass": true
+      },
+      {
+        "check": "deployment/sandbox-egress runs on a 'workload-class=security' node",
+        "nodes_now": [
+          "aks-security-25705114-vmss000000"
+        ],
+        "pass": true
+      },
+      {
+        "check": "deployment/egress-proxy runs on a 'workload-class=security' node",
+        "nodes_now": [
+          "aks-security-25705114-vmss000000"
+        ],
+        "pass": true
+      },
+      {
+        "check": "statefulset/spire-server runs on a 'workload-class=security' node",
+        "nodes_now": [
+          "aks-security-25705114-vmss000000"
+        ],
+        "pass": true
+      },
+      {
+        "check": "no sandbox, supervisor or demo pod shares a security node",
+        "security_nodes": [
+          "aks-security-25705114-vmss000000"
+        ],
+        "unexpected_pods": [],
+        "pass": true
+      }
+    ],
+    "security_services_run_on": [
+      "aks-security-25705114-vmss000000"
+    ],
+    "sandbox_supervisors_run_on": [
+      "aks-kata-81034805-vmss000000"
+    ],
+    "security_services_share_a_node_with_sandboxes": []
+  },
+  "permissions": {
+    "untrusted_service_accounts": [
+      {
+        "service_account": "openshell-sandbox",
+        "action": "get secrets",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "openshell-sandbox",
+        "action": "list secrets",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "openshell-sandbox",
+        "action": "patch deployments.apps/risk-guard",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "openshell-sandbox",
+        "action": "delete deployments.apps/risk-guard",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "openshell-sandbox",
+        "action": "patch deployments.apps/sandbox-egress",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "openshell-sandbox",
+        "action": "patch statefulsets.apps/spire-server",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "openshell-sandbox",
+        "action": "update networkpolicies.networking.k8s.io",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "openshell-sandbox",
+        "action": "delete networkpolicies.networking.k8s.io",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "openshell-sandbox",
+        "action": "update ciliumnetworkpolicies.cilium.io",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "openshell-sandbox",
+        "action": "delete ciliumnetworkpolicies.cilium.io",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "openshell-sandbox",
+        "action": "create pods/exec",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "openshell-sandbox",
+        "action": "create pods/portforward",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "openshell-sandbox",
+        "action": "patch configmaps/spire-bundle",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "openshell-sandbox",
+        "action": "delete persistentvolumeclaims",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "default",
+        "action": "get secrets",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "default",
+        "action": "list secrets",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "default",
+        "action": "patch deployments.apps/risk-guard",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "default",
+        "action": "delete deployments.apps/risk-guard",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "default",
+        "action": "patch deployments.apps/sandbox-egress",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "default",
+        "action": "patch statefulsets.apps/spire-server",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "default",
+        "action": "update networkpolicies.networking.k8s.io",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "default",
+        "action": "delete networkpolicies.networking.k8s.io",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "default",
+        "action": "update ciliumnetworkpolicies.cilium.io",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "default",
+        "action": "delete ciliumnetworkpolicies.cilium.io",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "default",
+        "action": "create pods/exec",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "default",
+        "action": "create pods/portforward",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "default",
+        "action": "patch configmaps/spire-bundle",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "default",
+        "action": "delete persistentvolumeclaims",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "egress-demo",
+        "action": "get secrets",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "egress-demo",
+        "action": "list secrets",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "egress-demo",
+        "action": "patch deployments.apps/risk-guard",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "egress-demo",
+        "action": "delete deployments.apps/risk-guard",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "egress-demo",
+        "action": "patch deployments.apps/sandbox-egress",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "egress-demo",
+        "action": "patch statefulsets.apps/spire-server",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "egress-demo",
+        "action": "update networkpolicies.networking.k8s.io",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "egress-demo",
+        "action": "delete networkpolicies.networking.k8s.io",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "egress-demo",
+        "action": "update ciliumnetworkpolicies.cilium.io",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "egress-demo",
+        "action": "delete ciliumnetworkpolicies.cilium.io",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "egress-demo",
+        "action": "create pods/exec",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "egress-demo",
+        "action": "create pods/portforward",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "egress-demo",
+        "action": "patch configmaps/spire-bundle",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "egress-demo",
+        "action": "delete persistentvolumeclaims",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "svid-demo",
+        "action": "get secrets",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "svid-demo",
+        "action": "list secrets",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "svid-demo",
+        "action": "patch deployments.apps/risk-guard",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "svid-demo",
+        "action": "delete deployments.apps/risk-guard",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "svid-demo",
+        "action": "patch deployments.apps/sandbox-egress",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "svid-demo",
+        "action": "patch statefulsets.apps/spire-server",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "svid-demo",
+        "action": "update networkpolicies.networking.k8s.io",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "svid-demo",
+        "action": "delete networkpolicies.networking.k8s.io",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "svid-demo",
+        "action": "update ciliumnetworkpolicies.cilium.io",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "svid-demo",
+        "action": "delete ciliumnetworkpolicies.cilium.io",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "svid-demo",
+        "action": "create pods/exec",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "svid-demo",
+        "action": "create pods/portforward",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "svid-demo",
+        "action": "patch configmaps/spire-bundle",
+        "allowed": false,
+        "pass": true
+      },
+      {
+        "service_account": "svid-demo",
+        "action": "delete persistentvolumeclaims",
+        "allowed": false,
+        "pass": true
+      }
+    ],
+    "security_service_accounts": [
+      {
+        "service_account": "openshell",
+        "can_do_of_the_listed_actions": [
+          "create pods/exec",
+          "create pods/portforward"
+        ]
+      },
+      {
+        "service_account": "openshell-certgen",
+        "can_do_of_the_listed_actions": [
+          "get secrets"
+        ]
+      },
+      {
+        "service_account": "sandbox-egress",
+        "can_do_of_the_listed_actions": []
+      },
+      {
+        "service_account": "risk-guard-tunnels",
+        "can_do_of_the_listed_actions": []
+      },
+      {
+        "service_account": "egress-proxy",
+        "can_do_of_the_listed_actions": []
+      },
+      {
+        "service_account": "spire-server",
+        "can_do_of_the_listed_actions": [
+          "patch configmaps/spire-bundle"
+        ]
+      },
+      {
+        "service_account": "spire-agent",
+        "can_do_of_the_listed_actions": []
+      }
+    ],
+    "sandbox_pod_tokens": {
+      "sandbox_pods_checked": 2,
+      "sandbox_pods_with_api_token_mounted": 0
+    }
+  },
+  "summary": {
+    "placement_checks_passed": 5,
+    "placement_checks": 5,
+    "permission_checks_passed": 56,
+    "permission_checks": 56,
+    "failed": []
+  }
+}

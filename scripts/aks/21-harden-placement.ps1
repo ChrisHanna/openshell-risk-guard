@@ -27,6 +27,15 @@ $profile = Get-Content (Join-Path $script:RepoRoot 'deploy/aks/placement-profile
 $labelKey = ($profile.node_labels.PSObject.Properties | Select-Object -First 1).Name
 $labelValue = ($profile.node_labels.PSObject.Properties | Select-Object -First 1).Value
 
+# Windows PowerShell 5.1 strips the quotes from JSON passed as an argument, so the patch goes in through a file.
+function Invoke-Patch([string]$Target, [string]$Json, [string]$Type = 'merge', [switch]$AllowFailure) {
+    $file = [IO.Path]::GetTempFileName()
+    try {
+        [IO.File]::WriteAllText($file, $Json)
+        Invoke-Native kubectl @('patch', $Target, '-n', $ns, "--type=$Type", '--patch-file', $file) -AllowFailure:$AllowFailure | Out-Null
+    } finally { Remove-Item -Force $file -ErrorAction SilentlyContinue }
+}
+
 Write-Step "Placement profile '$($profile.name)'"
 foreach ($w in $profile.security_workloads) { Write-Note "$($w.kind)/$($w.name) -> nodes labelled $labelKey=$labelValue" }
 if (-not $Apply -and -not $Remove) {
@@ -39,7 +48,7 @@ if (-not $Apply -and -not $Remove) {
 if ($Remove) {
     foreach ($w in $profile.security_workloads) {
         $patch = '[{"op":"remove","path":"/spec/template/spec/nodeSelector"},{"op":"remove","path":"/spec/template/spec/tolerations"}]'
-        Invoke-Native kubectl @('patch', "$($w.kind)/$($w.name)", '-n', $ns, '--type=json', '-p', $patch) -AllowFailure | Out-Null
+        Invoke-Patch "$($w.kind)/$($w.name)" $patch 'json' -AllowFailure
     }
     Invoke-Native az @('aks', 'nodepool', 'delete', '-g', $state.resourceGroup, '--cluster-name', $state.cluster, '-n', $profile.node_pool, '--only-show-errors') -AllowFailure | Out-Null
     return
@@ -62,17 +71,18 @@ foreach ($name in @($profile.per_node_daemons_allowed_on_security_nodes)) {
     if (-not ($list | Where-Object { $_.key -eq $taintKey })) {
         $list += @{ key = $taintKey; operator = 'Equal'; value = $taintValue; effect = $effect }
         $daemonPatch = @{ spec = @{ template = @{ spec = @{ tolerations = $list } } } } | ConvertTo-Json -Depth 10 -Compress
-        Invoke-Native kubectl @('patch', "daemonset/$name", '-n', $ns, '--type=merge', '-p', $daemonPatch) | Out-Null
+        Invoke-Patch "daemonset/$name" $daemonPatch
     }
 }
 
 Write-Step 'Moving the security workloads'
-$patch = @{ spec = @{ template = @{ spec = @{
-    nodeSelector = @{ $labelKey = $labelValue }
-    tolerations = @(@{ key = $taintKey; operator = 'Equal'; value = $taintValue; effect = $effect })
-} } } } | ConvertTo-Json -Depth 10 -Compress
+# A JSON patch that replaces the whole selector: a merge would keep an existing pin (the proxies are pinned to the ordinary pool) and
+# leave nothing that matches.
+$patch = ConvertTo-Json -Depth 10 -Compress -InputObject @(
+    @{ op = 'add'; path = '/spec/template/spec/nodeSelector'; value = @{ $labelKey = $labelValue } },
+    @{ op = 'add'; path = '/spec/template/spec/tolerations'; value = @(@{ key = $taintKey; operator = 'Equal'; value = $taintValue; effect = $effect }) })
 foreach ($w in $profile.security_workloads) {
-    Invoke-Native kubectl @('patch', "$($w.kind)/$($w.name)", '-n', $ns, '--type=merge', '-p', $patch) | Out-Null
+    Invoke-Patch "$($w.kind)/$($w.name)" $patch 'json'
 }
 foreach ($w in $profile.security_workloads) {
     Invoke-Native kubectl @('rollout', 'status', "$($w.kind)/$($w.name)", '-n', $ns, '--timeout=600s') | Out-Null

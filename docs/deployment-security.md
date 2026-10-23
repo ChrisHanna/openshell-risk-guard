@@ -11,7 +11,7 @@ flowchart LR
     subgraph sandbox_node["Sandbox node (Kata)"]
         A["Agent process<br/>(micro-VM)"] -- "TCP 5500 only" --> S["Supervisor<br/>holds credentials"]
     end
-    subgraph platform["Security services (today: partly on the sandbox node)"]
+    subgraph platform["Security services (own node pool)"]
         RG["Risk Guard<br/>decisions, quarantine, SQLite"]
         P["Tunnel proxy<br/>+ per-request proxy"]
         SP["SPIRE server"]
@@ -58,12 +58,12 @@ Solid lines are enforced paths. The dotted lines are the two things the design d
 
 | Can it… | Result | Evidence |
 |---|---|---|
-| Read what pods on that node mount | **Yes.** On the demo cluster today Risk Guard (its database, its keys) and the SPIRE server run on the same Kata node as the sandboxes | `placement-before-hardening.json`: 0 of 5 placement checks pass |
+| Read what pods on that node mount | **Yes.** Before hardening, Risk Guard (its database, its keys) and the SPIRE server ran on the same Kata node as the sandboxes. Now they run on a dedicated node | `placement-before-hardening.json`: 0 of 5 checks; `placement-after-hardening.json`: 5 of 5 |
 | Read secrets of pods on *other* nodes | No, in a normal cluster: the node authorizer limits a kubelet to its own pods' secrets (Kubernetes behaviour, not tested here) | upstream Kubernetes |
 | Reach Risk Guard over the network | Only on the same terms as any pod in the cluster | network policies, [architecture](architecture.md) |
 
 The hardened placement profile moves Risk Guard, both proxies and the SPIRE server to their own tainted nodes
-([ADR 0001](adr/0001-security-placement.md)). It is built and checked by `placement.py` but **not applied** here.
+([ADR 0001](adr/0001-security-placement.md)) and is applied on the demo cluster. The nodes still share one control plane.
 
 ### 4. A Kubernetes administrator
 
@@ -95,7 +95,7 @@ reason) or a **transport failure** (nobody answered); both block, and a destruct
 ## Summary of the gaps
 
 1. A supervisor that stops calling Risk Guard is not scored, and can reach in-cluster plain-HTTP services directly.
-2. Risk Guard and SPIRE share a node with sandboxes until the hardened profile is applied.
+2. The security nodes share a control plane with the sandbox nodes; re-applying scripts 17/18 moves the proxies back until script 21 is re-run.
 3. A Kubernetes administrator is outside what this design defends against.
 4. Policy changes have no second-person approval.
 5. Detection numbers come from the author's own agents; they show the mechanism works, not how it generalises.

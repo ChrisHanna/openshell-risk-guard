@@ -1,8 +1,8 @@
 # ADR 0001: Where the security services run
 
-**Status:** accepted for the design; the hardened profile is built and verified by a script, but **not applied** to the demo cluster
-(it costs a node and restarts Risk Guard, so that is the owner's call). Measured state before hardening:
-[`conformance/placement-before-hardening.json`](../../conformance/placement-before-hardening.json).
+**Status:** accepted and **applied** to the demo cluster. Before: [`placement-before-hardening.json`](../../conformance/placement-before-hardening.json)
+(0 of 5 placement checks). After: [`placement-after-hardening.json`](../../conformance/placement-after-hardening.json) (5 of 5, and 56 of 56
+permission checks). The live containment cases still passed afterwards (7 of 7).
 
 ## Context
 
@@ -52,5 +52,6 @@ can exec into pods, and the SPIRE server can update the trust-bundle ConfigMap (
 * **Cost:** one more small VM (the script defaults to `Standard_D2s_v5`; check current pricing for your region).
 * **Availability:** moving Risk Guard detaches and re-attaches its disk. Risk Guard is single-writer, so there is a short outage during
   which new requests fail closed. Do it when nothing is being shown.
-* **Operations:** the taint means a new security workload must be added to the profile, or it will not schedule.
+* **Operations:** `sandbox-egress.yaml` and `egress-proxy.yaml` pin the ordinary pool, and scripts 17 and 18 re-apply them, which moves the
+  proxies back; re-run `21-harden-placement.ps1 -Apply` afterwards (it replaces the selector, and the checks will fail until you do). The taint means a new security workload must be added to the profile, or it will not schedule.
 * **Verification:** run `scripts/conformance/placement.py`; it lists the failed checks, and the report records the date and cluster context.
