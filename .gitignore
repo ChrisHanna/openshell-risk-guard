@@ -19,3 +19,4 @@ nvidia.env
 # Local AKS environment state (resource names, never secrets)
 .aks/
 release/
+data/
