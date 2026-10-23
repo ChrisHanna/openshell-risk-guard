@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 460" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">Risk Guard architecture</title>
+  <desc id="d">An agent in an OpenShell micro-VM talks only to its supervisor. The supervisor sends every request to Risk Guard's request gate and sends HTTPS connections through an Envoy proxy checked by Risk Guard's tunnel gate, before reaching the destination.</desc>
+  <rect width="960" height="460" fill="#f5f5f7"/>
+  <g font-size="13" fill="#16161a">
+    <rect x="30" y="60" width="180" height="150" rx="14" fill="#ffffff" stroke="#c9c9d1"/>
+    <text x="46" y="84" font-size="11" fill="#55555c" letter-spacing="1">OPENSHELL SANDBOX</text>
+    <text x="46" y="104" font-size="11" fill="#55555c">Kata micro-VM</text>
+    <rect x="50" y="122" width="140" height="64" rx="10" fill="#e6e6eb"/>
+    <text x="120" y="150" text-anchor="middle" font-weight="500">Agent</text>
+    <text x="120" y="168" text-anchor="middle" font-size="11" fill="#55555c">egress denied</text>
+
+    <rect x="270" y="122" width="150" height="64" rx="10" fill="#ffffff" stroke="#c9c9d1"/>
+    <text x="345" y="150" text-anchor="middle" font-weight="500">Supervisor</text>
+    <text x="345" y="168" text-anchor="middle" font-size="11" fill="#55555c">holds credentials</text>
+
+    <rect x="500" y="40" width="430" height="190" rx="14" fill="#ffffff" stroke="#0b5fc4" stroke-width="1.5"/>
+    <text x="518" y="64" font-size="11" fill="#0b5fc4" letter-spacing="1">RISK GUARD  (own node pool)</text>
+    <rect x="520" y="78" width="190" height="64" rx="10" fill="#e8f0fb"/>
+    <text x="615" y="106" text-anchor="middle" font-weight="500">Gate 1: request</text>
+    <text x="615" y="124" text-anchor="middle" font-size="11" fill="#55555c">score against the task</text>
+    <rect x="720" y="78" width="190" height="64" rx="10" fill="#e8f0fb"/>
+    <text x="815" y="106" text-anchor="middle" font-weight="500">Gate 3: tunnel</text>
+    <text x="815" y="124" text-anchor="middle" font-size="11" fill="#55555c">workload and destination host</text>
+    <rect x="520" y="160" width="390" height="48" rx="10" fill="#e6e6eb"/>
+    <text x="715" y="189" text-anchor="middle">SQLite: decisions, restrictions, quarantine</text>
+
+    <rect x="500" y="290" width="180" height="64" rx="10" fill="#ffffff" stroke="#c9c9d1"/>
+    <text x="590" y="318" text-anchor="middle" font-weight="500">Envoy tunnel proxy</text>
+    <text x="590" y="336" text-anchor="middle" font-size="11" fill="#55555c">asks gate 3 per connection</text>
+
+    <rect x="760" y="290" width="170" height="64" rx="10" fill="#ffffff" stroke="#c9c9d1"/>
+    <text x="845" y="318" text-anchor="middle" font-weight="500">Destination</text>
+    <text x="845" y="336" text-anchor="middle" font-size="11" fill="#55555c">model API, tools</text>
+
+    <rect x="270" y="290" width="170" height="64" rx="10" fill="#ffffff" stroke="#c9c9d1"/>
+    <text x="355" y="318" text-anchor="middle" font-weight="500">OpenShell gateway</text>
+    <text x="355" y="336" text-anchor="middle" font-size="11" fill="#55555c">gate 2: sandbox changes</text>
+  </g>
+  <g stroke="#55555c" stroke-width="1.4" fill="none" marker-end="url(#a)">
+    <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#55555c"/></marker></defs>
+    <path d="M190,154 H270"/>
+    <path d="M420,140 H520"/>
+    <path d="M420,170 C460,170 460,322 500,322"/>
+    <path d="M680,322 H760"/>
+    <path d="M590,290 C590,250 780,260 800,142"/>
+    <path d="M355,290 C355,230 470,100 520,100" stroke-dasharray="5 4"/>
+  </g>
+  <g font-size="11" fill="#55555c">
+    <text x="215" y="146">only path</text>
+    <text x="440" y="132">every request</text>
+    <text x="428" y="248">HTTPS (CONNECT)</text>
+    <text x="640" y="272">per connection</text>
+    <text x="282" y="262">sandbox changes</text>
+  </g>
+  <text x="30" y="420" font-size="12" fill="#55555c">Enforcement sits outside the agent. A compromised supervisor can stop calling gate 1; gate 3 and the network fence still limit it.</text>
+  <text x="30" y="440" font-size="12" fill="#55555c">Quarantine: new tunnels are refused at once; open tunnels end within 120 s (measured 81 s and 112 s).</text>
+</svg>

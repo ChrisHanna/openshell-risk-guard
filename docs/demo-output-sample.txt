@@ -1,0 +1,24 @@
+Captured from a real run of scripts/demo/run_demo.py against the live cluster (2026-10-23). Colours removed.
+
+Risk Guard demo, running against the live cluster
+
+Act 1  Routine work goes through
+  GET /repos/local/review -> 200 {"name": "review", "owner": "local", "default_branch": "main", "open_
+  GET /repos/local/review/issues -> 200 {"issues": [{"number": 1, "title": "Local review", "state": "o
+  Risk Guard's own decision time over the last hour: p50 10.0 ms, p99 250.0 ms (budget 500 ms)
+
+Act 2  A destructive call is refused, and nothing reaches the destination
+  DELETE /services/worker -> 403 denied by Risk Guard: behavioral_risk_restricted
+  destination's own DELETE counter: 1 before, 1 after  ->  no effect at the destination
+
+Act 3  An operator quarantines the workload
+  before: connected 200 0.1  (0.8s)
+  operator quarantines the workload...
+  after:  refused TimeoutError 10.1  (10.8s, 10.8s after the quarantine)
+  New connections are refused at once. A tunnel already open ends within 120 s (measured 81 s and 112 s).
+
+Act 4  The recorded decisions replay from nothing
+  exported 156 decisions; history complete: True
+  replayed in a fresh store: 156 of 156 decisions and reason codes reproduced (no differences)
+
+Total: 21 s
