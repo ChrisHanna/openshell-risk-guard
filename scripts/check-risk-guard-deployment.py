@@ -169,6 +169,16 @@ def check_aks_hardened() -> None:
     deploy = (ROOT / "scripts" / "aks" / "04-deploy-risk-guard.ps1").read_text()
     assert "[switch]$Hardened" in deploy and "@$digest" in deploy, "script 04 must offer digest-pinned deployment"
 
+    # 5b. Every placeholder the deploy script can fill must still be in the manifest. An edit that drops one leaves a pod that cannot start (a missing
+    # signals token once did), and the hardening check below cannot see what is not there.
+    # (The checker fills placeholders from a table; a placeholder in the table but not in the file means the feature silently vanished.)
+    spec_ = importlib.util.spec_from_file_location("hardening_fill", ROOT / "scripts" / "conformance" / "hardening.py")
+    fill_module = importlib.util.module_from_spec(spec_)
+    spec_.loader.exec_module(fill_module)
+    manifest = (aks / "risk-guard.yaml").read_text()
+    absent = [key for key in fill_module.RISK_GUARD_FILL if key not in manifest]
+    assert not absent, f"risk-guard.yaml no longer contains the placeholders {absent}; the deploy script's features would silently disappear"
+
     # 6. The Kubernetes hardening baseline, on the same manifests, rendered the way the scripts render them.
     spec = importlib.util.spec_from_file_location("hardening", ROOT / "scripts" / "conformance" / "hardening.py")
     hardening = importlib.util.module_from_spec(spec)

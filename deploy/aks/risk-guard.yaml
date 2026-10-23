@@ -173,6 +173,7 @@ __SIGNALS_ARGS__
               containerPort: 50061
 __SVID_CONTAINER_PORT__
 __SIGNALS_CONTAINER_PORT__
+__SIGNALS_ENV__
           # Kubernetes' built-in gRPC probe cannot speak TLS and this listener is TLS-only, so the probe is the binary itself (`health-check`).
           # Three probes with three jobs:
           #   startup   - gives a slow start (a large database, a recovery after a crash) up to 150 s before the other probes begin;

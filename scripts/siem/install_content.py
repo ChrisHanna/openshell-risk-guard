@@ -319,7 +319,7 @@ def install_signals():
 
     message = json.dumps({
         "signal_id": "opensearch-{{ctx.alert.id}}", "source": "opensearch-alerting", "alert_id": "{{ctx.alert.id}}",
-        "sandbox_id": "{{ctx.alert.agg_alert_content.bucket_keys}}", "action": "quarantine", "ttl_seconds": 600,
+        "sandbox_id": "{{ctx.alert.agg_alert_content.bucket_keys.0}}", "action": "quarantine", "ttl_seconds": 600,
         "reason": "three or more Risk Guard refusals for one sandbox in five minutes"})
     body = {"type": "monitor", "name": SIGNAL_MONITOR, "monitor_type": "bucket_level_monitor", "enabled": True,
             "schedule": {"period": {"interval": 1, "unit": "MINUTES"}},

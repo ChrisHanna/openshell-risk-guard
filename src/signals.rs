@@ -128,6 +128,7 @@ async fn post_signal(
     body: axum::body::Bytes,
 ) -> Response {
     if !state.authorized(&headers) {
+        tracing::warn!("signal refused: missing or wrong token");
         return reply(
             StatusCode::UNAUTHORIZED,
             json!({"error": "a valid signals token is required"}),
@@ -136,6 +137,7 @@ async fn post_signal(
     let request: SignalRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
         Err(error) => {
+            tracing::warn!(%error, "signal rejected: the body is not a valid signal");
             return reply(
                 StatusCode::BAD_REQUEST,
                 json!({"error": format!("invalid signal: {error}")}),
@@ -173,6 +175,7 @@ async fn post_signal(
             reply(status, serde_json::to_value(&outcome).unwrap_or_default())
         }
         Ok(Err(RiskGuardError::InvalidArgument(message))) => {
+            tracing::warn!(%message, "signal rejected");
             reply(StatusCode::BAD_REQUEST, json!({"error": message}))
         }
         Ok(Err(error)) => {

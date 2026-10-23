@@ -34,12 +34,14 @@ if (-not $Apply -and -not $Remove) {
 }
 
 $hardened = (Get-StateValue 'riskGuardImage') -match '@sha256:'
+$deployArgs = @{}   # splatted below; an inline @(...) would be passed as a positional argument instead
+if ($hardened) { $deployArgs['Hardened'] = $true }
 if ($Remove) {
     Write-Step 'Turning signals off'
     Save-State @{ signalsEnabled = $false; signalsDryRun = $false; ocsfExport = $false }
     Invoke-Native kubectl @('delete', 'networkpolicy', 'risk-guard-signals-fence', '-n', $ns, '--ignore-not-found') -AllowFailure | Out-Null
     Invoke-Native kubectl @('delete', 'networkpolicy', 'opensearch-to-risk-guard-signals', '-n', 'siem', '--ignore-not-found') -AllowFailure | Out-Null
-    & "$PSScriptRoot/04-deploy-risk-guard.ps1" @(if ($hardened) { '-Hardened' })
+    & "$PSScriptRoot/04-deploy-risk-guard.ps1" @deployArgs
     Invoke-Native kubectl @('delete', 'secret', 'siem-signals-token', '-n', $ns, '--ignore-not-found') -AllowFailure | Out-Null
     Write-Note 'The webhook channel and alert stay in OpenSearch (disable them there, or remove the SIEM with 22-deploy-siem.ps1 -Remove).'
     return
@@ -67,7 +69,7 @@ Invoke-KubectlApply (Get-Content (Join-Path $dir 'signals-egress.yaml') -Raw)
 
 Write-Step 'Risk Guard with the signals port'
 Save-State @{ signalsEnabled = $true; signalsDryRun = (-not $Enforce); ocsfExport = $true }
-& "$PSScriptRoot/04-deploy-risk-guard.ps1" @(if ($hardened) { '-Hardened' })
+& "$PSScriptRoot/04-deploy-risk-guard.ps1" @deployArgs
 
 Write-Step 'Webhook channel and alert in OpenSearch'
 Push-Location $script:RepoRoot
