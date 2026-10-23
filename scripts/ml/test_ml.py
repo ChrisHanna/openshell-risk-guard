@@ -96,5 +96,31 @@ class Training(unittest.TestCase):
             self.assertGreaterEqual(p["max_distinct_resources_15m_p99"], p["max_distinct_resources_15m_p95"])
 
 
+@unittest.skipUnless(HAVE_SKLEARN, "numpy is not installed")
+class RealSummaries(unittest.TestCase):
+    def rows(self, count, spike_at=None):
+        out = []
+        for n in range(count):
+            total = 8 + (n % 5)
+            row = {"ts": n * 60_000, "workload": "agent-a", "total": total, "refused_calls": 0, "refusal_ratio": 0.0, "distinct_paths": 4, "max_score": 10}
+            if n == spike_at:
+                row.update(total=90, refused_calls=30, refusal_ratio=0.33, distinct_paths=40, max_score=100)
+            out.append(row)
+        return out
+
+    def test_too_little_history_learns_nothing_and_says_so(self):
+        import summaries
+        report = summaries.train(self.rows(summaries.MIN_ROWS - 1))
+        self.assertIn("not enough history", report["workloads"]["agent-a"]["status"])
+        self.assertNotIn("flagged", report["workloads"]["agent-a"])
+
+    def test_enough_history_flags_a_burst_and_little_else(self):
+        import summaries
+        count = summaries.MIN_ROWS * 2
+        report = summaries.train(self.rows(count, spike_at=count - 5))["workloads"]["agent-a"]
+        self.assertGreaterEqual(report["flagged"], 1)
+        self.assertLessEqual(report["flagged"], 3)
+
+
 if __name__ == "__main__":
     unittest.main()

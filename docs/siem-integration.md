@@ -137,7 +137,13 @@ OpenShell reduces what a middleware says to a generic `risk-guard` finding: the 
 | `container.uid` | The sandbox |
 | `status_detail` | `risk_guard_denied:<reason>`, `risk_guard_tunnel:<kind>` or `risk_guard_signal:<outcome>` |
 
-* Allowed requests are not sent; OpenShell already records them and they would drown the rest.
+* **Activity summaries.** Once a minute, for each workload that did anything, Risk Guard sends one event (`unmapped.risk_guard.gate: summary`) with every decision counted: `total`,
+  `allowed_calls`, `refused_calls`, `refusal_ratio`, `max_score`, `distinct_paths`, over `window_seconds`. This is the per-workload denominator and the feature source for per-agent anomaly
+  detection and model training. Counting costs about 70 ns per decision (in memory, no I/O); a workload that does nothing sends nothing, so a missing summary is itself a signal. Paths are
+  counted up to 512 per workload per minute, then the count saturates.
+* **One field name, one type.** OpenSearch fixes a field's type on first sight. The first version of the summary reused `refused` (a flag on tunnel events) as a count, and the collector dropped
+  every summary. A unit test now fails if any key has different JSON types across the event kinds.
+* Individual allowed requests are not sent; OpenShell already records them and they would drown the rest.
 * Sending never slows a decision: events go through a bounded queue to a background task; when the queue is full or the collector is down they are dropped and counted.
 * Operator actions taken with the command line (quarantine, release, clear) run in a separate process and are **not** sent; they are in the quarantine audit table.
 * The events follow OCSF 1.8's shape but are **not validated against the schema**.

@@ -37,6 +37,7 @@ It is safe to run again; it updates what it made and skips what exists. It runs 
 | **Agent activity: what the agents do** | Model calls, tool calls and Risk Guard decisions per sandbox; allowed and refused over time; where tool calls go and which routes, by method. From OpenShell's supervisor events |
 | **Egress and policy: where agents tried to go** | Destinations OpenShell denied (today: the NVIDIA telemetry endpoint, 324 times), where connections were allowed, and names agents asked for that policy has not approved (candidates for a policy decision) |
 | **Control plane: gateway and sandboxes** | Callers the gateway does not recognise (`unknown_identity`, several thousand, repeating every 5 s from sandbox addresses), times Risk Guard could not answer, operator sessions into sandboxes |
+| **Workloads: what each agent does** | Decisions per minute per workload (allowed and refused), share refused, highest score, how many different paths each touched. Built from Risk Guard's once-a-minute summaries. A workload that stops appearing has gone quiet |
 | **Model training: the synthetic data** | The generated traffic and injected attacks behind the anomaly detector. Its data sits in January 2027, so the dashboard opens on that range |
 
 They are installed by `python scripts/siem/install_content.py` along with the first dashboard. The workload names are what Risk Guard knows the agents as (for the fleet, their application IDs).

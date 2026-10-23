@@ -72,6 +72,13 @@ proposal, and a changed baseline is a new version.
 
 ## Using it with real traffic
 
+Risk Guard now sends the real equivalent: a once-a-minute **activity summary** per workload (decisions, refused, share refused, highest score, distinct paths) with the workload's identity.
+`python scripts/ml/summaries.py --export data/real` pulls them out of the SIEM and `--train data/real` fits one envelope per workload, using the same method as above. It refuses to train
+a workload with fewer than 120 active minutes and says so, instead of printing numbers that look like a result. On 2026-10-23 there were 13 summaries in total, so the real-data report
+is empty until the agents have run for a while. OpenSearch's own detector, `workload-activity-by-agent`, uses the same events with one baseline per workload (decisions, refused, paths).
+
+Older note, before the summaries existed:
+
 The same pipeline takes real events: export Risk Guard's decisions (or the SIEM's `ocsf-openshell-*` documents) in the `events.jsonl` shape, and `train.py` produces the same report with no
 synthetic caveat. The honest path to a model worth trusting is the one the repository already follows: shadow first, measure false denials on real traffic, then enforce.
 
