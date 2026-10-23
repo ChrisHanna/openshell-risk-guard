@@ -5,14 +5,20 @@
 //! file is the door: its own port, its own token (never the operator's), a small body, and no way to loosen anything.
 //!
 //! `POST /v1/signals` sends one signal, `GET /v1/signals` lists the recent ones, `GET /healthz` answers without a token.
-//! The token travels as `Authorization: Bearer <64 hex characters>`. Over plain HTTP that is a demonstration; a deployment that matters
-//! puts mTLS (a SPIFFE identity for the sender) in front of it. See docs/siem-signals.md.
+//! Two ways to prove who is sending:
+//!
+//! * **mTLS with a SPIFFE identity** (`serve_mtls`): the sender presents an X.509-SVID, the listener checks it against the SPIRE trust bundle and an allow-list of exact SPIFFE IDs,
+//!   and records the verified ID as the signal's source. No shared secret exists. This is the deployment that matters.
+//! * **A bearer token** over plain HTTP (`serve`): `Authorization: Bearer <64 hex characters>`. A demonstration and local testing; anyone who can see the traffic can replay it.
+//!
+//! See docs/siem-signals.md.
 
+use std::collections::BTreeSet;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::extract::{DefaultBodyLimit, Extension, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -22,14 +28,30 @@ use serde_json::json;
 use sha2::Sha256;
 
 use crate::error::{Result, RiskGuardError};
+use crate::spiffe::{SvidPolicy, spiffe_id_from_certificate};
 use crate::store::{SignalPolicy, SignalRequest, SqliteRiskStore};
+use tonic::transport::server::{TcpConnectInfo, TlsConnectInfo};
+
+/// What the TLS layer knows about the connection a request arrived on.
+type Peer = TlsConnectInfo<TcpConnectInfo>;
+
+#[derive(Clone)]
+enum Auth {
+    /// The HMAC of the shared token.
+    Bearer([u8; 32]),
+    /// The sender's verified SPIFFE ID must be one of these exact IDs, in an accepted trust domain.
+    Spiffe {
+        policy: Arc<SvidPolicy>,
+        allowed: Arc<BTreeSet<String>>,
+    },
+}
 
 const LABEL: &[u8] = b"risk-guard-signals-v1";
 
 #[derive(Clone)]
 pub struct SignalsState {
     store: Arc<SqliteRiskStore>,
-    digest: [u8; 32],
+    auth: Auth,
     policy: SignalPolicy,
     ocsf: Option<Arc<crate::ocsf::OcsfEmitter>>,
 }
@@ -50,7 +72,38 @@ impl SignalsState {
         }
         Ok(Self {
             store,
-            digest: digest_of(token),
+            auth: Auth::Bearer(digest_of(token)),
+            policy,
+            ocsf: None,
+        })
+    }
+
+    /// Accept only senders that prove one of `allowed` (exact SPIFFE IDs) over mutual TLS. Nothing in a header is trusted.
+    pub fn new_spiffe<I, S>(
+        store: Arc<SqliteRiskStore>,
+        trust_domains: &[String],
+        allowed: I,
+        policy: SignalPolicy,
+    ) -> Result<Self>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut ids = BTreeSet::new();
+        for id in allowed {
+            ids.insert(crate::spiffe::SpiffeId::parse(id.as_ref().trim())?.uri());
+        }
+        if ids.is_empty() {
+            return Err(RiskGuardError::InvalidArgument(
+                "name at least one SPIFFE ID that may send signals (--signals-allow-spiffe)".into(),
+            ));
+        }
+        Ok(Self {
+            store,
+            auth: Auth::Spiffe {
+                policy: Arc::new(SvidPolicy::new(trust_domains)?),
+                allowed: Arc::new(ids),
+            },
             policy,
             ocsf: None,
         })
@@ -96,21 +149,67 @@ impl SignalsState {
         ))
     }
 
-    fn authorized(&self, headers: &HeaderMap) -> bool {
-        let Some(token) = headers
-            .get(header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer "))
-        else {
-            return false;
-        };
-        if token.len() != 64 {
-            return false;
+    // The error is a ready-made HTTP response; it is returned at once, never stored, so its size does not matter.
+    #[allow(clippy::result_large_err)]
+    /// Who is sending: `Ok(Some(spiffe id))` for a verified SPIFFE sender, `Ok(None)` for a valid bearer token, an error response otherwise.
+    fn authorize(
+        &self,
+        headers: &HeaderMap,
+        peer: Option<&Peer>,
+    ) -> std::result::Result<Option<String>, Response> {
+        match &self.auth {
+            Auth::Bearer(digest) => {
+                let valid = headers
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.strip_prefix("Bearer "))
+                    .is_some_and(|token| {
+                        if token.len() != 64 {
+                            return false;
+                        }
+                        let mut mac = Hmac::<Sha256>::new_from_slice(token.as_bytes())
+                            .expect("HMAC accepts this key length");
+                        mac.update(LABEL);
+                        mac.verify_slice(digest).is_ok()
+                    });
+                if valid {
+                    Ok(None)
+                } else {
+                    tracing::warn!("signal refused: missing or wrong token");
+                    Err(reply(
+                        StatusCode::UNAUTHORIZED,
+                        json!({"error": "a valid signals token is required"}),
+                    ))
+                }
+            }
+            Auth::Spiffe { policy, allowed } => {
+                let id = peer
+                    .and_then(|peer| peer.peer_certs())
+                    .and_then(|certs| {
+                        certs
+                            .first()
+                            .map(|leaf| spiffe_id_from_certificate(leaf.as_ref()))
+                    })
+                    .transpose()
+                    .ok()
+                    .flatten();
+                let Some(id) = id else {
+                    tracing::warn!("signal refused: no verified SPIFFE identity");
+                    return Err(reply(
+                        StatusCode::UNAUTHORIZED,
+                        json!({"error": "a client certificate (X.509-SVID) is required"}),
+                    ));
+                };
+                if policy.authorize(&id).is_err() || !allowed.contains(&id.uri()) {
+                    tracing::warn!(sender = %id.uri(), "signal refused: this identity may not send signals");
+                    return Err(reply(
+                        StatusCode::FORBIDDEN,
+                        json!({"error": "this identity may not send signals"}),
+                    ));
+                }
+                Ok(Some(id.uri()))
+            }
         }
-        let mut mac =
-            Hmac::<Sha256>::new_from_slice(token.as_bytes()).expect("HMAC accepts this key length");
-        mac.update(LABEL);
-        mac.verify_slice(&self.digest).is_ok()
     }
 }
 
@@ -125,15 +224,13 @@ fn reply(status: StatusCode, body: serde_json::Value) -> Response {
 async fn post_signal(
     State(state): State<SignalsState>,
     headers: HeaderMap,
+    peer: Option<Extension<Peer>>,
     body: axum::body::Bytes,
 ) -> Response {
-    if !state.authorized(&headers) {
-        tracing::warn!("signal refused: missing or wrong token");
-        return reply(
-            StatusCode::UNAUTHORIZED,
-            json!({"error": "a valid signals token is required"}),
-        );
-    }
+    let sender = match state.authorize(&headers, peer.as_ref().map(|Extension(peer)| peer)) {
+        Ok(sender) => sender,
+        Err(response) => return response,
+    };
     let request: SignalRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
         Err(error) => {
@@ -144,6 +241,11 @@ async fn post_signal(
             );
         }
     };
+    // Over mTLS the source is who the certificate says, not what the body claims: a sender cannot sign as someone else.
+    let mut request = request;
+    if let Some(sender) = sender {
+        request.source = sender;
+    }
     let store = Arc::clone(&state.store);
     let policy = state.policy.clone();
     let for_event = request.clone();
@@ -200,13 +302,11 @@ struct ListParams {
 async fn list_signals(
     State(state): State<SignalsState>,
     headers: HeaderMap,
+    peer: Option<Extension<Peer>>,
     Query(params): Query<ListParams>,
 ) -> Response {
-    if !state.authorized(&headers) {
-        return reply(
-            StatusCode::UNAUTHORIZED,
-            json!({"error": "a valid signals token is required"}),
-        );
+    if let Err(response) = state.authorize(&headers, peer.as_ref().map(|Extension(peer)| peer)) {
+        return response;
     }
     let store = Arc::clone(&state.store);
     let limit = params.limit.unwrap_or(50);
@@ -241,4 +341,75 @@ pub async fn serve(listen: SocketAddr, state: SignalsState, allow_plaintext: boo
     axum::serve(listener, router(state))
         .await
         .map_err(|error| RiskGuardError::Internal(format!("signals listener stopped: {error}")))
+}
+
+/// Serve over mutual TLS until `shutdown` resolves. The server certificate is Risk Guard's own; the sender must present an X.509-SVID that chains to `bundle` (SPIRE's trust bundle,
+/// re-read every 30 s because SPIRE rotates its signing keys, with the listener restarted on a change) and whose SPIFFE ID the state allows.
+pub async fn serve_mtls<F>(
+    listen: SocketAddr,
+    state: SignalsState,
+    server_cert_pem: Vec<u8>,
+    server_key_pem: Vec<u8>,
+    bundle: PathBuf,
+    shutdown: impl Fn() -> F,
+) -> Result<()>
+where
+    F: std::future::Future<Output = ()>,
+{
+    const BUNDLE_POLL: std::time::Duration = std::time::Duration::from_secs(30);
+    loop {
+        let pem = loop {
+            match std::fs::read(&bundle) {
+                Ok(pem) if !pem.trim_ascii().is_empty() => break pem,
+                _ => {
+                    tracing::warn!(bundle = %bundle.display(), "signals: waiting for the SPIFFE trust bundle");
+                    tokio::select! {
+                        () = tokio::time::sleep(std::time::Duration::from_secs(15)) => {}
+                        () = shutdown() => return Ok(()),
+                    }
+                }
+            }
+        };
+        let tls = tonic::transport::ServerTlsConfig::new()
+            .identity(tonic::transport::Identity::from_pem(
+                &server_cert_pem,
+                &server_key_pem,
+            ))
+            .client_ca_root(tonic::transport::Certificate::from_pem(&pem))
+            .client_auth_optional(false);
+        let watched = bundle.clone();
+        let current = pem.clone();
+        let changed = async move {
+            loop {
+                tokio::time::sleep(BUNDLE_POLL).await;
+                if std::fs::read(&watched).ok().as_deref() != Some(current.as_slice()) {
+                    return;
+                }
+            }
+        };
+        let stopped_for_good = std::sync::atomic::AtomicBool::new(false);
+        let wait = async {
+            tokio::select! {
+                () = changed => tracing::info!("signals: the trust bundle changed; reloading the listener"),
+                () = shutdown() => stopped_for_good.store(true, std::sync::atomic::Ordering::SeqCst),
+            }
+        };
+        tracing::info!(%listen, dry_run = state.policy.dry_run, "signals listener started (mutual TLS, SPIFFE identity)");
+        let routes = tonic::service::Routes::from(router(state.clone()));
+        tonic::transport::Server::builder()
+            .accept_http1(true)
+            .tls_config(tls)
+            .map_err(|error| {
+                RiskGuardError::InvalidArgument(format!("invalid signals TLS: {error}"))
+            })?
+            .add_routes(routes)
+            .serve_with_shutdown(listen, wait)
+            .await
+            .map_err(|error| {
+                RiskGuardError::Internal(format!("signals listener error: {error}"))
+            })?;
+        if stopped_for_good.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(());
+        }
+    }
 }

@@ -87,7 +87,7 @@ fn plain(value: &str, name: &str, max: usize) -> Result<()> {
 
 fn validate(request: &SignalRequest, policy: &SignalPolicy) -> Result<()> {
     plain(&request.signal_id, "signal_id", 128)?;
-    plain(&request.source, "source", 64)?;
+    plain(&request.source, "source", 160)?;
     if let Some(alert) = &request.alert_id {
         plain(alert, "alert_id", 128)?;
     }

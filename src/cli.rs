@@ -188,6 +188,20 @@ pub enum Commands {
             env = "RISK_GUARD_SIGNALS_ALLOW_PLAINTEXT"
         )]
         signals_allow_plaintext: bool,
+        /// Serve the signals listener over mutual TLS and accept only this exact SPIFFE ID (repeatable). No token is used. Needs --tls-cert, --tls-key and a trust bundle
+        /// (--signals-client-bundle, or --svid-bundle) and --svid-trust-domain.
+        #[arg(
+            long = "signals-allow-spiffe",
+            env = "RISK_GUARD_SIGNALS_ALLOW_SPIFFE",
+            value_delimiter = ','
+        )]
+        signals_allow_spiffe: Vec<String>,
+        /// The SPIRE trust bundle that client certificates must chain to (default: --svid-bundle).
+        #[arg(
+            long = "signals-client-bundle",
+            env = "RISK_GUARD_SIGNALS_CLIENT_BUNDLE"
+        )]
+        signals_client_bundle: Option<PathBuf>,
         /// Base URL of an OpenTelemetry Collector's OTLP/HTTP receiver (e.g. http://otel-collector.siem:4318). When given, Risk Guard sends its refusals,
         /// tunnel refusals and signals there as OCSF events carrying the workload, run, task, score and reason.
         #[arg(long = "ocsf-otlp-endpoint", env = "RISK_GUARD_OCSF_OTLP_ENDPOINT")]
@@ -434,6 +448,25 @@ pub enum Commands {
         agent_id: String,
         #[arg(long)]
         display_name: String,
+    },
+    /// The SIEM's side of the signals path: takes the alert webhook and forwards a quarantine signal to Risk Guard over mutual TLS with its own SVID.
+    /// The webhook token comes from the RISK_GUARD_FORWARDER_TOKEN environment variable.
+    SignalForwarder {
+        #[arg(long, default_value = "0.0.0.0:8088")]
+        listen: SocketAddr,
+        #[arg(
+            long,
+            default_value = "https://risk-guard.openshell.svc:50063/v1/signals"
+        )]
+        target: String,
+        /// The SVID certificate chain and key that spiffe-helper keeps current.
+        #[arg(long, default_value = "/certs/svid.pem")]
+        svid: PathBuf,
+        #[arg(long, default_value = "/certs/svid_key.pem")]
+        svid_key: PathBuf,
+        /// The CA that signed Risk Guard's server certificate.
+        #[arg(long)]
+        server_ca: PathBuf,
     },
     /// Create a run pinned to an agent revision, approved baseline and scoring context.
     RunCreate {
@@ -746,6 +779,8 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             signals_max_per_minute,
             signals_max_active,
             signals_allow_plaintext,
+            signals_allow_spiffe,
+            signals_client_bundle,
             ocsf_otlp_endpoint,
             ocsf_trust_domain,
         } => {
@@ -837,40 +872,94 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                     Arc::clone(&store),
                 )
             });
-            match (signals_listen, signals_token_file.as_deref()) {
-                (Some(signals_addr), token_file) => {
-                    let policy = crate::store::SignalPolicy {
-                        dry_run: signals_dry_run,
-                        max_per_minute: signals_max_per_minute,
-                        max_active: signals_max_active,
-                        ..Default::default()
-                    };
-                    let state = match token_file {
-                        Some(file) => crate::signals::SignalsState::from_token_file(
-                            Arc::clone(&store),
-                            file,
-                            policy,
-                        )?,
-                        None => crate::signals::SignalsState::from_env(Arc::clone(&store), policy)?,
-                    };
-                    let state = match &ocsf {
-                        Some(emitter) => state.with_ocsf(Arc::clone(emitter)),
-                        None => state,
-                    };
-                    tokio::spawn(async move {
-                        if let Err(error) =
-                            crate::signals::serve(signals_addr, state, signals_allow_plaintext)
-                                .await
-                        {
-                            tracing::error!(%error, "the signals listener stopped");
-                        }
-                    });
-                }
-                (None, None) => {}
-                (None, Some(_)) => {
+            if let (Some(signals_addr), false) = (signals_listen, signals_allow_spiffe.is_empty()) {
+                // Mutual TLS: the sender is the SPIFFE ID in its certificate. No shared secret.
+                let (Some(cert), Some(key)) = (tls_cert.as_deref(), tls_key.as_deref()) else {
                     return Err(RiskGuardError::InvalidArgument(
-                        "--signals-token-file has no effect without --signals-listen".into(),
+                        "--signals-allow-spiffe needs --tls-cert and --tls-key (the server identity)".into(),
                     ));
+                };
+                let Some(bundle) = signals_client_bundle
+                    .clone()
+                    .or_else(|| svid_bundle.clone())
+                else {
+                    return Err(RiskGuardError::InvalidArgument(
+                        "--signals-allow-spiffe needs a trust bundle (--signals-client-bundle or --svid-bundle)".into(),
+                    ));
+                };
+                let policy = crate::store::SignalPolicy {
+                    dry_run: signals_dry_run,
+                    max_per_minute: signals_max_per_minute,
+                    max_active: signals_max_active,
+                    ..Default::default()
+                };
+                let mut state = crate::signals::SignalsState::new_spiffe(
+                    Arc::clone(&store),
+                    &svid_trust_domains,
+                    &signals_allow_spiffe,
+                    policy,
+                )?;
+                if let Some(emitter) = &ocsf {
+                    state = state.with_ocsf(Arc::clone(emitter));
+                }
+                let (cert, key) = (
+                    std::fs::read(cert)
+                        .map_err(|e| RiskGuardError::InvalidArgument(format!("--tls-cert: {e}")))?,
+                    std::fs::read(key)
+                        .map_err(|e| RiskGuardError::InvalidArgument(format!("--tls-key: {e}")))?,
+                );
+                tokio::spawn(async move {
+                    if let Err(error) = crate::signals::serve_mtls(
+                        signals_addr,
+                        state,
+                        cert,
+                        key,
+                        bundle,
+                        shutdown_signal,
+                    )
+                    .await
+                    {
+                        tracing::error!(%error, "the signals listener stopped");
+                    }
+                });
+            } else {
+                match (signals_listen, signals_token_file.as_deref()) {
+                    (Some(signals_addr), token_file) => {
+                        let policy = crate::store::SignalPolicy {
+                            dry_run: signals_dry_run,
+                            max_per_minute: signals_max_per_minute,
+                            max_active: signals_max_active,
+                            ..Default::default()
+                        };
+                        let state = match token_file {
+                            Some(file) => crate::signals::SignalsState::from_token_file(
+                                Arc::clone(&store),
+                                file,
+                                policy,
+                            )?,
+                            None => {
+                                crate::signals::SignalsState::from_env(Arc::clone(&store), policy)?
+                            }
+                        };
+                        let state = match &ocsf {
+                            Some(emitter) => state.with_ocsf(Arc::clone(emitter)),
+                            None => state,
+                        };
+                        tokio::spawn(async move {
+                            if let Err(error) =
+                                crate::signals::serve(signals_addr, state, signals_allow_plaintext)
+                                    .await
+                            {
+                                tracing::error!(%error, "the signals listener stopped");
+                            }
+                        });
+                    }
+                    (None, None) => {}
+                    (None, Some(_)) => {
+                        return Err(RiskGuardError::InvalidArgument(
+                            "--signals-token-file has no effect without --signals-listen".into(),
+                        ));
+                    }
                 }
             }
 
@@ -1513,6 +1602,30 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                 now_unix_ms(),
             )?;
             Ok(serde_json::json!({"agent_id": agent_id, "status": "quarantined"}).to_string())
+        }
+
+        Commands::SignalForwarder {
+            listen,
+            target,
+            svid,
+            svid_key,
+            server_ca,
+        } => {
+            let token = std::env::var("RISK_GUARD_FORWARDER_TOKEN").map_err(|_| {
+                RiskGuardError::InvalidArgument("set RISK_GUARD_FORWARDER_TOKEN".into())
+            })?;
+            crate::signal_forwarder::serve(
+                listen,
+                crate::signal_forwarder::ForwarderConfig {
+                    target,
+                    svid_cert: svid,
+                    svid_key,
+                    server_ca,
+                },
+                token.trim(),
+            )
+            .await?;
+            Ok(serde_json::json!({"status": "stopped"}).to_string())
         }
 
         Commands::TwoPersonEnable { db } => {
