@@ -22,6 +22,24 @@ synthetic episodes, and the local demo uses scripted traffic, so tune thresholds
 from your own captures before enforcing broadly. Details are in
 [Evidence and limits](#evidence-and-limits).
 
+## The story in one picture
+
+Three open systems form one loop. **OpenShell** (NVIDIA) *permits*: it sandboxes each agent and decides what it may reach.
+**Risk Guard** (this project) *judges*: it can only narrow what OpenShell allows, for this agent, right now. **OpenSearch** (the SIEM)
+*remembers and reacts*: it holds the evidence from both, finds the unusual, and can ask Risk Guard to tighten, over an authenticated
+door that only tightens. Red-team tests and promotion gates keep the whole thing honest.
+
+```
+agent -> OpenShell policy (permit) -> Risk Guard (judge) -> target
+              |                            |
+              +----- events (OCSF) --------+--> OpenSearch (remember: dashboards, anomaly detection)
+                                                     |
+        Risk Guard <---- mTLS, tighten only ---- signal forwarder <---- alert (react)
+```
+
+Start with [the story](docs/the-story.md) (the loop, why each piece exists, and a map of the repository), then
+[how it works](docs/how-it-works.md) for the detail.
+
 ## See it work
 
 The operator console, captured from a live run against a real OpenShell gateway and sandbox
@@ -197,6 +215,7 @@ cargo run -- hardening-report \
 
 | Read | For |
 |---|---|
+| [The story](docs/the-story.md) | How OpenShell, Risk Guard and OpenSearch fit together, why each is there, and where things live in the repository |
 | [How it works](docs/how-it-works.md) | The whole system on one page: decision path, state, identity, SIEM events and dashboards, signals back from the SIEM, two-person approval, promotion gate, red-team tests, deployment, and current limits |
 | [Getting started](docs/getting-started.md) | Four ways to run it, from ten minutes with sample data to a live Azure deployment; prerequisites and troubleshooting |
 | [Operating Risk Guard](docs/operations.md) | TLS and secrets, bootstrap order, protecting a new API, recovering from a false positive, metrics, rollout |

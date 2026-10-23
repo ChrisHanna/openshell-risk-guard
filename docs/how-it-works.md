@@ -1,5 +1,7 @@
 # How it works, end to end
 
+This is the technical detail behind [the story](the-story.md), which explains why the parts exist and where they live in the repository.
+
 One page that ties the parts together. Each section names the page with the detail. What is measured and what is only designed is stated in each place; the limits are collected at the end.
 
 ## 1. The decision path

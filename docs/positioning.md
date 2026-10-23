@@ -10,6 +10,8 @@ claims and have not been verified by this project.
 
 ## What this project is
 
+For how OpenShell, Risk Guard and the OpenSearch SIEM work together as one loop, see [the story](the-story.md).
+
 Risk Guard was built to learn how to integrate with OpenShell: its extension points (`SupervisorMiddleware` and `GatewayInterceptor`),
 its identity and policy model, and what a request-level behavioral layer can add on top of them. It is a **reference integration and
 research prototype**. It is not a threat-protection product, its detection numbers come from synthetic fixtures, and it has had no
