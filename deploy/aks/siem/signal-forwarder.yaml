@@ -3,6 +3,11 @@
 #
 # SPIRE gives a pod labelled app.kubernetes.io/name=signal-forwarder the identity spiffe://<trust domain>/ns/siem/sa/signal-forwarder. Risk Guard accepts exactly that ID on its
 # signals port and nothing else; there is no shared secret on Risk Guard's side. The hop from OpenSearch to this pod (a token and a network policy) stays inside the SIEM namespace.
+#
+# The pod also runs the feature publisher (second app container, `feature-publisher`): every 30 s it reads OpenSearch with a read-only account and posts risk features to Risk Guard's
+# /features with the same SVID, so Risk Guard needs to allow no new identity. The account is made by scripts/siem/install_publisher_user.py, which creates the Secret
+# `opensearch-feature-publisher` (mounted below; optional, so this pod still starts without it and the publisher just logs that it has no credentials).
+# See docs/siem-features-publisher.md.
 apiVersion: spire.spiffe.io/v1alpha1
 kind: ClusterSPIFFEID
 metadata:
@@ -77,6 +82,28 @@ spec:
           volumeMounts:
             - {name: certs, mountPath: /certs, readOnly: true}
             - {name: ca, mountPath: /etc/risk-guard-ca, readOnly: true}
+        - name: feature-publisher
+          image: __IMAGE__
+          args:
+            - feature-publisher
+            - --target=https://risk-guard.openshell.svc:50063/features
+            - --svid=/certs/svid.pem
+            - --svid-key=/certs/svid_key.pem
+            - --server-ca=/etc/risk-guard-ca/ca.crt
+            - --opensearch-url=https://opensearch-cluster-master.siem.svc:9200
+            # demo only: OpenSearch's certificate is self-signed (the collector skips verification too); the hop stays inside the siem namespace and is fenced below.
+            - --opensearch-insecure
+            - --opensearch-user-file=/etc/opensearch-publisher/username
+            - --opensearch-password-file=/etc/opensearch-publisher/password
+            # Sandboxes' SPIFFE IDs are spiffe://<trust domain>/openshell/sandbox/<id>; the trust domain is the one this pod's own SVID is issued in.
+            - --trust-domain-from-svid
+            - --interval=30
+          resources: {requests: {cpu: 25m, memory: 32Mi}, limits: {memory: 128Mi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: certs, mountPath: /certs, readOnly: true}
+            - {name: ca, mountPath: /etc/risk-guard-ca, readOnly: true}
+            - {name: opensearch-publisher, mountPath: /etc/opensearch-publisher, readOnly: true}
       volumes:
         - name: spiffe-workload-api
           csi: {driver: csi.spiffe.io, readOnly: true}
@@ -86,6 +113,8 @@ spec:
           emptyDir: {}
         - name: ca
           configMap: {name: risk-guard-ca}
+        - name: opensearch-publisher
+          secret: {secretName: opensearch-feature-publisher, optional: true}
 ---
 apiVersion: v1
 kind: Service
@@ -105,7 +134,7 @@ spec:
     - from: [{podSelector: {matchLabels: {app.kubernetes.io/name: opensearch}}}]
       ports: [{protocol: TCP, port: 8088}]
 ---
-# The forwarder may reach Risk Guard's signals port (and, via the allow-dns policy, DNS) and nothing else.
+# The forwarder pod may reach Risk Guard's signals port and OpenSearch's API (the feature publisher reads it) and, via the allow-dns policy, DNS, and nothing else.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: {name: forwarder-egress, namespace: siem}
@@ -117,6 +146,19 @@ spec:
         - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: openshell}}
           podSelector: {matchLabels: {app.kubernetes.io/name: risk-guard}}
       ports: [{protocol: TCP, port: 50063}]
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: opensearch}}}]
+      ports: [{protocol: TCP, port: 9200}]
+---
+# OpenSearch takes connections from the forwarder pod's feature publisher too (opensearch-ingress in namespace-and-policies.yaml lists the collector and the dashboards; policies add up).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: opensearch-from-publisher, namespace: siem}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: opensearch}}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app.kubernetes.io/name: signal-forwarder}}}]
+      ports: [{protocol: TCP, port: 9200}]
 ---
 # OpenSearch's webhook goes to the forwarder, not to Risk Guard.
 apiVersion: networking.k8s.io/v1

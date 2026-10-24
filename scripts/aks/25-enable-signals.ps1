@@ -41,7 +41,7 @@ if ($hardened) { $deployArgs['Hardened'] = $true }
 if ($Remove) {
     Write-Step 'Turning signals off'
     Save-State @{ signalsEnabled = $false; signalsDryRun = $false; ocsfExport = $false; signalsMtls = $false }
-    Invoke-Native kubectl @('delete', 'deploy/signal-forwarder', 'svc/signal-forwarder', 'sa/signal-forwarder', 'configmap/signal-forwarder-helper', 'configmap/risk-guard-ca', 'secret/signal-forwarder-token', 'networkpolicy/forwarder-ingress', 'networkpolicy/forwarder-egress', 'networkpolicy/opensearch-to-forwarder', '-n', 'siem', '--ignore-not-found') -AllowFailure | Out-Null
+    Invoke-Native kubectl @('delete', 'deploy/signal-forwarder', 'svc/signal-forwarder', 'sa/signal-forwarder', 'configmap/signal-forwarder-helper', 'configmap/risk-guard-ca', 'secret/signal-forwarder-token', 'networkpolicy/forwarder-ingress', 'networkpolicy/forwarder-egress', 'networkpolicy/opensearch-to-forwarder', 'networkpolicy/opensearch-from-publisher', '-n', 'siem', '--ignore-not-found') -AllowFailure | Out-Null
     Invoke-Native kubectl @('delete', 'clusterspiffeid', 'risk-guard-signal-forwarder', '--ignore-not-found') -AllowFailure | Out-Null
     Invoke-Native kubectl @('delete', 'networkpolicy', 'risk-guard-signals-fence', '-n', $ns, '--ignore-not-found') -AllowFailure | Out-Null
     Invoke-Native kubectl @('delete', 'networkpolicy', 'opensearch-to-risk-guard-signals', '-n', 'siem', '--ignore-not-found') -AllowFailure | Out-Null

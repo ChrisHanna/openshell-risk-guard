@@ -87,7 +87,7 @@ fn authorized(headers: &HeaderMap, digest: &[u8; 32]) -> bool {
 }
 
 /// A client that presents the current SVID. Built per request so a rotated certificate is used at once.
-fn mtls_client(config: &ForwarderConfig) -> Result<reqwest::Client> {
+pub(crate) fn mtls_client(config: &ForwarderConfig) -> Result<reqwest::Client> {
     let read = |path: &PathBuf, what: &str| {
         std::fs::read(path).map_err(|error| {
             RiskGuardError::Internal(format!(
