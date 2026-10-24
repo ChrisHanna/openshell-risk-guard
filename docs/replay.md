@@ -42,7 +42,8 @@ A bundle is marked incomplete, and replay refuses it unless you pass `--allow-in
 
 * an epoch's decisions do not run 1, 2, 3… with no gaps (retention pruning or loss means the starting state is unknown);
 * decisions in those epochs were made without an agent run (they are not part of any context);
-* a decision was scored by an enforced adaptive model (the model is not in the bundle).
+* a decision was scored by an enforced adaptive model (the model is not in the bundle);
+* a decision was scored under baseline maturity that an operator credited from an adaptive model (the credit is not in the bundle; such decisions carry a `maturity_credit` signal).
 
 A bundle whose content hash does not match, whose baseline does not match its hash, or of an unknown format version is always refused.
 A different detector configuration is replayed but reported (`configuration_matches: false`), since the differences may come from it.

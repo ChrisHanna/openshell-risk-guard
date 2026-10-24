@@ -180,7 +180,22 @@ Before maturity:
 `src/adaptive.rs` implements empirical category frequencies and temporal envelopes;
 `src/store/adaptive.rs` owns curated native windows, immutable dataset membership,
 model versions, shadow evaluation and explicitly approved model heads. This layer
-does not change imported baseline maturity counts or synthesize permissions.
+does not synthesize permissions, and it does not change imported baseline maturity
+counts on its own: an operator can **explicitly credit** an enforced model's observed
+training counts to a workload's maturity (see
+[adaptive-v2.md](adaptive-v2.md), "Honest maturity"); nothing credits automatically.
+
+**Version 2** (`network-metadata-empirical-v2`) adds, on top of the same collection and
+review rules: shrinkage toward a pooled prior from other workloads of the same task
+profile (cold start), deterministic recent-activity features (burst peak, gap regularity,
+route entropy, write share, a never-seen method, never-seen resources in the last hour),
+optional bounded SIEM context, and a promotion gate that blocks a candidate that would
+block more benign holdout traffic, or catch fewer injected probes, than the model it
+replaces. Models fitted under v1 keep scoring as before. On scripted traffic it caught
+82% of injected attack episodes at the shadow-alert line against 29% for v1, with no false
+would-blocks; that is a regression check on named shapes by the same author, not
+accuracy against an unseen attacker. Method, numbers, what did not help and the limits
+are in [adaptive-v2.md](adaptive-v2.md).
 
 The supervisor RPC assigns transport provenance only after its authentication
 step. Explicit insecure local-test calls are isolated from verified supervisor
