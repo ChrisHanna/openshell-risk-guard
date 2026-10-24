@@ -540,6 +540,21 @@ pub enum Commands {
         #[arg(long)]
         profile: PathBuf,
     },
+    /// Write a task profile's approved routes and deny list into a copy of a sandbox policy as OpenShell rules, and check the result is no wider. Applies nothing.
+    PolicyExport {
+        /// The task profile's baseline JSON.
+        #[arg(long)]
+        baseline: PathBuf,
+        /// The sandbox policy YAML to start from. Its risk-guard middleware says which hosts the profile covers.
+        #[arg(long)]
+        policy: PathBuf,
+        /// `audit` logs violations and allows the request (default); `enforce` blocks.
+        #[arg(long, default_value = "audit")]
+        enforcement: String,
+        /// Write the policy here (otherwise it is printed after the summary).
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Create or activate a sandbox epoch in the risk store.
     EpochCreate {
         #[arg(long)]
@@ -1274,6 +1289,38 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                 crate::adaptive_controls::AdaptiveUpdateResult::Conflict(message) => {
                     Err(RiskGuardError::Policy(message))
                 }
+            }
+        }
+        Commands::PolicyExport {
+            baseline,
+            policy,
+            enforcement,
+            out,
+        } => {
+            let baseline = load_baseline_profile(&baseline)?;
+            let base = std::fs::read_to_string(&policy).map_err(|err| {
+                RiskGuardError::InvalidArgument(format!(
+                    "failed to read policy '{}': {err}",
+                    policy.display()
+                ))
+            })?;
+            let export = crate::policy_export::export_policy(&baseline, &base, &enforcement)?;
+            match out {
+                Some(path) => {
+                    std::fs::write(&path, &export.yaml).map_err(|err| {
+                        RiskGuardError::InvalidArgument(format!(
+                            "failed to write '{}': {err}",
+                            path.display()
+                        ))
+                    })?;
+                    Ok(export.summary.to_string())
+                }
+                None => Ok(format!(
+                    "{}
+---
+{}",
+                    export.summary, export.yaml
+                )),
             }
         }
         Commands::BaselineImport { db, profile } => {

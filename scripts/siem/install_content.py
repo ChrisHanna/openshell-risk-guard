@@ -493,6 +493,7 @@ def build_agent_dashboards():
 
 # --- Start here: the three systems side by side -----------------------------------------------------------------------------------------------------------------
 OS_L7_DENIED = 'firewall_rule.type:"l7" and action:"Denied"'
+OS_AUDIT = 'message:"L7_REQUEST audit"'          # a policy endpoint in audit mode: logged as a violation, and let through
 OS_ANY_DENIED = '(class_name:"Network Activity" and action:"Denied") or (firewall_rule.type:"l7" and action:"Denied")'
 
 
@@ -513,6 +514,9 @@ def build_layers_objects():
         intro, lane_os, lane_rg, lane_sx,
         visualization("h3-os-net", "Connections OpenShell denied", "metric", [COUNT], METRIC_PARAMS, NET_DENIED),
         visualization("h3-os-l7", "Requests OpenShell's L7 policy denied", "metric", [COUNT], METRIC_PARAMS, OS_L7_DENIED),
+        visualization("h3-os-audit", "Requests OpenShell would block (audit mode)", "metric", [COUNT], METRIC_PARAMS, OS_AUDIT),
+        saved_search("h3-search-audit", "What OpenShell would block (audit mode)", "Requests a policy endpoint in audit mode logged as a violation and let through: what enforcing would start refusing.", OS_AUDIT,
+                     columns=("container.name", "http_request.http_method", "http_request.url.path", "message")),
         visualization("h3-rg-refused", "Calls Risk Guard refused", "metric", [COUNT], METRIC_PARAMS, RG_MIDDLEWARE),
         visualization("h3-rg-tunnel", "Tunnels Risk Guard flagged (refused or would refuse)", "metric", [COUNT], METRIC_PARAMS, RG_TUNNEL),
         visualization("h3-sx-events", "Events stored", "metric", [COUNT], METRIC_PARAMS),
@@ -529,8 +533,9 @@ def build_layers_objects():
                       "The three systems side by side, left to right: what OpenShell denied, what Risk Guard refused, and what OpenSearch holds. Start here, then follow the links.", [
         ("h3-intro", "visualization", 0, 0, 48, 6),
         ("h3-lane-os", "visualization", 0, 6, 16, 5), ("h3-lane-rg", "visualization", 16, 6, 16, 5), ("h3-lane-sx", "visualization", 32, 6, 16, 5),
-        ("h3-os-net", "visualization", 0, 11, 16, 6), ("h3-rg-refused", "visualization", 16, 11, 16, 6), ("h3-sx-events", "visualization", 32, 11, 16, 6),
-        ("h3-os-l7", "visualization", 0, 17, 16, 6), ("h3-rg-tunnel", "visualization", 16, 17, 16, 6), ("h3-sx-signals", "visualization", 32, 17, 16, 6),
+        ("h3-os-net", "visualization", 0, 11, 16, 4), ("h3-os-l7", "visualization", 0, 15, 16, 4), ("h3-os-audit", "visualization", 0, 19, 16, 4),
+        ("h3-rg-refused", "visualization", 16, 11, 16, 6), ("h3-rg-tunnel", "visualization", 16, 17, 16, 6),
+        ("h3-sx-events", "visualization", 32, 11, 16, 6), ("h3-sx-signals", "visualization", 32, 17, 16, 6),
         ("oa-denied-dest", "visualization", 0, 23, 16, 13), ("h3-rg-reasons", "visualization", 16, 23, 16, 13), ("h3-sx-sources", "visualization", 32, 23, 16, 13),
         ("h3-who", "visualization", 0, 36, 48, 14),
         ("oa-search-both", "search", 0, 50, 48, 13)], time_from="now-24h")

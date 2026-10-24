@@ -5,7 +5,19 @@ SPDX-License-Identifier: Apache-2.0
 
 # Plan: move the static route lists into OpenShell policy
 
-**Status: a plan for after the Monday demo. Nothing here is built.** It answers one question: should the deny list and the approved-route list live in OpenShell's policy instead of in Risk Guard's baselines, generated from Risk Guard's recommendations?
+**Status (phases 0 and 1 are built; nothing is enforced and no live sandbox was changed).**
+
+| Built | What it is |
+|---|---|
+| `openshell-risk-guard policy-export --baseline B --policy P [--enforcement audit\|enforce] [--out F]` | Writes the baseline's approved routes and deny list into a copy of the sandbox policy as OpenShell rules, and has OpenShell's prover check the result is no wider. Applies nothing. The proof is run on the `enforce` form of the rules, because the prover cannot certify a mode that only logs. |
+| `tests/policy_export.rs` | For the four agent profiles: the proof holds, every routine call the catalog expects to be allowed still is (no false blocks), and nothing destructive the catalog expects to be refused is allowed. Result: 13 attacks are refused by the generated policy alone; 5 path-evasion variants are left to OpenShell's own normalization; 2 rate attacks only behavior can catch. |
+| `scripts/policy/audit_probe.py` | Creates one throwaway sandbox with a generated policy in audit mode on the cluster, makes an allowed and a violating call, and prints what OpenShell recorded. Verified: OpenShell logs `L7_REQUEST audit ... not permitted by policy` and lets the request through; Risk Guard then refused the same call. |
+| `scripts/policy/agreement.py` | Compares OpenShell's would-block events with Risk Guard's refusals, per sandbox, method and path. Exit status 1 if OpenShell would block something Risk Guard did not. This is the gate before enforcing. |
+| A dashboard panel | "Requests OpenShell would block (audit mode)" on the Start here dashboard. |
+
+**Not done:** rolling a generated policy out to the live agents (the fleet bakes its policies into its image, so it needs a fleet rebuild), enforcing, retiring Risk Guard's copy, the Approvals proposal type, and the SIEM hint. Left until after Monday on purpose: enforcing would change the demo, where Risk Guard refuses the `DELETE`.
+
+The original plan follows. It answers one question: should the deny list and the approved-route list live in OpenShell's policy instead of in Risk Guard's baselines, generated from Risk Guard's recommendations?
 
 Short answer: yes for those two lists, but it is not free, and one side effect needs a decision first (see "The catch").
 

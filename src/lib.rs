@@ -25,6 +25,7 @@ pub mod ocsf;
 mod operator_controls;
 pub mod operator_dashboard;
 pub mod pod_resolver;
+pub mod policy_export;
 pub mod replay;
 pub mod sidecar;
 pub mod signal_forwarder;
