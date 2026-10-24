@@ -38,11 +38,18 @@ def kubectl(*args, timeout=60):
 
 
 def state():
-    try:
-        with open(os.path.join(ROOT, ".aks", "state.json"), encoding="utf-8-sig") as handle:
-            return json.load(handle)
-    except (OSError, ValueError):
-        return {}
+    """The deployment's saved state (gitignored). From a git worktree it lives in the main checkout, so look there too."""
+    candidates = [os.path.join(ROOT, ".aks", "state.json")]
+    common = subprocess.run(["git", "-C", ROOT, "rev-parse", "--git-common-dir"], capture_output=True, text=True).stdout.strip()
+    if common:
+        candidates.append(os.path.join(os.path.dirname(os.path.abspath(os.path.join(ROOT, common))), ".aks", "state.json"))
+    for path in candidates:
+        try:
+            with open(path, encoding="utf-8-sig") as handle:
+                return json.load(handle)
+        except (OSError, ValueError):
+            continue
+    return {}
 
 
 def fetch(url, timeout=25):
@@ -75,7 +82,11 @@ def pods():
     if tag == head:
         record("ok", f"Risk Guard is running the current commit ({tag})")
     else:
-        record("warn", f"Risk Guard runs {tag}; the repository is at {head}", "Fine if the difference is docs only. Otherwise rebuild and deploy (02 -LocalDocker, then 04).")
+        changed = subprocess.run(["git", "-C", ROOT, "diff", "--name-only", f"{tag}..{head}", "--", "src", "Cargo.toml", "Cargo.lock", "migrations"], capture_output=True, text=True).stdout.split()
+        if changed:
+            record("warn", f"Risk Guard runs {tag}; {len(changed)} source file(s) changed since ({head})", "Rebuild and deploy (02 -LocalDocker, then 04), then run scripts/demo/smoke.py.")
+        else:
+            record("ok", f"Risk Guard runs {tag}; the repository is at {head} but no source changed since")
     return True
 
 

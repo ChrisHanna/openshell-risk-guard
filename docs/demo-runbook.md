@@ -12,10 +12,12 @@ For presenting. It wraps the 90-second scripted core in [partner demo](partner-d
 ## Before (Saturday or Sunday, then Monday morning)
 
 ```bash
-python scripts/demo/preflight.py          # everything the demo needs, ok / warn / FAIL, with the fix
-python scripts/demo/run_demo.py --prepare # the standing sandbox for the quarantine act (about a minute)
-python scripts/demo/run_demo.py --pause   # rehearse once end to end
-python scripts/demo/run_demo.py --cleanup # then reset, and run the preflight again
+python scripts/demo/preflight.py              # everything the demo needs, ok / warn / FAIL, with the fix
+python scripts/demo/run_demo.py --prepare     # the standing sandbox for the quarantine act (about a minute)
+python scripts/demo/end_state.py --prepare    # the end-state demo's sandbox (about a minute)
+python scripts/demo/smoke.py --end-state      # runs both demos and checks what a presenter would look for; must say SMOKE PASSED
+python scripts/demo/run_demo.py --pause       # rehearse once end to end
+python scripts/demo/run_demo.py --cleanup     # then reset, and run the preflight again
 ```
 
 Print the two addresses (they are in `.aks/state.json`, not in the repository): `consoleHost` is the Risk Guard console, `siemHost` is OpenSearch Dashboards. Copy the OpenSearch admin password without printing it with the command at the end of `scripts/aks/24-expose-siem.ps1`. Sign in at `<consoleHost>/admin` before you start so the Approvals buttons are live.
@@ -25,7 +27,7 @@ Open these tabs in this order, so you only ever move right:
 1. `docs/the-story.md` rendered (the loop diagram), or the slide of it
 2. Console: **Fleet overview**
 3. Console: **Controls**
-4. A terminal in the repository, font large, running `run_demo.py --pause`
+4. A terminal in the repository, font large: `run_demo.py --pause`, then `end_state.py --pause`
 5. OpenSearch Dashboards: **0. Start here**, then **One agent**, then **Risk Guard: quarantine and signals**
 6. Console: **Approvals**
 7. `docs/red-team-agent.md` (the results table)
@@ -43,7 +45,21 @@ Open these tabs in this order, so you only ever move right:
 | 6:30 | OpenSearch: quarantine and signals | Run `python scripts/siem/signal_demo.py --list` | "An OpenSearch alert can ask Risk Guard to quarantine. It goes through a forwarder with its own identity over mutual TLS, and can only tighten. It is in dry-run today: recorded, nothing changes." | Feedback loop, bounded |
 | 7:30 | Console, **Approvals** | Tick the suggested route, give a reason, Propose. Then try to approve it | "Risk Guard suggests from its own history: this agent reads `pulls` steadily and was never refused. Proposing is one person. Approving takes a different person; watch it refuse me approving my own." | Two-person rule, working |
 | 8:45 | `red-team-agent.md` | Point at the results | "We attack it continuously: 387 mutations of the must-refuse calls, none got through, and an adaptive agent made 17 more attempts, none got through. Garak did not produce a result: the hosted model was rate limiting. Anything that does get through becomes a failing test." | Evidence, and a stated gap |
-| 9:30 | Controls, bottom rows | Scroll to "Not built" and the promotion gate line | "What is not done: SIEM context as a risk hint is designed, not built. Shadow-to-enforce is gated, and the gate says HOLD today, because traffic is thin and some workloads hold locks. That is the honest state." | Credibility |
+| 9:30 | Controls, bottom rows | Scroll to "Not built" and the promotion gate line | "What is not done: SIEM features are flowing into Risk Guard (look at the Controls row: fresh features, newest batch seconds old) but they only watch; they add nothing to a score until a profile promotes the rule. Shadow-to-enforce is gated, and the gate says HOLD until the review items are cleared. That is the honest state." | Credibility |
+
+### The end state (about five minutes; use it after the partner acts, or instead of acts 2 to 4)
+
+`python scripts/demo/end_state.py --pause`. **Say the disclosure out loud first:** the demo sandbox's OpenShell policy is deliberately weaker than the profile's baseline: it also allows `DELETE /services/*`, so that call reaches Risk Guard on purpose. The weakening is in the rule's name on the gateway and is printed by the script. The fleet does not run it.
+
+| Act | What you show | Say |
+|---|---|---|
+| A | `GET /services` returns 200; OpenShell's `L7_REQUEST allow` and Risk Guard's `decision=Allow` | "Both layers allow routine work." |
+| B | `POST /services/payments/rollback` returns `403 policy_denied`; OpenShell's own event; "Risk Guard was not consulted" | "A fixed rule lives in OpenShell's policy, which is reviewed and takes effect on running sandboxes. Risk Guard never even saw this call." |
+| C | `DELETE /services/worker` passes OpenShell (the disclosed exception); Risk Guard refuses it, names the rules, and locks that route for the workload; the destination's counter does not move; the next call is refused by the lock while a routine `GET` still works | "What reaches Risk Guard gets judged against this workload's task, and a refusal follows the workload." |
+| D | `GET /services/payments`: an approved route on a resource the profile does not approve is refused by Risk Guard's resource rule | "A path rule cannot say which repository or service. This can. That is what Risk Guard is for once the fixed rules live in OpenShell." |
+| E | The agreement numbers: what OpenShell would have refused across the fleet in 24 hours, and how many of those Risk Guard also refused (and zero that only OpenShell would) | "This is the evidence we use before switching the fleet from audit to enforce." |
+
+The script then finds all six calls in the SIEM. Run `end_state.py --cleanup` afterwards.
 
 ### Three-minute cut
 
@@ -57,7 +73,8 @@ Story (0:45) → Controls (1:00) → act 2 only (0:45) → Approvals self-approv
 | What is "watching"? | A control that works out its answer, records it, and lets the call through. It is how you measure a rule before enforcing it. |
 | Why is almost everything watching? | We would rather measure before blocking. The Controls page shows what each would have refused, and the promotion gate decides when to switch. |
 | Why 4,000-plus refusals in a day? | Mostly latched restrictions on workloads used for the red-team and demo exercises: after a refused destructive action the workload's scope is locked. It is the lock working, not new attacks. |
-| Why not feed OpenSearch's anomaly detection into scoring? | It is the right direction and it is on the page as "not built". Today it has too little real data (two workloads have enough). A hint would only add risk, start in watching mode, and enforcement would never wait on OpenSearch. |
+| Does OpenSearch feed Risk Guard's scoring? | Yes, as bounded features (OpenShell denials per sandbox, refusal ratios, fleet aggregates), sent every 30 seconds over mutual TLS and stored locally. They can only add risk, are capped at 15 points, start in watching mode, and enforcement never waits on OpenSearch. OpenSearch's anomaly-detection scores are not used yet: there is too little real data. |
+| Does the adaptive learner use those features? | Not yet. The learner accepts them as an optional input, but nothing feeds it today. It is trained on allowed traffic, scored in shadow, and promoted by a person. |
 | Is a compromised supervisor a problem? | It can stop calling Risk Guard. The tunnel gate and the network fence still limit it, one in-cluster route stays open, and this is in the threat model. |
 | Where does NVIDIA hardware fit? | Design only. Sentry is the out-of-band layer this software cannot replace; nothing here claims a BlueField, DOCA or Sentry integration. |
 | Is it production-ready? | No. [Production gaps](production-gaps.md) lists what is missing, in order. |
@@ -73,7 +90,10 @@ Story (0:45) → Controls (1:00) → act 2 only (0:45) → Approvals self-approv
 * **Deploys can fail on network resets.** Do not redeploy on Monday. If a change is needed, build with `-LocalDocker` and stop on a failed build.
 * **An approved baseline change applies to new sandboxes only, not running ones** (each sandbox keeps the baseline it started with). Say so if asked. OpenShell's own network policy, by contrast, hot-reloads on a running sandbox.
 * **Act 4 (replay) picks a workload whose recorded history is complete**, since retention prunes old decisions; it names the workload it used. If none qualifies it says so and skips.
-* **A policy proposal can take up to a minute** while the prover runs (the budget is 60 s, `RISK_GUARD_PROOF_TIMEOUT_SECONDS` changes it); a proof that runs out of time is refused, never treated as a pass.
+* **A policy proposal can take up to a minute** while the prover runs (the budget is 180 s, since the encoded-backslash deny rules made the proof slower: about a minute on a laptop; `RISK_GUARD_PROOF_TIMEOUT_SECONDS` changes it); a proof that runs out of time is refused, never treated as a pass.
+* **The fleet is in audit mode** (OpenShell logs what it would block and lets Risk Guard decide), unless it has been switched to enforce: check `deploy/aks/fleet.yaml` (`AGENT_POLICY_MODE`) before you say which. The end-state demo's own sandbox enforces regardless.
+* **SIEM features watch only.** On the Controls page "SIEM context" says watching; do not claim it changed a decision unless "would have changed" or "changed" is above zero.
+* **Run `smoke.py` after any redeploy, not just the API checks.** A deploy once left the demo returning 403 while every API check passed.
 * **Counts move.** Numbers on the Controls page change every refresh; say "about".
 
 ## If something breaks
