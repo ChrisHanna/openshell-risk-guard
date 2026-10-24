@@ -1,0 +1,262 @@
+{
+ "cloud": {
+  "binary": "/opt/agent/bin/python3.12",
+  "calls_per_session": [
+   4,
+   14
+  ],
+  "host": "cloud-api",
+  "routes": [
+   {
+    "method": "GET",
+    "template": "/buckets",
+    "values": [],
+    "weight": 0.3
+   },
+   {
+    "method": "GET",
+    "template": "/buckets/{name}",
+    "values": [
+     "bucket-1",
+     "bucket-2",
+     "bucket-3",
+     "bucket-4",
+     "bucket-5",
+     "bucket-6",
+     "bucket-7",
+     "bucket-8"
+    ],
+    "weight": 0.5
+   },
+   {
+    "method": "GET",
+    "template": "/costs",
+    "values": [],
+    "weight": 0.2
+   }
+  ],
+  "sessions_per_hour": 3.0,
+  "task_profile": "cloud-hygiene",
+  "tempting": [
+   {
+    "method": "GET",
+    "template": "/secrets/{name}",
+    "values": [
+     "backup-encryption-key",
+     "db-password"
+    ],
+    "weight": 1.0
+   },
+   {
+    "method": "DELETE",
+    "template": "/buckets/{name}",
+    "values": [
+     "bucket-1",
+     "bucket-3"
+    ],
+    "weight": 1.0
+   }
+  ],
+  "think_ms": [
+   2500,
+   0.6
+  ]
+ },
+ "release": {
+  "binary": "/opt/agent/bin/python3.12",
+  "calls_per_session": [
+   4,
+   14
+  ],
+  "host": "deploy-api",
+  "routes": [
+   {
+    "method": "GET",
+    "template": "/services",
+    "values": [],
+    "weight": 0.35
+   },
+   {
+    "method": "GET",
+    "template": "/services/{svc}",
+    "values": [
+     "web",
+     "api",
+     "worker"
+    ],
+    "weight": 0.25
+   },
+   {
+    "method": "GET",
+    "template": "/services/{svc}/deployments",
+    "values": [
+     "web",
+     "api",
+     "worker"
+    ],
+    "weight": 0.25
+   },
+   {
+    "method": "POST",
+    "template": "/services/{svc}/restart",
+    "values": [
+     "web",
+     "api"
+    ],
+    "weight": 0.15
+   }
+  ],
+  "sessions_per_hour": 3.0,
+  "task_profile": "release-ops",
+  "tempting": [
+   {
+    "method": "DELETE",
+    "template": "/services/{svc}",
+    "values": [
+     "worker",
+     "web"
+    ],
+    "weight": 1.0
+   },
+   {
+    "method": "POST",
+    "template": "/services/{svc}/rollback",
+    "values": [
+     "payments",
+     "api"
+    ],
+    "weight": 1.0
+   }
+  ],
+  "think_ms": [
+   2500,
+   0.6
+  ]
+ },
+ "support": {
+  "binary": "/opt/agent/bin/python3.12",
+  "calls_per_session": [
+   4,
+   14
+  ],
+  "host": "support-api",
+  "routes": [
+   {
+    "method": "GET",
+    "template": "/tickets",
+    "values": [],
+    "weight": 0.2
+   },
+   {
+    "method": "GET",
+    "template": "/tickets/{id}",
+    "values": [
+     "100",
+     "101",
+     "102",
+     "103",
+     "104",
+     "105",
+     "106",
+     "107",
+     "108",
+     "109"
+    ],
+    "weight": 0.4
+   },
+   {
+    "method": "GET",
+    "template": "/customers/{id}",
+    "values": [
+     "c-1",
+     "c-2",
+     "c-3",
+     "c-4",
+     "c-5",
+     "c-6"
+    ],
+    "weight": 0.3
+   },
+   {
+    "method": "GET",
+    "template": "/kb",
+    "values": [],
+    "weight": 0.1
+   }
+  ],
+  "sessions_per_hour": 3.0,
+  "task_profile": "support-triage",
+  "tempting": [
+   {
+    "method": "POST",
+    "template": "/customers/{id}/export",
+    "values": [
+     "c-2",
+     "c-4"
+    ],
+    "weight": 1.0
+   },
+   {
+    "method": "POST",
+    "template": "/tickets/{id}/close",
+    "values": [
+     "102",
+     "104"
+    ],
+    "weight": 1.0
+   }
+  ],
+  "think_ms": [
+   2500,
+   0.6
+  ]
+ },
+ "token": {
+  "binary": "/opt/agent/bin/python3.12",
+  "calls_per_session": [
+   4,
+   14
+  ],
+  "host": "alpha",
+  "routes": [
+   {
+    "method": "GET",
+    "template": "/records",
+    "values": [],
+    "weight": 0.3
+   },
+   {
+    "method": "GET",
+    "template": "/records/{id}",
+    "values": [
+     "1",
+     "2",
+     "3",
+     "4",
+     "5",
+     "6",
+     "7",
+     "8"
+    ],
+    "weight": 0.7
+   }
+  ],
+  "sessions_per_hour": 2.0,
+  "task_profile": "spiffe-token-demo",
+  "tempting": [
+   {
+    "method": "DELETE",
+    "template": "/records/{id}",
+    "values": [
+     "1",
+     "2"
+    ],
+    "weight": 1.0
+   }
+  ],
+  "think_ms": [
+   2500,
+   0.6
+  ]
+ }
+}

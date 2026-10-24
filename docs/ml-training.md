@@ -70,6 +70,10 @@ Two cautions before acting on it: (1) these numbers come from the generator, so 
 (it counts keyed resource names per window), so the distinct-resource proposals must be recomputed with the engine's definition. Nothing in this pipeline changes a baseline: a person reviews the
 proposal, and a changed baseline is a new version.
 
+## The in-product learner has its own evaluation
+
+Risk Guard's adaptive learner (`src/adaptive.rs`, shadow by default) is measured by a separate, Rust-only harness that reuses these agent models: `cargo run --release --example adaptive_eval -- --suite headline --seeds 101-110`. It needs no cluster, reports detection on the injected attacks and false-block rate on benign traffic per workload with Wilson 95% intervals, and reads the real summaries below for the workloads that have enough of them. The fleet it reads is `testdata/adaptive-eval/fleet.json`, written by `python scripts/ml/agents.py --dump` and checked by `test_ml.py`. Results, what changed in version 2 and what did not help are in [adaptive-v2.md](adaptive-v2.md). The same caveats apply: scripted, small, ours.
+
 ## Using it with real traffic
 
 Risk Guard now sends the real equivalent: a once-a-minute **activity summary** per workload (decisions, refused, share refused, highest score, distinct paths) with the workload's identity.

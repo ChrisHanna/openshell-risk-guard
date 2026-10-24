@@ -18,8 +18,20 @@ use sha2::{Digest, Sha256};
 use crate::error::{Result, RiskGuardError};
 use crate::types::{DecisionOutcome, NormalizedRequest, SignalContribution, WindowSnapshot};
 
+mod v2;
+pub use v2::{
+    ACTIVITY_MS, ActivityEvent, Comparison, ContextInputs, Evaluation, FeatureRange, FitOptions,
+    MAX_ACTIVITY_EVENTS, Prior, ProbeResult, ShapeProfile, ShapeValues, Tracker, compare, evaluate,
+    evaluate_on, pool, replay, shape_values,
+};
+
 /// Bump whenever feature definitions, admission rules, or interpretation weights change.
-pub const ALGORITHM_VERSION: &str = "network-metadata-empirical-v1";
+pub const ALGORITHM_VERSION: &str = "network-metadata-empirical-v2";
+/// The first learner. Models fitted and enforced under it keep scoring exactly as they did: [`assess`] dispatches on a model's own
+/// version, and [`fit_v1`] still produces one (the offline evaluation uses it as the baseline).
+pub const ALGORITHM_VERSION_V1: &str = "network-metadata-empirical-v1";
+/// A prior pools at most this many other models.
+const MAX_PRIOR_SOURCES: usize = 32;
 /// A shadow alert is an observed assessment at or above this score.
 pub const SHADOW_ALERT_THRESHOLD: u32 = 40;
 /// A phase-one would-block also requires [`AdaptiveAssessment::high_confidence`].
@@ -105,6 +117,24 @@ pub struct LearnedProfile {
     pub ready_for_enforcement: bool,
     /// Includes gate failures AND sparse-tail/phase-one limitations, even when eligible.
     pub readiness_reasons: Vec<String>,
+    /// Requests per HTTP method (v2). Empty on a v1 model.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub method_counts: BTreeMap<String, u32>,
+    /// Learned ranges of the recent-activity features (v2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<ShapeProfile>,
+    /// Statistics pooled from other workloads' models, used to shrink this model's sparse counts (v2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prior: Option<Prior>,
+    /// Which v2 components this model was fitted with (v2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<FitOptions>,
+    /// How this model did on the reference probes and its holdout when it was fitted (v2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluation: Option<Evaluation>,
+    /// This model against the one it would replace, on the same inputs. Filled in by the store when it trains a candidate (v2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comparison: Option<Comparison>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,11 +152,46 @@ pub struct AdaptiveAssessment {
 /// Invalid or dirty records reject the entire dataset; none are silently filtered.
 /// Limits: 500 observations/session, 50,000 combined observations, 24 hours/session,
 /// 1,024 sessions, 100,000 captured minute buckets, and 64 MiB of metadata.
+///
+/// Fits the current (v2) learner with every component on and no pooled prior.
 pub fn fit(training: &[TrainingSession], holdout: &[TrainingSession]) -> Result<LearnedProfile> {
+    fit_with(training, holdout, &FitOptions::default(), None)
+}
+
+/// Fit the current learner with chosen components and an optional pooled prior (see [`pool`]).
+pub fn fit_with(
+    training: &[TrainingSession],
+    holdout: &[TrainingSession],
+    options: &FitOptions,
+    prior: Option<Prior>,
+) -> Result<LearnedProfile> {
+    v2::fit(training, holdout, options, prior)
+}
+
+/// Fit the first learner exactly as it was. Kept so the offline evaluation has the baseline to compare against and so the tests
+/// can show that decisions made under it still score the same.
+pub fn fit_v1(training: &[TrainingSession], holdout: &[TrainingSession]) -> Result<LearnedProfile> {
+    let (mut profile, _, holdout) = fit_counts(training, holdout, ALGORITHM_VERSION_V1)?;
+    for session in &holdout {
+        let (alerts, would_block) = replay_holdout(&profile, session);
+        profile.holdout_alerts += alerts;
+        profile.holdout_would_block += would_block;
+    }
+    finish_readiness(&mut profile);
+    Ok(profile)
+}
+
+/// Validate the dataset and count it: categories, envelopes and sample sizes. No holdout replay and no readiness gates yet. Returns the
+/// canonically ordered training and holdout sessions as well.
+fn fit_counts(
+    training: &[TrainingSession],
+    holdout: &[TrainingSession],
+    version: &str,
+) -> Result<(LearnedProfile, Vec<TrainingSession>, Vec<TrainingSession>)> {
     validate_dataset(training, holdout)?;
     let training = canonical_sessions(training);
     let holdout = canonical_sessions(holdout);
-    let canonical = serde_json::to_vec(&(ALGORITHM_VERSION, &training, &holdout))?;
+    let canonical = serde_json::to_vec(&(version, &training, &holdout))?;
     let dataset_hash = format!("{:x}", Sha256::digest(&canonical));
     drop(canonical);
     let mut resource_counts = BTreeMap::new();
@@ -154,7 +219,7 @@ pub fn fit(training: &[TrainingSession], holdout: &[TrainingSession]) -> Result<
     }
 
     let mut profile = LearnedProfile {
-        algorithm_version: ALGORITHM_VERSION.to_string(),
+        algorithm_version: version.to_string(),
         dataset_hash,
         training_sessions: training.len() as u32,
         training_runs: independent_runs(&training),
@@ -175,17 +240,22 @@ pub fn fit(training: &[TrainingSession], holdout: &[TrainingSession]) -> Result<
         fanout: envelope(fanouts),
         ready_for_enforcement: false,
         readiness_reasons: Vec::new(),
+        method_counts: BTreeMap::new(),
+        shape: None,
+        prior: None,
+        options: None,
+        evaluation: None,
+        comparison: None,
     };
     profile.tail_reliable = profile.training_runs >= 100
         && profile.training_requests >= 1_000
         && profile.rate.windows >= 1_000
         && profile.fanout.windows >= 1_000;
-    for session in &holdout {
-        let (alerts, would_block) = replay_holdout(&profile, session);
-        profile.holdout_alerts += alerts;
-        profile.holdout_would_block += would_block;
-    }
+    Ok((profile, training, holdout))
+}
 
+/// Apply the promotion-eligibility gates and record the standing phase-one limitations. Run after the holdout has been replayed.
+fn finish_readiness(profile: &mut LearnedProfile) {
     for (label, actual, minimum) in [
         ("training_runs", profile.training_runs, MIN_TRAINING_RUNS),
         (
@@ -227,12 +297,38 @@ pub fn fit(training: &[TrainingSession], holdout: &[TrainingSession]) -> Result<
         "phase1_only: minimum quality gates are not production p99 or false-positive-rate certification"
             .to_string(),
     );
-    Ok(profile)
 }
 
 /// Add positive risk from empirical network metadata; never mutate a profile or policy.
 /// The caller must independently require explicit enforcement and a promotion-ready model.
+///
+/// Scores with whatever version the model was fitted under. Without the run's recent activity a v2 model skips its shape and novelty
+/// features; use [`assess_in_context`] to supply them.
 pub fn assess(
+    profile: &LearnedProfile,
+    request: &NormalizedRequest,
+    window: &WindowSnapshot,
+) -> AdaptiveAssessment {
+    assess_in_context(profile, request, window, None, None)
+}
+
+/// Like [`assess`], with the run's earlier calls (oldest first, none at or after this request) and optional SIEM context. A v1 model
+/// ignores both and scores exactly as it always did.
+pub fn assess_in_context(
+    profile: &LearnedProfile,
+    request: &NormalizedRequest,
+    window: &WindowSnapshot,
+    activity: Option<&[ActivityEvent]>,
+    context: Option<&ContextInputs>,
+) -> AdaptiveAssessment {
+    if profile.algorithm_version == ALGORITHM_VERSION_V1 {
+        assess_v1(profile, request, window)
+    } else {
+        v2::assess(profile, request, window, activity, context)
+    }
+}
+
+fn assess_v1(
     profile: &LearnedProfile,
     request: &NormalizedRequest,
     window: &WindowSnapshot,
@@ -249,7 +345,7 @@ pub fn assess(
             .push("unsupported_non_network_request".to_string());
         return assessment;
     }
-    if profile.algorithm_version != ALGORITHM_VERSION
+    if profile.algorithm_version != ALGORITHM_VERSION_V1
         || profile.training_requests == 0
         || profile.training_runs == 0
         || !valid_envelope(&profile.rate)
@@ -381,6 +477,35 @@ pub fn assess(
     assessment.high_confidence = assessment.score >= WOULD_BLOCK_THRESHOLD
         && (rate_severe || fanout_severe || independent_axes >= 2);
     assessment
+}
+
+/// The empirical envelope of per-window counts. Exposed for the offline evaluation, which fits it on exported activity summaries.
+#[must_use]
+pub fn learn_envelope(samples: Vec<u32>) -> LearnedEnvelope {
+    envelope(samples)
+}
+
+/// Score `observed` against `envelope` with the learner's temporal rule: `(contribution, severe)`. Exposed for the offline evaluation.
+#[must_use]
+pub fn temporal_excess(
+    observed: u32,
+    envelope: &LearnedEnvelope,
+    floors: (u32, u32),
+) -> (u32, bool) {
+    let mut scratch = AdaptiveAssessment {
+        score: 0,
+        high_confidence: false,
+        reasons: Vec::new(),
+        signals: Vec::new(),
+    };
+    add_temporal(
+        &mut scratch,
+        "adaptive_eval",
+        observed,
+        envelope,
+        false,
+        floors,
+    )
 }
 
 fn invalid(message: impl Into<String>) -> RiskGuardError {
@@ -1380,7 +1505,11 @@ mod tests {
     fn heldout_false_blocks_prevent_promotion_and_replay_is_causal() {
         let mut holdout = later_holdout();
         holdout[0] = session("holdout-burst", "holdout-burst-run", 5_000_000, 110);
-        let profile = fit(&mature_training(), &holdout).unwrap();
+        // Pins the first learner's replay counts. A v2 model also alerts on the burst's shape (see the next test).
+        let profile = fit_v1(&mature_training(), &holdout).unwrap();
+        let v2 = fit(&mature_training(), &holdout).unwrap();
+        assert!(v2.holdout_alerts >= profile.holdout_alerts);
+        assert!(!v2.ready_for_enforcement);
         assert_eq!(profile.holdout_requests, 150);
         assert_eq!(profile.holdout_would_block, 11);
         assert_eq!(profile.holdout_alerts, 11);
@@ -1403,7 +1532,11 @@ mod tests {
                 separated.started_at_ms + if index < 60 { 1 } else { 61_001 } + (index % 60) as i64;
         }
         holdout[0] = separated;
-        let profile = fit(&mature_training(), &holdout).unwrap();
+        // The first learner's window arithmetic. (Sixty calls in sixty milliseconds is a burst to a v2 model's shape features, which
+        // alert on it even though the minute count stays inside the learned rate; they never reach would-block alone.)
+        let v2 = fit(&mature_training(), &holdout).unwrap();
+        assert_eq!(v2.holdout_would_block, 0);
+        let profile = fit_v1(&mature_training(), &holdout).unwrap();
         assert_eq!(profile.holdout_requests, 160);
         assert_eq!(profile.holdout_alerts, 0);
         assert_eq!(profile.holdout_would_block, 0);
@@ -1440,5 +1573,244 @@ mod tests {
         let mut model = serde_json::to_value(profile).unwrap();
         model["probability"] = serde_json::json!(0.99);
         assert!(serde_json::from_value::<LearnedProfile>(model).is_err());
+    }
+
+    // ----- version 2 -------------------------------------------------------------------------------------------------------------
+
+    #[test]
+    fn a_version_one_model_keeps_its_wire_format_and_its_scores() {
+        let profile = fit_v1(&mature_training(), &later_holdout()).unwrap();
+        assert_eq!(profile.algorithm_version, ALGORITHM_VERSION_V1);
+        let text = serde_json::to_string(&profile).unwrap();
+        for added in [
+            "method_counts",
+            "\"shape\"",
+            "\"prior\"",
+            "\"options\"",
+            "\"evaluation\"",
+            "\"comparison\"",
+        ] {
+            assert!(
+                !text.contains(added),
+                "{added} must not appear in a v1 model"
+            );
+        }
+        let back: LearnedProfile = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, profile);
+        // The same scores the v1 tests above pin: known traffic scores 0, a burst and an unseen target are confident.
+        let current = request("live", 10_000_000);
+        assert_eq!(assess(&back, &current, &WindowSnapshot::default()).score, 0);
+        let excessive = WindowSnapshot {
+            req_count_1m: 200,
+            distinct_resources_15m: 100,
+            ..WindowSnapshot::default()
+        };
+        assert!(assess(&back, &current, &excessive).high_confidence);
+        // Context and activity are ignored by a v1 model.
+        let context = ContextInputs {
+            openshell_denials_5m: Some(50),
+            ..ContextInputs::default()
+        };
+        let activity = [ActivityEvent {
+            ts_ms: 9_999_000,
+            action_class: "x".into(),
+            resource_id: "y".into(),
+            write: true,
+        }];
+        assert_eq!(
+            assess_in_context(&back, &current, &excessive, Some(&activity), Some(&context)),
+            assess(&back, &current, &excessive)
+        );
+    }
+
+    #[test]
+    fn fit_now_produces_version_two_and_the_old_and_new_hash_differently() {
+        let v2 = fit(&mature_training(), &later_holdout()).unwrap();
+        let v1 = fit_v1(&mature_training(), &later_holdout()).unwrap();
+        assert_eq!(v2.algorithm_version, ALGORITHM_VERSION);
+        assert_ne!(v2.dataset_hash, v1.dataset_hash);
+        assert_eq!(v2.method_counts["GET"], 200);
+        assert!(v2.shape.is_some() && v2.evaluation.is_some());
+        assert!(v2.ready_for_enforcement);
+    }
+
+    #[test]
+    fn a_sparse_model_is_shrunk_toward_its_task_profile_prior() {
+        let sparse = [session("sparse", "sparse-run", 1_000_000, 10)];
+        let alone = fit(&sparse, &[]).unwrap();
+        let mut other = request("live", 10_000_000);
+        other.resource_id = "team/elsewhere".to_string();
+        let mut siblings = mature_training();
+        for capture in &mut siblings {
+            capture.observations[0].request.resource_id = "team/elsewhere".to_string();
+        }
+        let sibling = fit(&siblings, &[]).unwrap();
+        let prior = pool("task_profile", &[("sibling-model".into(), &sibling)], true).unwrap();
+        assert_eq!(prior.sources, vec!["sibling-model".to_string()]);
+        let pooled = fit_with(&sparse, &[], &FitOptions::default(), Some(prior)).unwrap();
+        let window = WindowSnapshot::default();
+        let unseen = assess(&alone, &other, &window);
+        let known_elsewhere = assess(&pooled, &other, &window);
+        assert_eq!(contribution(&unseen, "adaptive_resource"), 15);
+        assert!(contribution(&known_elsewhere, "adaptive_resource") < 15);
+        // What nobody has seen is still unseen.
+        let mut nobody = other.clone();
+        nobody.resource_id = "team/nobody".to_string();
+        assert_eq!(
+            contribution(&assess(&pooled, &nobody, &window), "adaptive_resource"),
+            15
+        );
+        // The prior is part of the model, bounded and attributed.
+        assert!(pooled.prior.as_ref().unwrap().resource_counts.len() <= 2_048);
+        // With shrinkage off the prior is ignored.
+        let off = FitOptions {
+            shrinkage: false,
+            ..FitOptions::default()
+        };
+        let ignored = fit_with(
+            &sparse,
+            &[],
+            &off,
+            pool("task_profile", &[("s".into(), &sibling)], true),
+        )
+        .unwrap();
+        assert!(ignored.prior.is_none());
+    }
+
+    #[test]
+    fn nothing_to_pool_gives_no_prior() {
+        assert!(pool("task_profile", &[], true).is_none());
+    }
+
+    #[test]
+    fn context_inputs_are_optional_bounded_and_can_only_raise_an_existing_anomaly() {
+        let profile = fit(&mature_training(), &later_holdout()).unwrap();
+        let window = WindowSnapshot::default();
+        let loud = ContextInputs {
+            openshell_denials_5m: Some(u32::MAX),
+            openshell_would_block_5m: Some(50),
+            refusal_ratio_15m_permille: Some(900),
+            fleet_refusal_ratio_15m_permille: Some(10),
+            fleet_workloads_with_denials_5m: Some(6),
+            ..ContextInputs::default()
+        };
+        // Normal traffic: context alone changes nothing.
+        let normal = request("live", 10_000_000);
+        let quiet = assess_in_context(&profile, &normal, &window, None, None);
+        assert_eq!(quiet.score, 0);
+        assert_eq!(
+            assess_in_context(&profile, &normal, &window, None, Some(&loud)),
+            quiet
+        );
+        // An empty struct is the same as none.
+        let mut odd = request("odd", 10_000_000);
+        odd.route_template = "/odd".to_string();
+        odd.action_class = "GET /odd".to_string();
+        let base = assess_in_context(&profile, &odd, &window, None, None);
+        assert!(base.score >= 15);
+        assert_eq!(
+            assess_in_context(
+                &profile,
+                &odd,
+                &window,
+                None,
+                Some(&ContextInputs::default())
+            ),
+            base
+        );
+        // Over an existing anomaly it adds at most 12, and never reaches the alert line by itself.
+        let raised = assess_in_context(&profile, &odd, &window, None, Some(&loud));
+        assert!(raised.score > base.score && raised.score <= base.score + 12);
+        assert!(raised.reasons.iter().any(|r| r == "context_raised"));
+        let off = FitOptions {
+            context: false,
+            ..FitOptions::default()
+        };
+        let no_context = fit_with(&mature_training(), &later_holdout(), &off, None).unwrap();
+        assert_eq!(
+            assess_in_context(&no_context, &odd, &window, None, Some(&loud)).score,
+            assess_in_context(&no_context, &odd, &window, None, None).score
+        );
+        // The wire type refuses fields it does not know.
+        assert!(
+            serde_json::from_value::<ContextInputs>(serde_json::json!({"mystery": 1})).is_err()
+        );
+    }
+
+    #[test]
+    fn shape_values_see_a_burst_and_need_enough_events_for_the_rest() {
+        let event = |ts_ms: i64, action: &str, write: bool| ActivityEvent {
+            ts_ms,
+            action_class: action.to_string(),
+            resource_id: "r".to_string(),
+            write,
+        };
+        let few: Vec<_> = (0..5)
+            .map(|i| event(1_000 + i * 1_000, "GET /a", false))
+            .collect();
+        let values = shape_values(&few, 10_000);
+        assert_eq!(values.burst_peak, 5);
+        assert!(values.route_entropy.is_none() && values.gap_regularity.is_none());
+        let many: Vec<_> = (0..40)
+            .map(|i| {
+                event(
+                    1_000 + i * 250,
+                    if i % 2 == 0 { "GET /a" } else { "POST /b" },
+                    i % 2 == 1,
+                )
+            })
+            .collect();
+        let values = shape_values(&many, 11_000);
+        assert_eq!(values.burst_peak, 40);
+        assert_eq!(values.route_entropy, Some(10));
+        assert_eq!(values.write_share, Some(500));
+        assert_eq!(values.gap_regularity, Some(0));
+    }
+
+    #[test]
+    fn a_candidate_that_catches_less_than_the_model_it_replaces_is_blocked_with_numbers() {
+        let training = mature_training();
+        let holdout = later_holdout();
+        let strong = fit(&training, &holdout).unwrap();
+        let same = compare(&strong, &strong, "previous", &holdout);
+        assert!(same.blockers.is_empty());
+        let weak_options = FitOptions {
+            shape: false,
+            novelty: false,
+            method_mix: false,
+            ..FitOptions::default()
+        };
+        let weak = fit_with(&training, &holdout, &weak_options, None).unwrap();
+        let worse = compare(&weak, &strong, "previous", &holdout);
+        assert!(!worse.blockers.is_empty(), "{worse:?}");
+        assert!(
+            worse
+                .blockers
+                .iter()
+                .any(|b| b.contains("injected attack probes"))
+        );
+        assert!(worse.blockers.last().unwrap().contains("Candidate:"));
+        // Against the first-generation model the new one is not worse.
+        let old = fit_v1(&training, &holdout).unwrap();
+        assert!(
+            compare(&strong, &old, "v1-model", &holdout)
+                .blockers
+                .is_empty()
+        );
+        assert_eq!(
+            compare(&strong, &old, "v1-model", &holdout).previous_algorithm,
+            ALGORITHM_VERSION_V1
+        );
+    }
+
+    #[test]
+    fn probes_are_deterministic_and_replay_does_not_change_the_model() {
+        let profile = fit(&mature_training(), &later_holdout()).unwrap();
+        let before = serde_json::to_vec(&profile).unwrap();
+        let once = evaluate(&profile, &later_holdout());
+        assert_eq!(once, evaluate(&profile, &later_holdout()));
+        // 4 bursts, 3 enumerations, 3 slow drips, one tempting call per observed action (one here) and one off-profile destination.
+        assert_eq!(once.probe_totals().0, 12);
+        assert_eq!(before, serde_json::to_vec(&profile).unwrap());
     }
 }

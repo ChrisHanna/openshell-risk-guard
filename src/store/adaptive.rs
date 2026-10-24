@@ -1,6 +1,7 @@
 use super::*;
 use crate::adaptive::{
-    self as learner, AdaptiveAssessment, LearnedProfile, TrainingObservation, TrainingSession,
+    self as learner, AdaptiveAssessment, FitOptions, LearnedProfile, TrainingObservation,
+    TrainingSession,
 };
 use crate::adaptive_controls::{
     AdaptiveOperation, AdaptiveUpdateResult, CaptureReview, LearningScope, ModelMode,
@@ -127,7 +128,11 @@ fn model(conn: &Connection, id: &str) -> Result<Option<Model>> {
         ));
     }
     let profile: LearnedProfile = serde_json::from_str(&payload)?;
-    if profile.algorithm_version != learner::ALGORITHM_VERSION {
+    // Models fitted under an earlier version keep scoring as they did; only an unknown version is refused.
+    if !matches!(
+        profile.algorithm_version.as_str(),
+        learner::ALGORITHM_VERSION | learner::ALGORITHM_VERSION_V1
+    ) {
         return Err(RiskGuardError::Storage(
             "unsupported adaptive model algorithm".into(),
         ));
@@ -196,6 +201,10 @@ fn promotion_blockers(conn: &Connection, model: &Model, revision: u64) -> Result
             reasons.push("The candidate does not meet the learning quality gates.".into());
         }
     }
+    // Worse than the model it would replace, on the same inputs: more benign holdout would-blocks, or fewer injected probes caught.
+    if let Some(comparison) = &model.profile.comparison {
+        reasons.extend(comparison.blockers.clone());
+    }
     let stats = shadow_stats(conn, &model.id)?;
     if stats["reviewable_requests"].as_i64().unwrap_or(0) < MIN_SHADOW_REQUESTS {
         reasons.push(format!(
@@ -247,6 +256,7 @@ fn model_view(conn: &Connection, model: Model, revision: u64) -> Result<Value> {
         "profile": model.profile, "dataset": dataset,
         "shadow_stats": shadow_stats(conn, &model.id)?,
         "promotion_blockers": promotion_blockers(conn, &model, revision)?,
+        "comparison": model.profile.comparison,
         "drift_suspected": recent >= 50 && alerts * 5 >= recent,
         "drift_sample_size": recent,
         "drift_note": "Anomaly frequency is a review cue, not proof of compromise or a false-positive estimate.",
@@ -355,6 +365,8 @@ fn view(conn: &Connection, agent: &str, now_ms: i64) -> Result<Option<Value>> {
         "limits": {"capture_requests": MAX_CAPTURE_REQUESTS, "capture_duration_ms": MAX_CAPTURE_MS,
             "sessions": 100, "models": 30},
         "runs": runs, "sessions": sessions, "models": models, "audit": audit,
+        "maturity_credits": credit_views(conn, agent, revision)?,
+        "maturity_thresholds": {"sessions": MATURE_SESSIONS, "requests": MATURE_REQUESTS},
     })))
 }
 
@@ -485,6 +497,25 @@ impl SqliteRiskStore {
                     json!({"model_id":model_id, "mode":mode,
                         "reviewed_shadow_would_block":reviewed_shadow_would_block}),
                 )?;
+            }
+            AdaptiveOperation::CreditMaturity {
+                model_id,
+                acknowledge_behavioral_enforcement,
+                note,
+            } => {
+                credit_maturity(
+                    &tx,
+                    agent,
+                    model_id,
+                    *acknowledge_behavioral_enforcement,
+                    note,
+                    revision,
+                    actor,
+                    now_ms,
+                )?;
+            }
+            AdaptiveOperation::RevokeMaturityCredit { context_id, reason } => {
+                revoke_maturity_credit(&tx, agent, context_id, reason, actor, now_ms)?;
             }
             AdaptiveOperation::SetAutoLearning { enabled } => {
                 tx.execute(
@@ -707,37 +738,9 @@ fn train(
     }
     let mut runs: BTreeMap<String, Vec<TrainingSession>> = BTreeMap::new();
     for (id, run, start, end) in records {
-        let mut stmt = conn.prepare(
-            "SELECT d.normalized_request_json, o.base_outcome, o.base_risk_score
-             FROM adaptive_observations o JOIN decisions d USING(epoch_id, request_id)
-             WHERE o.session_id = ?1 ORDER BY d.created_at_ms, d.rowid",
-        )?;
-        let rows = stmt
-            .query_map(params![id], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, u32>(2)?,
-                ))
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        let observations = rows
-            .into_iter()
-            .map(|(request, outcome, score)| {
-                Ok(TrainingObservation {
-                    request: serde_json::from_str(&request)?,
-                    base_outcome: serde_json::from_str(&outcome)?,
-                    base_risk_score: score,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        runs.entry(run.clone()).or_default().push(TrainingSession {
-            session_id: id,
-            run_id: run,
-            started_at_ms: start,
-            ended_at_ms: end,
-            observations,
-        });
+        runs.entry(run.clone())
+            .or_default()
+            .push(load_session(conn, id, run, start, end)?);
     }
     let mut groups: Vec<Vec<TrainingSession>> = runs.into_values().collect();
     groups.sort_by_key(|group| {
@@ -766,7 +769,17 @@ fn train(
         .unwrap_or(groups.len());
     let training: Vec<_> = groups[..split].iter().flatten().cloned().collect();
     let holdout: Vec<_> = groups[split..].iter().flatten().cloned().collect();
-    let profile = learner::fit(&training, &holdout)?;
+    let prior = pooled_prior(conn, agent, context, scope)?;
+    let mut profile = learner::fit_with(&training, &holdout, &FitOptions::default(), prior)?;
+    // The model this one would replace, compared with it on the same probes and the same holdout.
+    if let Some(previous) = previous_model(conn, context, revision, scope.as_str())? {
+        profile.comparison = Some(learner::compare(
+            &profile,
+            &previous.profile,
+            &previous.id,
+            &holdout,
+        ));
+    }
     let payload = serde_json::to_string(&profile)?;
     let hash = model_hash(context, revision, scope.as_str(), &payload)?;
     let id = format!("model-{}", uuid::Uuid::new_v4());
@@ -800,9 +813,187 @@ fn train(
             "model_id":id,"model_hash":hash,"dataset_hash":profile.dataset_hash,
             "training_runs":profile.training_runs,"training_requests":profile.training_requests,
             "holdout_runs":profile.holdout_runs,"holdout_requests":profile.holdout_requests,
+            "algorithm_version":profile.algorithm_version,
+            "prior": profile.prior.as_ref().map(|p| json!({"tier":p.tier,"sources":p.sources})),
+            "compared_with": profile.comparison.as_ref().map(|c| json!({
+                "previous_model_id":c.previous_model_id,"blockers":c.blockers.len()})),
         }),
     )?;
     Ok(())
+}
+
+fn load_session(
+    conn: &Connection,
+    id: String,
+    run: String,
+    start: i64,
+    end: i64,
+) -> Result<TrainingSession> {
+    let mut stmt = conn.prepare(
+        "SELECT d.normalized_request_json, o.base_outcome, o.base_risk_score
+         FROM adaptive_observations o JOIN decisions d USING(epoch_id, request_id)
+         WHERE o.session_id = ?1 ORDER BY d.created_at_ms, d.rowid",
+    )?;
+    let rows = stmt
+        .query_map(params![id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, u32>(2)?,
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let observations = rows
+        .into_iter()
+        .map(|(request, outcome, score)| {
+            Ok(TrainingObservation {
+                request: serde_json::from_str(&request)?,
+                base_outcome: serde_json::from_str(&outcome)?,
+                base_risk_score: score,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(TrainingSession {
+        session_id: id,
+        run_id: run,
+        started_at_ms: start,
+        ended_at_ms: end,
+        observations,
+    })
+}
+
+/// Statistics pooled from the newest usable model of each other workload, to shrink a sparse model toward. Workloads of the same
+/// task profile (everything is pooled). `None` when there is no such workload with a usable model.
+fn pooled_prior(
+    conn: &Connection,
+    agent: &str,
+    context: &str,
+    scope: LearningScope,
+) -> Result<Option<learner::Prior>> {
+    let task_profile: Option<String> = conn
+        .query_row(
+            "SELECT task_profile FROM scoring_contexts WHERE context_id = ?1",
+            params![context],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(task_profile) = task_profile else {
+        return Ok(None);
+    };
+    // Only the task-profile tier: the offline evaluation (docs/adaptive-v2.md) found a fleet-wide prior for rates and shape caught fewer
+    // attacks than no prior at all, with no fewer false alerts, so it is not used. `learner::pool` still supports it.
+    {
+        let (tier, same_profile) = ("task_profile", true);
+        let mut stmt = conn.prepare(
+            "SELECT m.model_id, m.agent_id FROM adaptive_models m
+             JOIN scoring_contexts c ON c.context_id = m.context_id
+             WHERE m.agent_id != ?1 AND m.scope = ?2 AND m.revoked_at_ms IS NULL
+               AND ((?3 = 1 AND c.task_profile = ?4) OR (?3 = 0 AND c.task_profile != ?4))
+             ORDER BY m.created_at_ms DESC, m.rowid DESC LIMIT 200",
+        )?;
+        let candidates = stmt
+            .query_map(
+                params![agent, scope.as_str(), i64::from(same_profile), task_profile],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut seen = BTreeSet::new();
+        let mut models = Vec::new();
+        for (id, other) in candidates {
+            if models.len() >= 32 || !seen.insert(other) {
+                continue;
+            }
+            // A sibling that fails its integrity check is left out of the pool; it never blocks this workload's training.
+            if let Ok(Some(sibling)) = model(conn, &id) {
+                models.push(sibling);
+            }
+        }
+        let sources: Vec<(String, &LearnedProfile)> = models
+            .iter()
+            .map(|sibling| (sibling.id.clone(), &sibling.profile))
+            .collect();
+        if let Some(prior) = learner::pool(tier, &sources, same_profile) {
+            return Ok(Some(prior));
+        }
+    }
+    Ok(None)
+}
+
+/// The model a new candidate would replace: the enforced one, else the current shadow, else the newest usable earlier model.
+fn previous_model(
+    conn: &Connection,
+    context: &str,
+    revision: u64,
+    scope: &str,
+) -> Result<Option<Model>> {
+    let heads = head(conn, context, revision, scope)?;
+    let id = match heads.enforced.or(heads.shadow) {
+        Some(id) => Some(id),
+        None => conn
+            .query_row(
+                "SELECT model_id FROM adaptive_models
+                 WHERE context_id = ?1 AND guardrails_revision = ?2 AND scope = ?3 AND revoked_at_ms IS NULL
+                 ORDER BY created_at_ms DESC, rowid DESC LIMIT 1",
+                params![context, revision, scope],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?,
+    };
+    Ok(match id {
+        Some(id) => model(conn, &id).ok().flatten().filter(|m| !m.revoked),
+        None => None,
+    })
+}
+
+fn holdout_of(conn: &Connection, model_id: &str) -> Result<Vec<TrainingSession>> {
+    let mut stmt = conn.prepare(
+        "SELECT s.session_id, s.run_id, s.started_at_ms, COALESCE(s.ended_at_ms, s.started_at_ms + 1)
+         FROM adaptive_model_sessions m JOIN adaptive_sessions s USING(session_id)
+         WHERE m.model_id = ?1 AND m.split = 'holdout' ORDER BY s.started_at_ms, s.session_id",
+    )?;
+    let rows = stmt
+        .query_map(params![model_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    rows.into_iter()
+        .map(|(id, run, start, end)| load_session(conn, id, run, start, end))
+        .collect()
+}
+
+/// The candidate against the model that is enforced now, when that is not the model its stored comparison was made against.
+fn live_comparison(conn: &Connection, candidate: &Model) -> Result<Option<learner::Comparison>> {
+    let heads = head(
+        conn,
+        &candidate.context,
+        candidate.revision,
+        &candidate.scope,
+    )?;
+    let Some(enforced) = heads.enforced.filter(|id| *id != candidate.id) else {
+        return Ok(None);
+    };
+    let stored = candidate
+        .profile
+        .comparison
+        .as_ref()
+        .map(|comparison| comparison.previous_model_id.as_str());
+    if stored == Some(enforced.as_str()) {
+        return Ok(None);
+    }
+    let Some(previous) = model(conn, &enforced).ok().flatten() else {
+        return Ok(None);
+    };
+    Ok(Some(learner::compare(
+        &candidate.profile,
+        &previous.profile,
+        &previous.id,
+        &holdout_of(conn, &candidate.id)?,
+    )))
 }
 
 fn set_model(
@@ -818,7 +1009,11 @@ fn set_model(
         ));
     }
     if mode == ModelMode::Enforce {
-        let reasons = promotion_blockers(conn, model, revision)?;
+        let mut reasons = promotion_blockers(conn, model, revision)?;
+        // The enforced model may have changed since this candidate was trained; compare against the one in force now.
+        if let Some(live) = live_comparison(conn, model)? {
+            reasons.extend(live.blockers);
+        }
         if !reasons.is_empty() {
             return Err(invalid(format!("promotion refused: {}", reasons.join(" "))));
         }
@@ -885,12 +1080,10 @@ fn clean_request(request: &NormalizedRequest, base: &RiskEvaluation) -> bool {
             .any(|s| s.feature == "task_constraint" && s.contribution > 0)
 }
 
-fn run_window(
-    conn: &Connection,
-    frame: &Frame<'_>,
-    run: &str,
-    scope: &str,
-) -> Result<WindowSnapshot> {
+/// The run's trailing window counts and its recent calls, as they stood before the call being scored.
+type RunWindow = (WindowSnapshot, Vec<learner::ActivityEvent>);
+
+fn run_window(conn: &Connection, frame: &Frame<'_>, run: &str, scope: &str) -> Result<RunWindow> {
     let now = frame.request.timestamp_ms;
     let (one, fifteen, distinct_one, distinct_fifteen): (u32, u32, u32, u32) = conn.query_row(
         "SELECT COALESCE(SUM(p.observed_at_ms >= ?3),0), COUNT(*),
@@ -905,13 +1098,51 @@ fn run_window(
         params![run, scope, now.saturating_sub(60_000), now.saturating_sub(900_000), now, frame.request.sandbox_id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     )?;
-    Ok(WindowSnapshot {
+    let snapshot = WindowSnapshot {
         req_count_1m: one,
         req_count_15m: fifteen,
         distinct_resources_1m: distinct_one,
         distinct_resources_15m: distinct_fifteen,
         warming: frame.window.warming,
-    })
+    };
+    // The run's last hour of calls, newest first from the database and oldest first for the learner. Bounded; a version 1 model
+    // ignores it. The call being scored is not recorded yet, so this is the window before it.
+    let mut stmt = conn.prepare(
+        "SELECT p.observed_at_ms,
+                COALESCE(json_extract(d.normalized_request_json,'$.action_class'), ''),
+                COALESCE(json_extract(d.normalized_request_json,'$.resource_id'), ''),
+                COALESCE(json_extract(d.normalized_request_json,'$.method'), '')
+         FROM native_decision_provenance p JOIN decisions d USING(epoch_id,request_id)
+         WHERE p.run_id = ?1 AND p.auth_scope = ?2 AND p.observed_at_ms >= ?3 AND p.observed_at_ms <= ?4
+           AND d.sandbox_id = ?5
+         ORDER BY p.observed_at_ms DESC, p.rowid DESC LIMIT ?6",
+    )?;
+    let mut activity = stmt
+        .query_map(
+            params![
+                run,
+                scope,
+                now.saturating_sub(learner::ACTIVITY_MS),
+                now,
+                frame.request.sandbox_id,
+                learner::MAX_ACTIVITY_EVENTS as i64
+            ],
+            |row| {
+                let method: String = row.get(3)?;
+                Ok(learner::ActivityEvent {
+                    ts_ms: row.get(0)?,
+                    action_class: row.get(1)?,
+                    resource_id: row.get(2)?,
+                    write: !matches!(
+                        method.to_ascii_uppercase().as_str(),
+                        "GET" | "HEAD" | "OPTIONS"
+                    ),
+                })
+            },
+        )?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    activity.reverse();
+    Ok((snapshot, activity))
 }
 
 pub(super) fn evaluate(
@@ -1023,7 +1254,7 @@ fn load_and_assess(
     identity: &AgentIdentity,
     scope: &str,
     id: &str,
-    window: Option<&Result<WindowSnapshot>>,
+    window: Option<&Result<RunWindow>>,
 ) -> Result<Option<(Model, AdaptiveAssessment)>> {
     let model = model(conn, id)?
         .ok_or_else(|| RiskGuardError::Storage("active adaptive model missing".into()))?;
@@ -1053,7 +1284,14 @@ fn load_and_assess(
             ));
         }
     };
-    let result = learner::assess(&model.profile, frame.request, window);
+    let result = learner::assess_in_context(
+        &model.profile,
+        frame.request,
+        &window.0,
+        Some(&window.1),
+        // SIEM context is not wired in yet: the learner accepts it (see `learner::ContextInputs`) and the store passes none.
+        None,
+    );
     Ok(Some((model, result)))
 }
 
@@ -1369,4 +1607,336 @@ pub(super) fn decision_transport(
             "invalid native provenance scope".into(),
         )),
     }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// Baseline maturity backed by what the learner observed
+
+/// The thresholds `BaselineProfile::maturity` uses. A test keeps these in step with it.
+pub(crate) const MATURE_SESSIONS: u32 = 20;
+pub(crate) const MATURE_REQUESTS: u32 = 200;
+
+/// What the model observed that the baseline's hand-kept lists leave out. Once maturity is credited the detector treats a call off those
+/// lists as new, so a list that contradicts the observed traffic has to be fixed first.
+fn baseline_disagreement(conn: &Connection, model: &Model) -> Result<Vec<String>> {
+    let payload: Option<String> = conn
+        .query_row(
+            "SELECT a.payload_json FROM scoring_contexts c JOIN artifacts a ON a.artifact_hash = c.baseline_hash
+             WHERE c.context_id = ?1",
+            params![model.context],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(payload) = payload else {
+        return Ok(vec![
+            "The scoring context's baseline could not be read.".to_string(),
+        ]);
+    };
+    let baseline: BaselineProfile = serde_json::from_str(&payload)?;
+    let profile = &model.profile;
+    let off_list = |counts: &BTreeMap<String, u32>, total: u32, listed: &BTreeSet<String>| {
+        if listed.is_empty() || total == 0 {
+            return Vec::new();
+        }
+        counts
+            .iter()
+            .filter(|(key, count)| {
+                u64::from(**count) * 100 >= u64::from(total) && !listed.contains(*key)
+            })
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>()
+    };
+    let mut missing = off_list(
+        &profile.action_counts,
+        profile.training_requests,
+        &baseline.allowed_action_classes,
+    );
+    missing.extend(off_list(
+        &profile.binary_counts,
+        profile.known_binary_requests,
+        &baseline.expected_binaries,
+    ));
+    if missing.is_empty() {
+        return Ok(Vec::new());
+    }
+    missing.truncate(5);
+    Ok(vec![format!(
+        "The baseline's approved lists leave out traffic the model observed (at least 1% of it): {}. Credited maturity would count those calls as new, so update the baseline or retrain first.",
+        missing.join(", ")
+    )])
+}
+
+#[allow(clippy::too_many_arguments)]
+fn credit_maturity(
+    conn: &Connection,
+    agent: &str,
+    model_id: &str,
+    acknowledged: bool,
+    note: &str,
+    revision: u64,
+    actor: &str,
+    now: i64,
+) -> Result<()> {
+    if !acknowledged {
+        return Err(invalid(
+            "crediting maturity needs explicit acknowledgement that the behavioral score can then refuse on rarity for this workload",
+        ));
+    }
+    if note.len() > 1_000 {
+        return Err(invalid("maturity note exceeds 1000 bytes"));
+    }
+    let selected = model(conn, model_id)?.ok_or_else(|| invalid("model not found"))?;
+    if selected.agent != agent {
+        return Err(invalid("model does not belong to this workload"));
+    }
+    let heads = head(conn, &selected.context, selected.revision, &selected.scope)?;
+    if heads.enforced.as_deref() != Some(model_id) || selected.revision != revision {
+        return Err(invalid(
+            "only the model that is enforced now, under the current guardrails revision, can be credited: promote it first",
+        ));
+    }
+    let mut problems = promotion_blockers(conn, &selected, revision)?;
+    let profile = &selected.profile;
+    if profile.training_runs < MATURE_SESSIONS || profile.training_requests < MATURE_REQUESTS {
+        problems.push(format!(
+            "The model was trained on {} independent runs and {} requests; maturity needs {MATURE_SESSIONS} and {MATURE_REQUESTS}.",
+            profile.training_runs, profile.training_requests
+        ));
+    }
+    problems.extend(baseline_disagreement(conn, &selected)?);
+    if !problems.is_empty() {
+        return Err(invalid(format!(
+            "maturity credit refused: {}",
+            problems.join(" ")
+        )));
+    }
+    let (auto, total): (i64, i64) = conn.query_row(
+        "SELECT COALESCE(SUM(s.reviewed_by = ?2), 0), COUNT(*)
+         FROM adaptive_model_sessions m JOIN adaptive_sessions s USING(session_id)
+         WHERE m.model_id = ?1 AND m.split = 'training'",
+        params![model_id, AUTO_REVIEWER],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let task_profile: String = conn.query_row(
+        "SELECT task_profile FROM scoring_contexts WHERE context_id = ?1",
+        params![selected.context],
+        |row| row.get(0),
+    )?;
+    conn.execute(
+        "UPDATE adaptive_maturity_credits SET revoked_by = ?2, revoked_at_ms = ?3,
+         revoke_reason = 'replaced by a newer credit' WHERE context_id = ?1 AND revoked_at_ms IS NULL",
+        params![selected.context, actor, now],
+    )?;
+    let id = format!("credit-{}", uuid::Uuid::new_v4());
+    conn.execute(
+        "INSERT INTO adaptive_maturity_credits
+         (credit_id, agent_id, context_id, task_profile, model_id, model_hash, training_sessions, training_requests,
+          holdout_runs, holdout_requests, holdout_would_block, person_approved_sessions, auto_approved_sessions,
+          granted_by, granted_at_ms, note)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        params![
+            id,
+            agent,
+            selected.context,
+            task_profile,
+            model_id,
+            selected.hash,
+            profile.training_runs,
+            profile.training_requests,
+            profile.holdout_runs,
+            profile.holdout_requests,
+            profile.holdout_would_block,
+            total - auto,
+            auto,
+            actor,
+            now,
+            note
+        ],
+    )?;
+    audit(
+        conn,
+        agent,
+        actor,
+        "credit_maturity",
+        now,
+        json!({"credit_id":id,"model_id":model_id,"model_hash":selected.hash,"context_id":selected.context,
+            "task_profile":task_profile,"training_sessions":profile.training_runs,
+            "training_requests":profile.training_requests,"person_approved_sessions":total - auto,
+            "auto_approved_sessions":auto,"note":note}),
+    )?;
+    Ok(())
+}
+
+fn revoke_maturity_credit(
+    conn: &Connection,
+    agent: &str,
+    context: &str,
+    reason: &str,
+    actor: &str,
+    now: i64,
+) -> Result<()> {
+    if reason.trim().is_empty() || reason.len() > 1_000 {
+        return Err(invalid("a reason of 1 to 1000 bytes is required"));
+    }
+    let changed = conn.execute(
+        "UPDATE adaptive_maturity_credits SET revoked_by = ?3, revoked_at_ms = ?4, revoke_reason = ?5
+         WHERE agent_id = ?1 AND context_id = ?2 AND revoked_at_ms IS NULL",
+        params![agent, context, actor, now, reason],
+    )?;
+    if changed == 0 {
+        return Err(invalid(
+            "no live maturity credit for this workload and context",
+        ));
+    }
+    audit(
+        conn,
+        agent,
+        actor,
+        "revoke_maturity_credit",
+        now,
+        json!({"context_id":context,"reason":reason}),
+    )?;
+    Ok(())
+}
+
+/// Every credit for a workload, newest first, with whether it counts right now.
+fn credit_views(conn: &Connection, agent: &str, revision: u64) -> Result<Vec<Value>> {
+    let mut stmt = conn.prepare(
+        "SELECT c.credit_id, c.context_id, c.task_profile, c.model_id, c.model_hash, c.training_sessions,
+                c.training_requests, c.holdout_runs, c.holdout_requests, c.holdout_would_block,
+                c.person_approved_sessions, c.auto_approved_sessions, c.granted_by, c.granted_at_ms, c.note,
+                c.revoked_by, c.revoked_at_ms, c.revoke_reason,
+                (c.revoked_at_ms IS NULL AND m.revoked_at_ms IS NULL AND m.guardrails_revision = ?2
+                 AND EXISTS (SELECT 1 FROM adaptive_heads h WHERE h.context_id = m.context_id
+                    AND h.guardrails_revision = m.guardrails_revision AND h.scope = m.scope
+                    AND h.enforced_model_id = c.model_id))
+         FROM adaptive_maturity_credits c JOIN adaptive_models m ON m.model_id = c.model_id
+         WHERE c.agent_id = ?1 ORDER BY c.granted_at_ms DESC, c.rowid DESC LIMIT 20",
+    )?;
+    let rows = stmt
+        .query_map(params![agent, revision], |row| {
+            Ok(json!({
+                "credit_id": row.get::<_, String>(0)?, "context_id": row.get::<_, String>(1)?,
+                "task_profile": row.get::<_, String>(2)?, "model_id": row.get::<_, String>(3)?,
+                "model_hash": row.get::<_, String>(4)?, "training_sessions": row.get::<_, i64>(5)?,
+                "training_requests": row.get::<_, i64>(6)?, "holdout_runs": row.get::<_, i64>(7)?,
+                "holdout_requests": row.get::<_, i64>(8)?, "holdout_would_block": row.get::<_, i64>(9)?,
+                "person_approved_sessions": row.get::<_, i64>(10)?,
+                "auto_approved_sessions": row.get::<_, i64>(11)?,
+                "granted_by": row.get::<_, String>(12)?, "granted_at_ms": row.get::<_, i64>(13)?,
+                "note": row.get::<_, String>(14)?, "revoked_by": row.get::<_, Option<String>>(15)?,
+                "revoked_at_ms": row.get::<_, Option<i64>>(16)?,
+                "revoke_reason": row.get::<_, Option<String>>(17)?,
+                "counts_now": row.get::<_, bool>(18)?,
+            }))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Raise `base`'s hand-kept maturity counters to what an operator-credited model observed, when a credit counts for this scoring
+/// context right now. The raised profile is stored as an artifact (of its own type, so it is not listed as a task profile) and a
+/// `maturity_credit` signal is returned for the decision to carry: replay uses it to mark a bundle incomplete, because a bundle does not
+/// carry credits. With no counting credit the baseline comes back untouched.
+pub(super) fn credited_baseline(
+    conn: &Connection,
+    identity: &AgentIdentity,
+    revision: u64,
+    base: BaselineProfile,
+) -> Result<(BaselineProfile, Option<SignalContribution>)> {
+    let credit: Option<(String, String, u32, u32)> = conn
+        .query_row(
+            "SELECT c.credit_id, c.model_id, c.training_sessions, c.training_requests
+             FROM adaptive_maturity_credits c JOIN adaptive_models m ON m.model_id = c.model_id
+             JOIN adaptive_heads h ON h.context_id = m.context_id
+              AND h.guardrails_revision = m.guardrails_revision AND h.scope = m.scope
+             WHERE c.context_id = ?1 AND c.revoked_at_ms IS NULL AND m.revoked_at_ms IS NULL
+               AND m.guardrails_revision = ?2 AND h.enforced_model_id = c.model_id",
+            params![identity.context_id, revision],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?;
+    let Some((credit_id, model_id, sessions, requests)) = credit else {
+        return Ok((base, None));
+    };
+    if base.training_sessions >= sessions && base.training_requests >= requests {
+        return Ok((base, None));
+    }
+    let mut credited = base.clone();
+    credited.training_sessions = base.training_sessions.max(sessions);
+    credited.training_requests = base.training_requests.max(requests);
+    credited.version = format!("{}+maturity-credit-{credit_id}", base.version);
+    let payload = serde_json::to_string(&credited)?;
+    conn.execute(
+        "INSERT INTO artifacts (artifact_hash, artifact_type, name, version, payload_json, created_at_ms)
+         VALUES (?1, 'baseline_profile_maturity_credit', ?2, ?3, ?4, ?5) ON CONFLICT(artifact_hash) DO NOTHING",
+        params![
+            crate::detector::compute_baseline_hash(&credited),
+            format!("agent:{}:maturity-credit", identity.agent_id),
+            credited.version,
+            payload,
+            current_time_ms()
+        ],
+    )?;
+    let signal = SignalContribution {
+        feature: "maturity_credit".to_string(),
+        observed_summary: format!("credit={credit_id}; model={model_id}"),
+        baseline_summary: format!(
+            "baseline counters raised from sessions={},requests={} to sessions={},requests={}",
+            base.training_sessions,
+            base.training_requests,
+            credited.training_sessions,
+            credited.training_requests
+        ),
+        contribution: 0,
+        support: "baseline maturity backed by an operator-credited adaptive model; a replay bundle does not carry credits"
+            .to_string(),
+    };
+    Ok((credited, Some(signal)))
+}
+
+/// One workload whose baseline maturity is backed by a credit that counts right now.
+pub(super) struct CountingCredit {
+    pub task_profile: String,
+    pub agent_id: String,
+    pub sessions: u32,
+    pub requests: u32,
+    pub granted_by: String,
+    pub granted_at_ms: i64,
+    pub model_id: String,
+}
+
+/// Credits that count now, for the Controls page.
+pub(super) fn counting_credits(conn: &Connection) -> Result<Vec<CountingCredit>> {
+    let mut stmt = conn.prepare(
+        "SELECT c.task_profile, c.agent_id, c.training_sessions, c.training_requests, c.granted_by, c.granted_at_ms, c.model_id
+         FROM adaptive_maturity_credits c JOIN adaptive_models m ON m.model_id = c.model_id
+         JOIN adaptive_heads h ON h.context_id = m.context_id
+          AND h.guardrails_revision = m.guardrails_revision AND h.scope = m.scope
+         WHERE c.revoked_at_ms IS NULL AND m.revoked_at_ms IS NULL AND h.enforced_model_id = c.model_id
+           AND m.guardrails_revision = COALESCE(
+               (SELECT g.revision FROM agent_guardrail_heads g WHERE g.agent_id = c.agent_id), 0)
+         ORDER BY c.task_profile, c.agent_id",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(CountingCredit {
+                task_profile: row.get(0)?,
+                agent_id: row.get(1)?,
+                sessions: row.get(2)?,
+                requests: row.get(3)?,
+                granted_by: row.get(4)?,
+                granted_at_ms: row.get(5)?,
+                model_id: row.get(6)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+pub(super) fn ensure_maturity_table(conn: &Connection) -> Result<()> {
+    conn.execute_batch(include_str!(
+        "../../migrations/0008_adaptive_maturity_credits.sql"
+    ))?;
+    Ok(())
 }

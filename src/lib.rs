@@ -6,6 +6,7 @@
 
 pub mod adaptive;
 pub mod adaptive_controls;
+pub mod adaptive_eval;
 pub mod auth;
 pub mod backup;
 pub mod cli;

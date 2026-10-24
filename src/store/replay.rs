@@ -221,6 +221,18 @@ impl SqliteRiskStore {
             problems.push(format!("{enforced} decisions were scored with an enforced adaptive model, which a bundle does not carry"));
         }
 
+        // A maturity credit from an adaptive promotion changes a decision's baseline; a bundle does not carry credits.
+        let credited = decisions
+            .iter()
+            .filter(|(_, _, event)| {
+                matches!(event, ReplayEvent::Decision { recorded, .. }
+                    if recorded.signals.iter().any(|s| s.feature == "maturity_credit"))
+            })
+            .count();
+        if credited > 0 {
+            problems.push(format!("{credited} decisions were scored under baseline maturity credited from an adaptive model, which a bundle does not carry"));
+        }
+
         // Guardrail revisions up to the newest one any decision used.
         let newest_revision = decisions
             .iter()

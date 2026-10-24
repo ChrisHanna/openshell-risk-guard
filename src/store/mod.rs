@@ -132,6 +132,7 @@ impl SqliteRiskStore {
         ensure_quarantine_tables(&conn)?;
         conn.execute_batch(SIDECAR_MIGRATION_SQL)?;
         changes::ensure_change_tables(&conn)?;
+        adaptive::ensure_maturity_table(&conn)?;
 
         let read_conn = Connection::open(path_ref)?;
         read_conn.execute_batch(
@@ -171,6 +172,7 @@ impl SqliteRiskStore {
         ensure_quarantine_tables(&conn)?;
         conn.execute_batch(SIDECAR_MIGRATION_SQL)?;
         changes::ensure_change_tables(&conn)?;
+        adaptive::ensure_maturity_table(&conn)?;
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -1499,6 +1501,16 @@ impl SqliteRiskStore {
             .transpose()?
             .flatten();
         let base_baseline = load_baseline_for_epoch(&tx, &epoch)?;
+        // Maturity an operator credited from what the adaptive learner observed (explicit, audited; see adaptive.rs).
+        let (base_baseline, maturity_credit) = match &identity {
+            Some(identity) => adaptive::credited_baseline(
+                &tx,
+                identity,
+                saved_guardrails.as_ref().map_or(0, |saved| saved.revision),
+                base_baseline,
+            )?,
+            None => (base_baseline, None),
+        };
         let baseline = if let (Some(saved), Some(identity)) = (&saved_guardrails, &identity) {
             guardrails::effective_baseline(&tx, &identity.agent_id, &base_baseline, saved)?
         } else {
@@ -1651,6 +1663,7 @@ impl SqliteRiskStore {
                 credentialed_endpoint,
             },
         )?;
+        eval.signals.extend(maturity_credit);
         let adaptive_frame = adaptive::Frame {
             identity: identity.as_ref(),
             revision: adaptive_revision,
