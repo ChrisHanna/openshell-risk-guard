@@ -49,12 +49,12 @@ spec:
               value: __ACR__
             - name: FLEET_STATE
               value: /etc/fleet/state/state.json
-            # audit runs each agent's sandbox on the generated OpenShell policy (deploy/aks/agents/<profile>/policy.audit.yaml) in audit
-            # mode: would-block events are logged, nothing is blocked. "enforce" would run policy.enforce.yaml, where OpenShell refuses
-            # (docs/fleet-policy-modes.md has the gate and the steps; do not set it before the gate passes). Rollback: set this to "" and
-            # re-apply, or redeploy the previous fleet image. Only sandboxes created afterwards are affected.
+            # enforce runs each agent's sandbox on the generated OpenShell policy deploy/aks/agents/<profile>/policy.enforce.yaml: OpenShell refuses what the profile's
+            # baseline does not approve (policy_denied) and Risk Guard never sees those calls. audit logs what it would block and blocks nothing; unset uses the hand-written
+            # policy.yaml. The gate, the steps and the rollback are in docs/fleet-policy-modes.md. Rollback: kubectl -n openshell set env deploy/agent-fleet
+            # AGENT_POLICY_MODE=audit (and change this value, or the next 16-deploy-fleet.ps1 undoes it). Only sandboxes created afterwards are affected.
             - name: AGENT_POLICY_MODE
-              value: "audit"
+              value: "enforce"
             # 1 also runs the SPIFFE token-grant agent (20-deploy-token-grant-demo.ps1; 16-deploy-fleet.ps1 -TokenAgent).
             - name: FLEET_TOKEN_AGENT
               value: "__TOKEN_AGENT__"
