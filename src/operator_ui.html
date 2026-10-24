@@ -7535,7 +7535,6 @@ function apprPolicyChange(change) {
     const name = `policy-${String(change.target).replace(/[^A-Za-z0-9._-]/g, "-")}-${String(change.id).slice(0, 8)}.yaml`;
     box.append(apprEl("div", { class: "appr-meta" }, apprEl("a", { href: `/api/changes/${encodeURIComponent(change.id)}/policy`, download: name, text: "Download the policy" }), ` (${name})`));
   }
-  if (change.status === "approved" && change.outcome) box.append(apprEl("pre", { class: "appr-diff", tabindex: "0", text: change.outcome }));
   return box;
 }
 
