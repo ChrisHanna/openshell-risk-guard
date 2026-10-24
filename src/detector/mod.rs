@@ -8,11 +8,13 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub mod siem;
+
 use crate::error::{Result, RiskGuardError};
 use crate::types::{
     BaselineMaturity, BaselineProfile, DecisionOutcome, DetectorContext, EnforcementMode,
     NormalizedRequest, REASON_BEHAVIORAL_RISK_DENIED, REASON_TASK_CONSTRAINT_DENIED,
-    RULE_FORBIDDEN_ACTION, RULE_UNAPPROVED_ACTION, RULE_UNAPPROVED_RESOURCE,
+    RULE_FORBIDDEN_ACTION, RULE_SIEM_CONTEXT, RULE_UNAPPROVED_ACTION, RULE_UNAPPROVED_RESOURCE,
     RULE_UNFAMILIAR_HIGH_IMPACT, RatchetAction, RiskDetector, RiskEvaluation, RuleMode,
     SignalContribution,
 };
@@ -43,8 +45,9 @@ pub const REASON_BASELINE_INSUFFICIENT: &str = "baseline_insufficient";
 /// Stable reason code when a request is within normal behavioral bounds ($S < 20$).
 pub const REASON_OK: &str = "ok";
 
-/// Version identifier for the interaction-aware risk detector.
-pub const DETECTOR_VERSION: &str = "interaction-v1";
+/// Version identifier for the interaction-aware risk detector. `v2` added the `siem_context` rule (R1 to R4, see `siem`); with no SIEM features a
+/// decision scores exactly as it did under `interaction-v1`, but the identifier and the configuration hash changed on purpose.
+pub const DETECTOR_VERSION: &str = "interaction-v2";
 
 /// Scoring variant for comparative evaluation and ablation studies (`t10-eval-benchmark-harness`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -259,7 +262,7 @@ impl InteractionRiskDetector {
 impl RiskDetector for InteractionRiskDetector {
     fn configuration_id(&self) -> String {
         let configuration = format!(
-            "{}:{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}:siem_context=R1-R4/1",
             self.detector_version(),
             self.observe_threshold,
             self.enforce_threshold,
@@ -398,7 +401,24 @@ impl RiskDetector for InteractionRiskDetector {
             + contrib_c
             + contrib_v
             + contrib_f;
-        let score = raw_sum.min(100);
+        let score_without_siem = raw_sum.min(100);
+        // SIEM risk features (rule `siem_context`): a pure function of the features in the context. Off, or no features, or no rule firing: nothing
+        // changes at all. Watching works out the points and records them. Enforcing adds them before the outcome is chosen. Points are never negative.
+        let siem_mode = baseline.rule_mode(RULE_SIEM_CONTEXT);
+        let siem = if siem_mode != RuleMode::Off
+            && matches!(
+                self.variant,
+                ScoringVariant::FullContextual | ScoringVariant::WithoutInteractionTerm
+            ) {
+            siem::adjustment(&ctx.features, baseline.siem_context_max_points)
+        } else {
+            None
+        };
+        let siem_added = match (&siem, siem_mode) {
+            (Some(adjustment), RuleMode::Enforce) => adjustment.points,
+            _ => 0,
+        };
+        let score = raw_sum.saturating_add(siem_added).min(100);
 
         let support_summary = format!(
             "sessions={},requests={},maturity={:?}",
@@ -496,6 +516,43 @@ impl RiskDetector for InteractionRiskDetector {
                 baseline_summary: format!("rule={}; mode=shadow", shadow.rule),
                 contribution: 0,
                 support: "would_block".to_string(),
+            });
+        }
+        if let Some(adjustment) = &siem {
+            // "Changed" means the points move the score across the observe threshold, or across the enforce threshold once the baseline is mature.
+            let crosses = |threshold: u32| {
+                score_without_siem < threshold
+                    && score_without_siem
+                        .saturating_add(adjustment.points)
+                        .min(100)
+                        >= threshold
+            };
+            let changes =
+                crosses(self.observe_threshold) || (is_mature && crosses(self.enforce_threshold));
+            let enforcing = siem_mode == RuleMode::Enforce;
+            signals.push(SignalContribution {
+                feature: "siem_context".to_string(),
+                observed_summary: adjustment
+                    .hits
+                    .iter()
+                    .map(|hit| format!("{}(+{}): {}", hit.rule, hit.points, hit.detail))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+                baseline_summary: format!(
+                    "rule={RULE_SIEM_CONTEXT}; mode={}; {}={}; changes_outcome={}; uncapped={}; max={}",
+                    if enforcing { "enforce" } else { "shadow" },
+                    if enforcing { "added" } else { "would_add" },
+                    adjustment.points,
+                    u8::from(changes),
+                    adjustment.uncapped,
+                    adjustment.max
+                ),
+                contribution: score.saturating_sub(score_without_siem),
+                support: if enforcing {
+                    "siem_features".to_string()
+                } else {
+                    "would_add".to_string()
+                },
             });
         }
         let enforced: Vec<&RuleHit> = hits
@@ -642,9 +699,9 @@ impl RiskDetector for InteractionRiskDetector {
     fn detector_version(&self) -> &str {
         match self.variant {
             ScoringVariant::FullContextual => DETECTOR_VERSION,
-            ScoringVariant::NoveltyOnly => "interaction-v1-novelty-only",
-            ScoringVariant::TaskConstraintOnly => "interaction-v1-task-constraint-only",
-            ScoringVariant::WithoutInteractionTerm => "interaction-v1-no-interaction",
+            ScoringVariant::NoveltyOnly => "interaction-v2-novelty-only",
+            ScoringVariant::TaskConstraintOnly => "interaction-v2-task-constraint-only",
+            ScoringVariant::WithoutInteractionTerm => "interaction-v2-no-interaction",
         }
     }
 }
@@ -677,6 +734,7 @@ mod tests {
             forbid_unfamiliar_high_impact: false,
             rule_modes: std::collections::BTreeMap::new(),
             approved_egress_hosts: Default::default(),
+            siem_context_max_points: None,
             max_req_1m_p95: 4,
             max_req_1m_p99: 8,
             max_distinct_resources_15m_p95: 2,
@@ -754,6 +812,7 @@ mod tests {
             baseline: &baseline,
             window: &window,
             credentialed_endpoint: true,
+            features: Default::default(),
         };
 
         let eval = detector.evaluate(&req, &ctx).expect("evaluate");
@@ -783,6 +842,7 @@ mod tests {
             baseline: &baseline,
             window: &window,
             credentialed_endpoint: true,
+            features: Default::default(),
         };
 
         let eval = detector.evaluate(&req, &ctx).expect("evaluate");
@@ -799,6 +859,7 @@ mod tests {
         // Even without credentialed endpoint (C = 0), score is 75 >= 70 and still denies.
         let ctx_no_cred = DetectorContext {
             credentialed_endpoint: false,
+            features: Default::default(),
             ..ctx
         };
         let eval_no_cred = detector.evaluate(&req, &ctx_no_cred).expect("evaluate");
@@ -825,6 +886,7 @@ mod tests {
             baseline: &baseline,
             window: &window,
             credentialed_endpoint: true,
+            features: Default::default(),
         };
 
         let eval = detector.evaluate(&req, &ctx).expect("evaluate");
@@ -864,6 +926,7 @@ mod tests {
             baseline: &baseline,
             window: &window,
             credentialed_endpoint: true,
+            features: Default::default(),
         };
 
         let eval = detector.evaluate(&req, &ctx).expect("evaluate");
@@ -907,6 +970,7 @@ mod tests {
             baseline: &baseline,
             window: &window,
             credentialed_endpoint: true,
+            features: Default::default(),
         };
 
         let eval = detector.evaluate(&req, &ctx).expect("evaluate");
@@ -948,6 +1012,7 @@ mod tests {
             baseline: &baseline,
             window: &window,
             credentialed_endpoint: true,
+            features: Default::default(),
         };
 
         let eval = strict_detector.evaluate(&req, &ctx).expect("evaluate");
@@ -964,6 +1029,7 @@ mod tests {
             baseline: &baseline,
             window: &window,
             credentialed_endpoint: true,
+            features: Default::default(),
         };
         let eval_layer_a = detector.evaluate(&req, &ctx_layer_a).expect("evaluate");
         assert_eq!(eval_layer_a.risk_score, 85);
@@ -998,6 +1064,7 @@ mod tests {
             baseline: &baseline,
             window: &window,
             credentialed_endpoint: false,
+            features: Default::default(),
         };
 
         let eval = detector.evaluate(&req, &ctx).expect("evaluate");
@@ -1053,6 +1120,7 @@ mod tests {
             baseline: &baseline_no_layer_a,
             window: &window,
             credentialed_endpoint: true,
+            features: Default::default(),
         };
 
         let full_eval = InteractionRiskDetector::with_variant(ScoringVariant::FullContextual)
@@ -1079,6 +1147,7 @@ mod tests {
             baseline: &baseline,
             window: &window,
             credentialed_endpoint: true,
+            features: Default::default(),
         };
         let tc_eval = InteractionRiskDetector::with_variant(ScoringVariant::TaskConstraintOnly)
             .evaluate(&req, &ctx_with_layer_a)
@@ -1111,6 +1180,7 @@ mod tests {
             baseline: &baseline,
             window: &window_default,
             credentialed_endpoint: true,
+            features: Default::default(),
         };
         let eval_obs = detector
             .evaluate(&req_forbidden, &ctx_obs)
@@ -1141,6 +1211,7 @@ mod tests {
             baseline: &baseline,
             window: &window_t1,
             credentialed_endpoint: false,
+            features: Default::default(),
         };
         // N_r=1 (15) + V=1 (15) + F=1 (15) = 45
         let eval_t1 = detector
@@ -1173,6 +1244,7 @@ mod tests {
             baseline: &baseline_clean,
             window: &window_t2,
             credentialed_endpoint: true,
+            features: Default::default(),
         };
         let eval_all = detector.evaluate(&req_all, &ctx_all).expect("cap 100");
         assert_eq!(eval_all.risk_score, 100);
@@ -1210,6 +1282,7 @@ mod tests {
                     baseline,
                     window: &window,
                     credentialed_endpoint: false,
+                    features: Default::default(),
                 },
             )
             .expect("evaluate")

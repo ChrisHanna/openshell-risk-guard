@@ -701,6 +701,7 @@ pub fn repo_triage_readonly_baseline() -> BaselineProfile {
         forbid_unfamiliar_high_impact: false,
         rule_modes: BTreeMap::new(),
         approved_egress_hosts: Default::default(),
+        siem_context_max_points: None,
         max_req_1m_p95: 10,
         max_req_1m_p99: 15,
         max_distinct_resources_15m_p95: 3,
@@ -737,6 +738,7 @@ pub fn maintenance_cleanup_baseline() -> BaselineProfile {
         forbid_unfamiliar_high_impact: false,
         rule_modes: BTreeMap::new(),
         approved_egress_hosts: Default::default(),
+        siem_context_max_points: None,
         max_req_1m_p95: 10,
         max_req_1m_p99: 15,
         max_distinct_resources_15m_p95: 3,
@@ -764,6 +766,7 @@ pub fn cold_start_new_baseline() -> BaselineProfile {
         forbid_unfamiliar_high_impact: false,
         rule_modes: BTreeMap::new(),
         approved_egress_hosts: Default::default(),
+        siem_context_max_points: None,
         max_req_1m_p95: 10,
         max_req_1m_p99: 15,
         max_distinct_resources_15m_p95: 3,
@@ -1602,6 +1605,7 @@ mod tests {
                             baseline: &ep.baseline,
                             window: &window,
                             credentialed_endpoint: ep.credentialed_endpoint,
+                            features: Default::default(),
                         },
                     )
                     .expect("detector evaluation should succeed");

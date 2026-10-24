@@ -57,6 +57,7 @@ fn baseline(routes: &[&str]) -> BaselineProfile {
         forbid_unfamiliar_high_impact: true,
         rule_modes: Default::default(),
         approved_egress_hosts: Default::default(),
+        siem_context_max_points: None,
         max_req_1m_p95: 60,
         max_req_1m_p99: 120,
         max_distinct_resources_15m_p95: 4,

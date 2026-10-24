@@ -13,10 +13,11 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{Result, RiskGuardError};
 use crate::types::{
-    BaselineProfile, BindingAudit, DecisionOutcome, DetectorContext, EnforcementMode, EpochRecord,
-    HardeningCandidate, NativeObservationSource, NetworkState, NormalizedRequest,
-    REASON_BEHAVIORAL_RISK_RESTRICTED, REASON_WORKLOAD_QUARANTINED, RatchetAction, RiskDetector,
-    RiskEvaluation, RiskStore, SandboxBinding, SignalContribution, WindowSnapshot,
+    BaselineProfile, BindingAudit, ContextFeatures, DecisionOutcome, DetectorContext,
+    EnforcementMode, EpochRecord, HardeningCandidate, NativeObservationSource, NetworkState,
+    NormalizedRequest, REASON_BEHAVIORAL_RISK_RESTRICTED, REASON_WORKLOAD_QUARANTINED,
+    RULE_SIEM_CONTEXT, RatchetAction, RiskDetector, RiskEvaluation, RiskStore, RuleMode,
+    SandboxBinding, SignalContribution, WindowSnapshot,
 };
 
 mod adaptive;
@@ -26,9 +27,14 @@ mod guardrails;
 mod identity;
 mod operations;
 mod replay;
+mod siem_features;
 mod signals;
 use identity::{AgentIdentity, resolve_identity};
 pub use operations::RestrictionTarget;
+pub use siem_features::{
+    FeatureBatch, FeatureIngest, FeatureSubject, IngestStatus,
+    MAX_BODY_BYTES as FEATURE_BATCH_MAX_BYTES,
+};
 pub use signals::{SignalOutcome, SignalPolicy, SignalRequest};
 
 const INITIAL_MIGRATION_SQL: &str = include_str!("../../migrations/0001_initial.sql");
@@ -132,6 +138,7 @@ impl SqliteRiskStore {
         ensure_quarantine_tables(&conn)?;
         conn.execute_batch(SIDECAR_MIGRATION_SQL)?;
         changes::ensure_change_tables(&conn)?;
+        siem_features::ensure_siem_feature_tables(&conn)?;
 
         let read_conn = Connection::open(path_ref)?;
         read_conn.execute_batch(
@@ -171,6 +178,7 @@ impl SqliteRiskStore {
         ensure_quarantine_tables(&conn)?;
         conn.execute_batch(SIDECAR_MIGRATION_SQL)?;
         changes::ensure_change_tables(&conn)?;
+        siem_features::ensure_siem_feature_tables(&conn)?;
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -1030,7 +1038,7 @@ impl RiskStore for SqliteRiskStore {
         req: &NormalizedRequest,
         detector: &dyn RiskDetector,
     ) -> Result<RiskEvaluation> {
-        self.evaluate_with_identity(req, detector, None, false, None)
+        self.evaluate_with_identity(req, detector, None, false, None, None)
     }
 
     fn evaluate_authenticated(
@@ -1040,7 +1048,7 @@ impl RiskStore for SqliteRiskStore {
         gateway_id: &str,
         require_agent: bool,
     ) -> Result<RiskEvaluation> {
-        self.evaluate_with_identity(req, detector, Some(gateway_id), require_agent, None)
+        self.evaluate_with_identity(req, detector, Some(gateway_id), require_agent, None, None)
     }
 
     fn evaluate_native_authenticated(
@@ -1051,7 +1059,14 @@ impl RiskStore for SqliteRiskStore {
         require_agent: bool,
         source: NativeObservationSource,
     ) -> Result<RiskEvaluation> {
-        self.evaluate_with_identity(req, detector, Some(gateway_id), require_agent, Some(source))
+        self.evaluate_with_identity(
+            req,
+            detector,
+            Some(gateway_id),
+            require_agent,
+            Some(source),
+            None,
+        )
     }
 
     fn list_decisions(&self, sandbox_id: &str, limit: usize) -> Result<Vec<RiskEvaluation>> {
@@ -1342,6 +1357,26 @@ fn state_owner<'a>(epoch: &'a EpochRecord, identity: Option<&'a AgentIdentity>) 
 }
 
 impl SqliteRiskStore {
+    /// Evaluate a request the way a replay needs: scored with exactly the SIEM features the original decision recorded (none, for a decision made
+    /// without any), never with whatever this store holds now.
+    pub fn evaluate_with_recorded_features(
+        &self,
+        req: &NormalizedRequest,
+        detector: &dyn RiskDetector,
+        gateway_id: &str,
+        require_agent: bool,
+        features: &ContextFeatures,
+    ) -> Result<RiskEvaluation> {
+        self.evaluate_with_identity(
+            req,
+            detector,
+            Some(gateway_id),
+            require_agent,
+            None,
+            Some(features),
+        )
+    }
+
     fn evaluate_with_identity(
         &self,
         req: &NormalizedRequest,
@@ -1349,6 +1384,7 @@ impl SqliteRiskStore {
         gateway_id: Option<&str>,
         require_agent: bool,
         source: Option<NativeObservationSource>,
+        recorded_features: Option<&ContextFeatures>,
     ) -> Result<RiskEvaluation> {
         let mut conn = self.lock_conn()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -1642,6 +1678,19 @@ impl SqliteRiskStore {
                 .any(|(h, p)| *p == req.port && h.eq_ignore_ascii_case(&req.host));
 
         // 7. Call detector.evaluate(...).
+        // SIEM risk features: a replay supplies the ones the original decision used; otherwise read the fresh ones from the local table.
+        let features = match recorded_features {
+            Some(recorded) => recorded.clone(),
+            None if baseline.rule_mode(RULE_SIEM_CONTEXT) == RuleMode::Off => {
+                ContextFeatures::default()
+            }
+            None => siem_features::load_context(
+                &tx,
+                &req.sandbox_id,
+                identity.as_ref().map(|identity| identity.agent_id.as_str()),
+                req.timestamp_ms,
+            )?,
+        };
         let mut eval = effective_detector.evaluate(
             req,
             &DetectorContext {
@@ -1649,6 +1698,7 @@ impl SqliteRiskStore {
                 baseline: &baseline,
                 window: &window,
                 credentialed_endpoint,
+                features: features.clone(),
             },
         )?;
         let adaptive_frame = adaptive::Frame {
@@ -1775,6 +1825,7 @@ impl SqliteRiskStore {
             guardrails::annotate_revision(&identity.agent_id, saved, &mut eval);
         }
         insert_decision_row(&tx, &epoch.epoch_id, req, &eval)?;
+        siem_features::record_used(&tx, &epoch.epoch_id, &req.request_id, &features)?;
         insert_identity(&tx, req, &epoch, identity.as_ref())?;
         adaptive::record(&tx, &adaptive_frame, &base_evaluation, &assessments)?;
         if let (Some(saved), Some(identity)) = (&saved_guardrails, &identity) {
@@ -2017,6 +2068,7 @@ fn load_baseline_for_epoch(conn: &Connection, epoch: &EpochRecord) -> Result<Bas
         forbid_unfamiliar_high_impact: false,
         rule_modes: std::collections::BTreeMap::new(),
         approved_egress_hosts: Default::default(),
+        siem_context_max_points: None,
         max_req_1m_p95: 0,
         max_req_1m_p99: 0,
         max_distinct_resources_15m_p95: 0,
@@ -2514,6 +2566,7 @@ mod tests {
             forbid_unfamiliar_high_impact: true,
             rule_modes: std::collections::BTreeMap::new(),
             approved_egress_hosts: Default::default(),
+            siem_context_max_points: None,
             max_req_1m_p95: 10,
             max_req_1m_p99: 20,
             max_distinct_resources_15m_p95: 3,

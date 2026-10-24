@@ -122,6 +122,7 @@ impl SqliteRiskStore {
                     guardrail_revision: revision.and_then(|r| u64::try_from(r).ok()),
                     request: Box::new(request),
                     recorded: Box::new(recorded),
+                    features: super::siem_features::recorded_for(&tx, rowid)?,
                 },
             ));
         }
