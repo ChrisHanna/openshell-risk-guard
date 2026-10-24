@@ -56,7 +56,7 @@ def pods():
         record("FAIL", "kubectl cannot reach the cluster", "Sign in (az login) and run: az aks get-credentials ... (scripts/aks/common.ps1 Use-Cluster does it).")
         return False
     for ns, label, want in (("openshell", "risk-guard", "4/4"), ("siem", "opensearch-cluster-master", "1/1"), ("siem", "otel-collector", "1/1"),
-                            ("siem", "dashboards-opensearch-dashboards", "1/1"), ("siem", "signal-forwarder", "2/2")):
+                            ("siem", "dashboards-opensearch-dashboards", "1/1"), ("siem", "signal-forwarder", "3/3")):
         code, out = kubectl("-n", ns, "get", "pods", "--no-headers")
         line = next((l for l in out.splitlines() if l.startswith(label)), "")
         parts = line.split()
@@ -98,6 +98,13 @@ def console(host):
             c = controls[cid]
             ev = ", ".join(f"{k}={v}" for k, v in c["evidence"].items() if k != "note")
             record("info", f"{label}: {c['mode']} ({ev})")
+        feat = controls.get("siem_context")
+        if feat:
+            fresh, age = feat["evidence"].get("fresh_features", 0), feat["evidence"].get("newest_batch_age_seconds")
+            if fresh and age is not None and age < 180:
+                record("ok", f"SIEM features are arriving: {fresh} fresh, newest batch {age} s old (rule {feat['mode']})")
+            else:
+                record("warn", "no recent SIEM features", "The publisher container in the signal-forwarder pod posts every 30 s: kubectl -n siem logs deploy/signal-forwarder -c feature-publisher --tail=5")
         held = controls["quarantine"]["evidence"].get("quarantined_now", 0)
         if held:
             record("warn", f"{held} workload(s) are quarantined right now", "Left over from a rehearsal? Release: python scripts/demo/run_demo.py --cleanup (or the Approvals page).")
