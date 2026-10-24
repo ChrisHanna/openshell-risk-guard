@@ -36,6 +36,15 @@ network_policies:
           - allow:
               method: POST
               path: /services/*/restart
+        deny_rules:
+          - method: GET
+            path: /**/*%5C*
+          - method: GET
+            path: /**/*%5C*/**
+          - method: POST
+            path: /**/*%5C*
+          - method: POST
+            path: /**/*%5C*/**
     binaries:
       - path: /opt/agent/bin/python3.12
       - path: /usr/bin/python3.12

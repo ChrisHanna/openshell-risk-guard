@@ -39,6 +39,19 @@ network_policies:
           - allow:
               method: DELETE
               path: /services/*
+        deny_rules:
+          - method: DELETE
+            path: /**/*%5C*
+          - method: DELETE
+            path: /**/*%5C*/**
+          - method: GET
+            path: /**/*%5C*
+          - method: GET
+            path: /**/*%5C*/**
+          - method: POST
+            path: /**/*%5C*
+          - method: POST
+            path: /**/*%5C*/**
     binaries:
       - path: /opt/agent/bin/python3.12
       - path: /usr/bin/python3.12
