@@ -10,12 +10,12 @@ The agent fleet's sandboxes (support, release, cloud) can run one of three polic
 | `AGENT_POLICY_MODE` | File used (`deploy/aks/agents/<profile>/`) | What OpenShell does | Who refuses a destructive call |
 |---|---|---|---|
 | *(unset)* | `policy.yaml`, hand-written | Allows the dangerous calls on purpose ("so Risk Guard decides") | Risk Guard |
-| `audit` **(today)** | `policy.audit.yaml`, generated | Logs `L7_REQUEST audit ... not permitted by policy` for what it would block, and allows it | Risk Guard |
-| `enforce` | `policy.enforce.yaml`, generated | Refuses what the profile's baseline does not approve (`policy_denied`) | OpenShell; Risk Guard never sees the call |
+| `audit` | `policy.audit.yaml`, generated | Logs `L7_REQUEST audit ... not permitted by policy` for what it would block, and allows it | Risk Guard |
+| `enforce` **(today, since 2026-10-24)** | `policy.enforce.yaml`, generated | Refuses what the profile's baseline does not approve (`policy_denied`) | OpenShell; Risk Guard never sees the call |
 
 The generated files are `policy-export` output (`src/policy_export.rs`): the profile's approved routes and deny list written as OpenShell rules, plus a deny of an encoded backslash (`%5C`) in any path for every allowed method, proved no wider than `policy.yaml` by OpenShell's prover. The audit and enforce files differ in exactly one thing, the endpoint's `enforcement:` line (`tests/policy_export.rs` checks that). The inference endpoint (`integrate.api.nvidia.com`) is not in these files; the provider adds it, in enforce mode, in every mode.
 
-`deploy/aks/fleet.yaml` says `audit` and **has not been changed to `enforce`**. Only sandboxes created afterwards are affected (the fleet creates a fresh sandbox per run and deletes it).
+`deploy/aks/fleet.yaml` says `enforce`: the fleet was switched on 2026-10-24 after the gate below was met (24 hours of audit data, 118 of 120 would-blocks also refused by Risk Guard, none that only OpenShell would have blocked, the other 2 refused either way because Risk Guard errored during a restart). Only sandboxes created afterwards are affected (the fleet creates a fresh sandbox per run and deletes it). First hour in enforce: 65 routine calls allowed, 3 overreach calls refused by OpenShell, and every agent run completed.
 
 - Regenerate: `RG_BIN=<built openshell-risk-guard> python3 scripts/policy/generate_audit_policies.py` (`--check` only verifies). It writes `policy.audit.yaml`, `policy.enforce.yaml`, and the demo-only `policy.enforce.demo.yaml` (see [the end-state demo](end-state-demo.md)). `tests/policy_export.rs` and the CI step "Generated policies are current" fail when a committed file is stale.
 - `run-agent.sh` fails loudly (exit 2) when the mode is set and the profile has no generated file of that kind. It never falls back silently.
@@ -32,7 +32,7 @@ All of these, on the cluster you are about to change:
 3. **Path edge cases are understood.** [policy-path-edge-cases.md](policy-path-edge-cases.md): on the real OpenShell every catalog evasion is stopped in enforce mode. The one spelling OpenShell passed, an encoded backslash inside a segment (`/services/..%5ccustomers`), is now denied by a `deny_rules` entry that `policy-export` adds to every generated file (audit, enforce, demo); it was verified on a throwaway sandbox. Re-run `scripts/policy/path_probe.py` after upgrading OpenShell.
 4. **The Monday demo is over, or you accept that it changes.** In enforce mode a fleet `DELETE` is refused by OpenShell, so Risk Guard no longer records it and no restriction is latched for the workload. (`scripts/demo/run_demo.py` does not use fleet sandboxes and is unaffected.)
 
-## Switch to enforce (not done; these are the exact steps)
+## How the switch to enforce was done (and how to repeat it)
 
 The fleet image bakes the policies in, so the **image must be rebuilt**: the image deployed today has no `policy.enforce.yaml`, and setting the variable alone would make every run exit 2 with "needs a profile with a generated policy.enforce.yaml" (a visible failure, not a silent audit).
 
