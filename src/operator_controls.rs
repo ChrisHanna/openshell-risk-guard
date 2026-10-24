@@ -45,6 +45,11 @@ struct ProposeChangeRequest {
     /// For `baseline_update`: the task profile whose baseline changes.
     #[serde(default)]
     task_profile: Option<String>,
+    /// For `policy_update`: `audit` or `enforce`, and optionally the source sandbox (default: the latest stored policy of the task profile). `task_profile` is the target.
+    #[serde(default)]
+    enforcement: Option<String>,
+    #[serde(default)]
+    sandbox: Option<String>,
     /// For `baseline_update`: the changes asked for (`add_action_classes`, `add_egress_hosts`, `tighten_rate`) and the evidence behind them, which is kept with the request.
     #[serde(default)]
     params: Option<serde_json::Value>,
@@ -513,14 +518,16 @@ pub(crate) fn routes() -> Router<Arc<SqliteRiskStore>> {
                     Err(error) => return (error.status(), Json(json!({"error": error.body_text()}))).into_response(),
                 };
                 match tokio::task::spawn_blocking(move || {
-                    let params = if req.kind == "baseline_update" {
+                    let params = if req.kind == "policy_update" {
+                        json!({"enforcement": req.enforcement, "sandbox": req.sandbox})
+                    } else if req.kind == "baseline_update" {
                         req.params.clone().unwrap_or_else(|| json!({}))
                     } else {
                         json!({"scope": req.scope, "context_id": req.context_id})
                     };
                     store.propose_change(
                         &req.kind,
-                        if req.kind == "baseline_update" {
+                        if matches!(req.kind.as_str(), "baseline_update" | "policy_update") {
                             req.task_profile.as_deref().unwrap_or_default()
                         } else {
                             req.agent_id.as_deref().unwrap_or("two-person-rule")
@@ -532,6 +539,24 @@ pub(crate) fn routes() -> Router<Arc<SqliteRiskStore>> {
                     )
                 }).await {
                     Ok(Ok(id)) => (StatusCode::CREATED, Json(json!({"id": id, "status": "pending"}))).into_response(),
+                    Ok(Err(error)) => error_response(error),
+                    Err(error) => error_response(RiskGuardError::Internal(error.to_string())),
+                }
+            },
+        ))
+        .route("/api/changes/{id}/policy", get(
+            |State(store): State<Arc<SqliteRiskStore>>, AgentPath(id): AgentPath<String>| async move {
+                let file_id = id.clone();
+                match tokio::task::spawn_blocking(move || store.change_policy(&id, now_ms())).await {
+                    Ok(Ok(Some((yaml, file_name)))) => (
+                        [
+                            (header::CONTENT_TYPE, "application/yaml; charset=utf-8".to_string()),
+                            (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{file_name}\"")),
+                            (header::CACHE_CONTROL, "no-store".to_string()),
+                        ],
+                        yaml,
+                    ).into_response(),
+                    Ok(Ok(None)) => (StatusCode::NOT_FOUND, Json(json!({"error": format!("no policy to download for change {file_id}: it is not a pending or approved policy_update")}))).into_response(),
                     Ok(Err(error)) => error_response(error),
                     Err(error) => error_response(RiskGuardError::Internal(error.to_string())),
                 }
@@ -655,6 +680,18 @@ mod tests {
         token: Option<&str>,
         body: &str,
     ) -> (StatusCode, serde_json::Value) {
+        let (code, _, text) = request_raw(server, method, path, origin, token, body).await;
+        (code, serde_json::from_str(&text).unwrap())
+    }
+
+    async fn request_raw(
+        server: &str,
+        method: &str,
+        path: &str,
+        origin: Option<&str>,
+        token: Option<&str>,
+        body: &str,
+    ) -> (StatusCode, String, String) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let address = server.strip_prefix("http://").unwrap();
         let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
@@ -682,7 +719,8 @@ mod tests {
             .unwrap();
         (
             StatusCode::from_u16(code).unwrap(),
-            serde_json::from_str(body).unwrap(),
+            headers.to_string(),
+            body.to_string(),
         )
     }
 
@@ -862,6 +900,87 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_proposed_policy_can_be_downloaded_while_pending_and_after_approval() {
+        use crate::types::{BaselineProfile, EpochRecord};
+        let store = store();
+        let mut baseline: BaselineProfile = build_standard_corpus().default_baseline;
+        baseline.task_profile = "release-ops".into();
+        baseline.normalizer_version = crate::normalizer::DEFAULT_NORMALIZER_VERSION.into();
+        baseline.allowed_action_classes = ["GET /services".to_string()].into();
+        baseline.forbidden_action_classes = Default::default();
+        store.store_baseline(&baseline).unwrap();
+        store
+            .upsert_epoch(&EpochRecord {
+                epoch_id: "epoch-sbx-9".into(),
+                gateway_id: "gateway".into(),
+                sandbox_id: "sbx-9".into(),
+                task_profile: "release-ops".into(),
+                baseline_hash: crate::detector::compute_baseline_hash(&baseline),
+                mode: EnforcementMode::Enforce,
+                active: true,
+                next_sequence: 1,
+                created_at_ms: 1,
+                credentialed_endpoints: Default::default(),
+                active_policy_hash: None,
+            })
+            .unwrap();
+        let policy = "version: 1\nnetwork_middlewares:\n  risk-guard:\n    middleware: risk-guard\n    order: 10\n    on_error: fail_closed\n    config: {task_profile: release-ops, mode: enforce}\n    endpoints:\n      include: [deploy-api.example.test]\nnetwork_policies:\n  service:\n    name: release-api\n    endpoints:\n      - host: deploy-api.example.test\n        port: 18081\n        protocol: rest\n        enforcement: enforce\n        rules:\n          - allow: {method: GET, path: /services}\n          - allow: {method: DELETE, path: /services/**}\n    binaries:\n      - path: /usr/bin/python3.12\n";
+        store
+            .record_policy_snapshot("sbx-9", "hash-1", policy, &Default::default(), "test", 2)
+            .unwrap();
+        let token = "d".repeat(64);
+        let (origin, server) =
+            start(OperatorControls::from_token(&token), Arc::clone(&store)).await;
+
+        let body = r#"{"kind":"policy_update","task_profile":"release-ops","enforcement":"audit","reason":"move the route list into policy"}"#;
+        let (status, proposed) = request(
+            &origin,
+            "POST",
+            "/api/changes",
+            Some(&origin),
+            Some(&token),
+            body,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{proposed}");
+        let id = proposed["id"].as_str().unwrap().to_string();
+
+        let path = format!("/api/changes/{id}/policy");
+        let (status, headers, yaml) = request_raw(&origin, "GET", &path, None, None, "").await;
+        assert_eq!(status, StatusCode::OK, "{yaml}");
+        assert!(
+            headers
+                .to_ascii_lowercase()
+                .contains("content-disposition: attachment; filename=\"policy-release-ops-")
+        );
+        assert!(yaml.contains("deploy-api.example.test") && yaml.contains("enforcement: audit"));
+        assert!(
+            !yaml.contains("DELETE"),
+            "the candidate drops the delete route the baseline does not list"
+        );
+
+        // Approved (by a different person) it is still downloadable; rejected it is not.
+        store
+            .decide_change(&id, "bob", true, "reviewed the diff", now_ms())
+            .unwrap();
+        assert_eq!(
+            request_raw(&origin, "GET", &path, None, None, "").await.0,
+            StatusCode::OK
+        );
+        let (status, _) = request(
+            &origin,
+            "GET",
+            "/api/changes/nosuchid/policy",
+            None,
+            None,
+            "",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
         server.abort();
     }
 

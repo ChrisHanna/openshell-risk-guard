@@ -18,11 +18,12 @@ use serde_json::Value;
 
 const TWO_PERSON: &str = "two_person_required";
 const EXPIRY_MS: i64 = 24 * 60 * 60 * 1000;
-const KINDS: [&str; 4] = [
+const KINDS: [&str; 5] = [
     "release_quarantine",
     "clear_restriction",
     "disable_two_person",
     "baseline_update",
+    "policy_update",
 ];
 /// A baseline change may add at most this many routes or hosts at once, so a request stays reviewable.
 const MAX_BASELINE_ADDITIONS: usize = 50;
@@ -131,6 +132,49 @@ fn parse_baseline_change(params: &Value) -> Result<BaselineChange> {
         hosts,
         rates,
     })
+}
+
+/// Letters, digits, `.`, `_` and `-` only, so a name can be put into a command line without quoting.
+fn safe_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+/// The file a person saves the candidate policy as.
+fn policy_file_name(task_profile: &str, change_id: &str) -> String {
+    let profile: String = task_profile
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    format!(
+        "policy-{profile}-{}.yaml",
+        &change_id[..change_id.len().min(8)]
+    )
+}
+
+/// What approving a `policy_update` records: the exact command, and a plain statement that nothing was applied.
+fn policy_update_outcome(params: &Value, change_id: &str) -> String {
+    let sandbox = params["sandbox"].as_str().unwrap_or_default();
+    let file = policy_file_name(
+        params["task_profile"].as_str().unwrap_or("policy"),
+        change_id,
+    );
+    let mut text = format!(
+        "approved: apply with `openshell policy set {sandbox} --policy {file} --wait` (download the file from /api/changes/{change_id}/policy first). Risk Guard applied nothing; a person runs this."
+    );
+    if params["requires_new_sandbox"] == true {
+        text.push_str(" This candidate differs from the sandbox's policy outside network rules, which cannot be changed on a running sandbox: create a new sandbox with it instead.");
+    }
+    text
 }
 
 fn same_person(a: &str, b: &str) -> bool {
@@ -259,6 +303,35 @@ impl SqliteRiskStore {
         if reason.len() > 1000 {
             return Err(RiskGuardError::InvalidArgument("reason is too long".into()));
         }
+        let built;
+        let params = if kind == "policy_update" {
+            match self.build_policy_update(target, params) {
+                Ok(candidate) => {
+                    built = candidate;
+                    &built
+                }
+                Err(error) => {
+                    // Keep the refusal and why, so the audit trail shows the attempt.
+                    self.lock_conn()?.execute(
+                        "INSERT INTO change_requests (id, kind, target, params_json, reason, proposer, proposed_at_ms, expires_at_ms, status, outcome)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, 'refused', ?8)",
+                        params![
+                            uuid::Uuid::new_v4().simple().to_string(),
+                            kind,
+                            target,
+                            params.to_string(),
+                            reason,
+                            proposer,
+                            now_ms,
+                            format!("refused: {error}")
+                        ],
+                    )?;
+                    return Err(error);
+                }
+            }
+        } else {
+            params
+        };
         match kind {
             "release_quarantine" => {
                 let held: bool = self.lock_read_conn()?.query_row(
@@ -290,6 +363,7 @@ impl SqliteRiskStore {
                     ));
                 }
             }
+            "policy_update" => {}
             "baseline_update" => {
                 parse_baseline_change(params)?;
                 if self.get_baseline(target)?.is_none() {
@@ -393,6 +467,17 @@ impl SqliteRiskStore {
             let why =
                 format!("{reason} (proposed by {proposer}, approved by {decider}, change {id})");
             let params: Value = serde_json::from_str(&params_json)?;
+            if kind == "policy_update" {
+                // Approving records the decision and the command for a person to run. Risk Guard never writes OpenShell policy, so nothing is applied here.
+                let outcome = policy_update_outcome(&params, id);
+                self.lock_conn()?.execute(
+                    "UPDATE change_requests SET outcome = ?2 WHERE id = ?1",
+                    params![id, outcome],
+                )?;
+                return Ok(
+                    serde_json::json!({"id": id, "kind": kind, "target": target, "proposer": proposer, "decided_by": decider, "approved": true, "outcome": outcome}),
+                );
+            }
             let result = match kind.as_str() {
                 "release_quarantine" => self
                     .release_workload_unchecked(&target, &who, &why, now_ms)
@@ -438,6 +523,129 @@ impl SqliteRiskStore {
         Ok(
             serde_json::json!({"id": id, "kind": kind, "target": target, "proposer": proposer, "decided_by": decider, "approved": approve, "outcome": outcome}),
         )
+    }
+
+    /// The newest stored policy of a sandbox that ran under `task_profile`: the named sandbox, or the latest snapshot of any sandbox for that profile.
+    fn policy_source(
+        &self,
+        task_profile: &str,
+        sandbox: Option<&str>,
+    ) -> Result<Option<(String, String, String)>> {
+        let conn = self.lock_read_conn()?;
+        conn.query_row(
+            "SELECT p.sandbox_id, p.policy_hash, p.policy_yaml
+               FROM policy_snapshots p JOIN epochs e ON e.sandbox_id = p.sandbox_id
+              WHERE e.task_profile = ?1 AND (?2 IS NULL OR p.sandbox_id = ?2)
+              ORDER BY p.captured_at_ms DESC, p.id DESC LIMIT 1",
+            params![task_profile, sandbox],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    /// Build the request parameters of a `policy_update`: the candidate policy and everything a reviewer needs to judge it. Refuses anything it cannot show is no wider.
+    fn build_policy_update(&self, task_profile: &str, asked: &Value) -> Result<Value> {
+        let enforcement = asked["enforcement"].as_str().unwrap_or_default();
+        if !matches!(enforcement, "audit" | "enforce") {
+            return Err(RiskGuardError::InvalidArgument(
+                "params.enforcement must be audit or enforce".into(),
+            ));
+        }
+        let sandbox = asked
+            .get("sandbox")
+            .filter(|v| !v.is_null())
+            .map(|v| v.as_str().map(str::to_string))
+            .map(|v| v.filter(|s| safe_name(s)));
+        let sandbox = match sandbox {
+            None => None,
+            Some(Some(name)) => Some(name),
+            Some(None) => {
+                return Err(RiskGuardError::InvalidArgument(
+                    "params.sandbox may use only letters, digits, '.', '_' and '-' (up to 128), so the command shown after approval is safe to paste".into(),
+                ));
+            }
+        };
+        let baseline = self.get_baseline(task_profile)?.ok_or_else(|| {
+            RiskGuardError::InvalidArgument(format!(
+                "there is no baseline for task profile '{task_profile}'"
+            ))
+        })?;
+        if baseline.allowed_action_classes.is_empty() {
+            return Err(RiskGuardError::InvalidArgument(format!(
+                "the baseline for '{task_profile}' lists no approved routes, which means \"not specified\"; a policy written from it would allow nothing"
+            )));
+        }
+        let (sandbox_id, policy_hash, source_yaml) = self
+            .policy_source(task_profile, sandbox.as_deref())?
+            .ok_or_else(|| {
+                RiskGuardError::InvalidArgument(match &sandbox {
+                    Some(name) => format!(
+                        "no stored policy for sandbox '{name}' running task profile '{task_profile}'"
+                    ),
+                    None => format!("no stored policy for any sandbox running task profile '{task_profile}'"),
+                })
+            })?;
+        if !safe_name(&sandbox_id) {
+            return Err(RiskGuardError::InvalidArgument(
+                "the sandbox id has characters that are not safe to put in a command; propose with a baseline export from the command line instead".into(),
+            ));
+        }
+        let export = crate::policy_export::export_policy(&baseline, &source_yaml, enforcement)?;
+        let proof = export.summary["proof"].clone();
+        if proof["verified_no_wider"] != true {
+            return Err(RiskGuardError::InvalidArgument(format!(
+                "the prover did not certify the candidate as no wider than the current policy (verdict: {}); nothing was proposed",
+                proof["step2_prover"]
+            )));
+        }
+        let rule_diff = crate::policy_export::network_rules_diff(&source_yaml, &export.yaml)?;
+        let changed = rule_diff.contains("\n@@ ");
+        if !changed {
+            return Err(RiskGuardError::InvalidArgument(
+                "the sandbox's policy already matches the baseline in this mode; there is nothing to change".into(),
+            ));
+        }
+        // export_policy writes only network rules, so this should always be false; it is checked, not assumed.
+        let requires_new_sandbox =
+            crate::policy_export::differs_outside_network_policies(&source_yaml, &export.yaml)?;
+        Ok(serde_json::json!({
+            "task_profile": task_profile,
+            "enforcement": enforcement,
+            "sandbox": sandbox_id,
+            "source_policy_hash": policy_hash,
+            "baseline_version": baseline.version,
+            "candidate_yaml": export.yaml,
+            "proof": proof,
+            "rule_diff": rule_diff,
+            "requires_new_sandbox": requires_new_sandbox,
+            "notes": export.summary["notes"],
+            "applied": false,
+        }))
+    }
+
+    /// The candidate policy of a `policy_update` that is waiting or approved, with a file name for it. Rejected, expired and unknown requests have none.
+    pub fn change_policy(&self, id: &str, now_ms: i64) -> Result<Option<(String, String)>> {
+        let row: Option<(String, String, String, i64, String)> = {
+            let conn = self.lock_read_conn()?;
+            conn.query_row(
+                "SELECT kind, params_json, status, expires_at_ms, target FROM change_requests WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .optional()?
+        };
+        let Some((kind, params_json, status, expires, target)) = row else {
+            return Ok(None);
+        };
+        let live = (status == "pending" && expires > now_ms) || status == "approved";
+        if kind != "policy_update" || !live {
+            return Ok(None);
+        }
+        let params: Value = serde_json::from_str(&params_json)?;
+        Ok(params["candidate_yaml"]
+            .as_str()
+            .map(|yaml| (yaml.to_string(), policy_file_name(&target, id))))
     }
 
     /// Carry out an approved baseline change on the baseline as it is now (not as it was when the request was made), as a new version. Sandboxes already running keep the

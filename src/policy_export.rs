@@ -248,6 +248,106 @@ pub fn export_policy(
     })
 }
 
+/// The network rules of a policy as readable lines, keyed by rule name and endpoint: the mode, the allow rules and the deny rules, in the order written.
+fn network_rule_lines(
+    document: &openshell_policy_schema::PolicyDocument,
+) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut out = std::collections::BTreeMap::new();
+    for (name, rule) in &document.network_policies {
+        for endpoint in &rule.endpoints {
+            let ports = if endpoint.ports.is_empty() {
+                endpoint.port.to_string()
+            } else {
+                endpoint
+                    .ports
+                    .iter()
+                    .map(u16::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            };
+            let mut lines = Vec::new();
+            if !endpoint.access.is_empty() {
+                lines.push(format!("access: {}", endpoint.access));
+            }
+            lines.push(format!(
+                "enforcement: {}",
+                if endpoint.enforcement.is_empty() {
+                    "(default)"
+                } else {
+                    &endpoint.enforcement
+                }
+            ));
+            lines.extend(
+                endpoint
+                    .rules
+                    .iter()
+                    .map(|r| format!("allow {} {}", r.allow.method, r.allow.path)),
+            );
+            lines.extend(
+                endpoint
+                    .deny_rules
+                    .iter()
+                    .map(|r| format!("deny {} {}", r.method, r.path)),
+            );
+            out.insert(format!("{name} {}:{ports}", endpoint.host), lines);
+        }
+    }
+    out
+}
+
+/// A readable, unified-style comparison of the network rules in two policies (`-` only in `old_yaml`, `+` only in `new_yaml`). Endpoints that did not change are left out.
+/// Rules are compared as sets: reordering alone is not a difference.
+pub fn network_rules_diff(old_yaml: &str, new_yaml: &str) -> Result<String> {
+    let parse = |raw: &str| {
+        parse_policy(raw)
+            .map_err(|e| RiskGuardError::Policy(format!("failed to parse the policy: {e:#}")))
+    };
+    let (old, new) = (
+        network_rule_lines(&parse(old_yaml)?),
+        network_rule_lines(&parse(new_yaml)?),
+    );
+    let keys: BTreeSet<&String> = old.keys().chain(new.keys()).collect();
+    let mut out = String::from("--- current network rules\n+++ proposed network rules\n");
+    let mut any = false;
+    for key in keys {
+        let (before, after) = (
+            old.get(key).map(Vec::as_slice).unwrap_or_default(),
+            new.get(key).map(Vec::as_slice).unwrap_or_default(),
+        );
+        if before.iter().collect::<BTreeSet<_>>() == after.iter().collect::<BTreeSet<_>>() {
+            continue;
+        }
+        any = true;
+        out.push_str(&format!("@@ {key} @@\n"));
+        for line in before {
+            let mark = if after.contains(line) { "  " } else { "- " };
+            out.push_str(&format!("{mark}{line}\n"));
+        }
+        for line in after.iter().filter(|l| !before.contains(l)) {
+            out.push_str(&format!("+ {line}\n"));
+        }
+    }
+    if !any {
+        out.push_str("(no change to the network rules)\n");
+    }
+    Ok(out)
+}
+
+/// Whether two policies differ in anything other than `network_policies` (filesystem, landlock, process, middleware). Filesystem and process settings cannot be changed on a
+/// running sandbox, so a difference here means the new policy needs a new sandbox.
+pub fn differs_outside_network_policies(old_yaml: &str, new_yaml: &str) -> Result<bool> {
+    let strip = |raw: &str| -> Result<Value> {
+        let document = parse_policy(raw)
+            .map_err(|e| RiskGuardError::Policy(format!("failed to parse the policy: {e:#}")))?;
+        let mut value = serde_json::to_value(&document)?;
+        if let Some(object) = value.as_object_mut() {
+            object.remove("network_policies");
+        }
+        Ok(value)
+    };
+    Ok(strip(old_yaml)? != strip(new_yaml)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
