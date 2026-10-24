@@ -196,3 +196,23 @@ fn the_catalog_agrees_and_what_policy_cannot_catch_is_reported() {
         "the generated policies should refuse the destructive catalog attacks on their own"
     );
 }
+
+/// The audit policies the fleet runs (deploy/aks/agents/<profile>/policy.audit.yaml) are generated. A baseline or policy edit without
+/// regenerating them would leave the fleet auditing yesterday's lists.
+#[test]
+fn the_committed_audit_policies_are_current() {
+    for dir in ["support", "release", "cloud"] {
+        let base = format!("{ROOT}/deploy/aks/agents/{dir}");
+        let baseline = load_baseline_profile(format!("{base}/baseline.json")).unwrap();
+        let policy = std::fs::read_to_string(format!("{base}/policy.yaml")).unwrap();
+        let fresh = export_policy(&baseline, &policy, "audit").unwrap().yaml;
+        let committed = std::fs::read_to_string(format!("{base}/policy.audit.yaml")).unwrap_or_else(|err| {
+            panic!("{dir}/policy.audit.yaml is missing ({err}); run scripts/policy/generate_audit_policies.py")
+        });
+        assert_eq!(
+            committed.replace('\r', ""),
+            fresh,
+            "{dir}/policy.audit.yaml is out of date; run scripts/policy/generate_audit_policies.py"
+        );
+    }
+}

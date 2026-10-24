@@ -40,6 +40,12 @@ jobs:
         run: cargo build --locked --all-targets
       - name: Test
         run: cargo test --locked --no-fail-fast
+      # The fleet's generated audit policies must match what policy-export writes from the current baselines (tests/policy_export.rs checks the
+      # same thing inside `cargo test`; this runs the regeneration script itself) and the agreement tool's matching rules keep their tests.
+      - name: Generated audit policies are current
+        run: |
+          python3 -m unittest scripts/policy/test_agreement.py
+          RG_BIN="$PWD/target/debug/openshell-risk-guard" python3 scripts/policy/generate_audit_policies.py --check
       # The attack catalog (conformance/red-team/catalog.json) replayed against the real decision path. It runs inside `cargo test` too; this step exists to
       # keep its report and to make a failure here unmistakable. The build fails if an attack that must be refused gets through, if a benign control is
       # refused, or if a documented gap changes without the documentation.

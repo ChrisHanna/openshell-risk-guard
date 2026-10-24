@@ -19,4 +19,6 @@ nvidia.env
 # Local AKS environment state (resource names, never secrets)
 .aks/
 release/
+# ...but the release agent's profile is tracked (its generated audit policy lives there)
+!deploy/aks/agents/release/
 data/

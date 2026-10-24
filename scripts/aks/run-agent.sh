@@ -27,6 +27,16 @@ if [ -n "${AGENT_PROFILE:-}" ]; then
 else
   POLICY_FILE="$HERE/deploy/aks/agent-sandbox-policy.yaml"; WORKFLOW_FILE="$HERE/deploy/aks/agent-workflow.yml"
 fi
+# AGENT_POLICY_MODE=audit runs the sandbox on the policy generated from the profile's baseline (policy.audit.yaml, written by
+# scripts/policy/generate_audit_policies.py): OpenShell logs what it would block and blocks nothing. Unset, the hand-written
+# policy.yaml is used, exactly as before. Audit without a profile that has a generated file is an error, not a silent fallback.
+if [ "${AGENT_POLICY_MODE:-}" = audit ]; then
+  [ -n "${AGENT_PROFILE:-}" ] && [ -f "$HERE/deploy/aks/agents/$AGENT_PROFILE/policy.audit.yaml" ]     || { echo "AGENT_POLICY_MODE=audit needs a profile with a generated policy.audit.yaml (profile: ${AGENT_PROFILE:-none})" >&2; exit 2; }
+  POLICY_FILE="$HERE/deploy/aks/agents/$AGENT_PROFILE/policy.audit.yaml"
+  echo "policy: generated audit policy ($AGENT_PROFILE)"
+elif [ -n "${AGENT_POLICY_MODE:-}" ]; then
+  echo "unknown AGENT_POLICY_MODE '$AGENT_POLICY_MODE' (only 'audit', or unset)" >&2; exit 2
+fi
 [ -f "$POLICY_FILE" ] && [ -f "$WORKFLOW_FILE" ] || { echo "no policy or workflow for profile ${AGENT_PROFILE:-default}" >&2; exit 2; }
 
 case "$TASK" in

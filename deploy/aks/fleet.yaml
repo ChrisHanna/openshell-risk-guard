@@ -49,6 +49,11 @@ spec:
               value: __ACR__
             - name: FLEET_STATE
               value: /etc/fleet/state/state.json
+            # audit runs each agent's sandbox on the generated OpenShell policy (deploy/aks/agents/<profile>/policy.audit.yaml) in audit
+            # mode: would-block events are logged, nothing is blocked. Rollback: set this to "" and re-apply, or redeploy the previous
+            # fleet image. Only sandboxes created afterwards are affected.
+            - name: AGENT_POLICY_MODE
+              value: "audit"
             # 1 also runs the SPIFFE token-grant agent (20-deploy-token-grant-demo.ps1; 16-deploy-fleet.ps1 -TokenAgent).
             - name: FLEET_TOKEN_AGENT
               value: "__TOKEN_AGENT__"

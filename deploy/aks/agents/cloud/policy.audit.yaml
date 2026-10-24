@@ -1,0 +1,49 @@
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /lib64
+    - /etc
+    - /proc
+    - /dev/urandom
+    - /opt
+  read_write:
+    - /sandbox
+    - /tmp
+    - /dev/null
+landlock:
+  compatibility: hard_requirement
+network_policies:
+  service:
+    name: cloud-api
+    endpoints:
+      - host: cloud-api.openshell.svc.cluster.local
+        port: 18081
+        protocol: rest
+        enforcement: audit
+        rules:
+          - allow:
+              method: GET
+              path: /buckets
+          - allow:
+              method: GET
+              path: /buckets/*
+          - allow:
+              method: GET
+              path: /costs
+    binaries:
+      - path: /opt/agent/bin/python3.12
+      - path: /usr/bin/python3.12
+network_middlewares:
+  risk-guard:
+    middleware: risk-guard
+    order: 10
+    config:
+      mode: enforce
+      task_profile: cloud-hygiene
+    on_error: fail_closed
+    endpoints:
+      include:
+        - cloud-api.openshell.svc.cluster.local
