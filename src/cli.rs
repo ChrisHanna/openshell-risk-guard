@@ -468,6 +468,51 @@ pub enum Commands {
         #[arg(long)]
         server_ca: PathBuf,
     },
+    /// The SIEM's feature publisher: every --interval it asks OpenSearch (read-only) what OpenShell and Risk Guard recorded and posts one batch of risk features to
+    /// Risk Guard's /features over mutual TLS, with the same SVID files as the signal forwarder. See docs/siem-features-publisher.md.
+    FeaturePublisher {
+        /// The full URL of Risk Guard's feature endpoint.
+        #[arg(
+            long,
+            default_value = "https://risk-guard.openshell.svc:50063/features"
+        )]
+        target: String,
+        #[arg(long, default_value = "/certs/svid.pem")]
+        svid: PathBuf,
+        #[arg(long, default_value = "/certs/svid_key.pem")]
+        svid_key: PathBuf,
+        /// The CA that signed Risk Guard's server certificate (not needed with --dry-run).
+        #[arg(long, required_unless_present = "dry_run")]
+        server_ca: Option<PathBuf>,
+        #[arg(
+            long,
+            default_value = "https://opensearch-cluster-master.siem.svc:9200"
+        )]
+        opensearch_url: String,
+        /// Files holding the read-only OpenSearch user name and password (a mounted Secret). They are read on every interval.
+        #[arg(long)]
+        opensearch_user_file: PathBuf,
+        #[arg(long)]
+        opensearch_password_file: PathBuf,
+        /// A CA to trust for OpenSearch's certificate.
+        #[arg(long)]
+        opensearch_ca: Option<PathBuf>,
+        /// Demo only: do not verify OpenSearch's self-signed certificate.
+        #[arg(long)]
+        opensearch_insecure: bool,
+        /// The SPIFFE trust domain of the sandboxes' IDs; with it each sandbox's features are also sent under its SPIFFE ID.
+        #[arg(long)]
+        trust_domain: Option<String>,
+        /// Take the trust domain from this pod's own SVID instead (the publisher and the sandboxes are issued by the same SPIRE).
+        #[arg(long)]
+        trust_domain_from_svid: bool,
+        /// Seconds between batches (at least 10: Risk Guard accepts one batch per 10 seconds per sender).
+        #[arg(long, default_value_t = 30)]
+        interval: u64,
+        /// Run the queries once, print the batch that would be posted (and any query that failed) and exit. Posts nothing, needs no SVID.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Create a run pinned to an agent revision, approved baseline and scoring context.
     RunCreate {
         #[arg(long)]
@@ -1704,6 +1749,62 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                 token.trim(),
             )
             .await?;
+            Ok(serde_json::json!({"status": "stopped"}).to_string())
+        }
+
+        Commands::FeaturePublisher {
+            target,
+            svid,
+            svid_key,
+            server_ca,
+            opensearch_url,
+            opensearch_user_file,
+            opensearch_password_file,
+            opensearch_ca,
+            opensearch_insecure,
+            trust_domain,
+            trust_domain_from_svid,
+            interval,
+            dry_run,
+        } => {
+            let access = crate::feature_publisher::OpenSearchAccess {
+                url: opensearch_url,
+                user_file: opensearch_user_file,
+                password_file: opensearch_password_file,
+                ca_file: opensearch_ca,
+                insecure: opensearch_insecure,
+            };
+            if dry_run {
+                return crate::feature_publisher::dry_run(
+                    &access,
+                    trust_domain.as_deref(),
+                    crate::store::now_wall_ms(),
+                )
+                .await;
+            }
+            let server_ca = server_ca
+                .ok_or_else(|| RiskGuardError::InvalidArgument("--server-ca is required".into()))?;
+            if interval < 10 {
+                return Err(RiskGuardError::InvalidArgument(
+                    "--interval must be at least 10 seconds (Risk Guard accepts one batch per 10 seconds per sender)".into(),
+                ));
+            }
+            crate::feature_publisher::run(
+                crate::feature_publisher::PublisherConfig {
+                    target,
+                    svid_cert: svid,
+                    svid_key,
+                    server_ca,
+                    opensearch: access,
+                    trust_domain,
+                    trust_domain_from_svid,
+                    interval: std::time::Duration::from_secs(interval),
+                },
+                async {
+                    let _ = tokio::signal::ctrl_c().await;
+                },
+            )
+            .await;
             Ok(serde_json::json!({"status": "stopped"}).to_string())
         }
 

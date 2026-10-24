@@ -424,7 +424,7 @@ fn sandbox_of(occurrence: &Occurrence) -> Option<&str> {
     }
 }
 
-fn spiffe_id(sandbox_id: &str, trust_domain: Option<&str>) -> Option<String> {
+pub(crate) fn spiffe_id(sandbox_id: &str, trust_domain: Option<&str>) -> Option<String> {
     if sandbox_id.starts_with("spiffe://") {
         return Some(sandbox_id.to_string());
     }
