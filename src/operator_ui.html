@@ -1336,6 +1336,10 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
 .appr-error { color: var(--crit); font-size: 13px; margin-top: 6px; }
 .appr-status { display: inline-block; padding: 1px 8px; border: 1px solid var(--border); border-radius: 10px; font-size: 12px; }
 .appr-pick { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: 13px; }
+.appr-diff { margin: 8px 0 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-app); font-family: var(--mono, ui-monospace, monospace); font-size: 12px; white-space: pre-wrap; overflow-x: auto; max-height: 280px; overflow-y: auto; }
+.appr-diff .add { color: var(--ok-text); }
+.appr-diff .del { color: var(--crit); }
+.appr-actions select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-app); color: var(--text-primary); }
 
 .ctl-lead { border: 1px solid var(--ok-border); background: var(--ok-bg); border-radius: 8px; padding: 12px 14px; margin: 14px 0 0; font-size: 14px; }
 .ctl-flow { display: flex; gap: 8px; flex-wrap: wrap; align-items: stretch; margin: 14px 0 0; }
@@ -1605,6 +1609,11 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
         <h2 id="appr-suggest-h">Suggested baseline changes</h2>
         <p class="quiet-note" id="appr-suggest-note" style="margin:0 0 8px"></p>
         <div id="appr-suggest"></div>
+      </section>
+      <section class="appr-section" aria-labelledby="appr-policy-h">
+        <h2 id="appr-policy-h">Propose an OpenShell policy from a baseline</h2>
+        <p class="quiet-note" style="margin:0 0 8px">Writes a task profile's approved routes and deny list into a copy of its sandbox's stored policy, and has OpenShell's prover check that the copy is no wider. It is refused if that cannot be shown. Approving it applies nothing: it gives a person the command to run.</p>
+        <div id="appr-policy"></div>
       </section>
       <section class="appr-section" aria-labelledby="appr-history-h">
         <h2 id="appr-history-h">Recent decisions</h2>
@@ -7457,7 +7466,7 @@ buildHow();
 // ---- Approvals: two-person changes and suggested baseline changes ---------------------------------------------------------------------------------------------
 const APPR_KINDS = {
   release_quarantine: "Release a quarantine", clear_restriction: "Clear a restriction",
-  disable_two_person: "Turn off two-person approval", baseline_update: "Change a baseline"
+  disable_two_person: "Turn off two-person approval", baseline_update: "Change a baseline", policy_update: "Update an OpenShell policy"
 };
 let apprError = {};
 let apprBusy = false;
@@ -7495,7 +7504,66 @@ function apprChange(change) {
   if (change.kind === "release_quarantine") lines.push(apprEl("li", { text: `Let ${change.target} make calls again.` }));
   if (change.kind === "clear_restriction") lines.push(apprEl("li", {}, "Clear the lock ", apprEl("code", { text: p.scope || "" }), ` on ${change.target}.`));
   if (change.kind === "disable_two_person") lines.push(apprEl("li", { text: "Anyone could then release or clear without a second person." }));
+  if (change.kind === "policy_update") return apprPolicyChange(change);
   return apprEl("ul", { class: "appr-change" }, lines);
+}
+
+// A policy_update card: the proof verdict, the mode, whether it needs a new sandbox, the rule diff and the download. Everything is set with textContent.
+function apprDiffBlock(text) {
+  const pre = apprEl("pre", { class: "appr-diff", tabindex: "0", "aria-label": "Network rule changes, old against new" });
+  for (const line of String(text || "").split("\n")) {
+    if (!line) continue;
+    pre.append(apprEl("span", { class: line.startsWith("+ ") ? "add" : line.startsWith("- ") ? "del" : "", text: line + "\n" }));
+  }
+  return pre;
+}
+
+function apprPolicyChange(change) {
+  const p = change.params || {};
+  const proof = p.proof || {};
+  if (!p.candidate_yaml) return apprEl("div", { class: "appr-meta", text: "No policy was built for this request." });
+  const proved = proof.verified_no_wider === true;
+  const lines = [
+    apprEl("li", {}, "Proof: ", apprEl("span", { class: "appr-status", text: proved ? "verified no wider" : "not verified" }),
+      ` prover verdict ${proof.step2_prover ?? "unknown"}`, proof.proved_form && proof.proved_form !== "as written" ? ` (proved form: ${proof.proved_form})` : ""),
+    apprEl("li", { text: `Mode: ${p.enforcement}${p.enforcement === "audit" ? " — logs a violation and allows the request; nothing is blocked yet" : " — blocks what the rules do not allow"}` }),
+    apprEl("li", { text: `Source: policy of sandbox ${p.sandbox}, baseline ${p.baseline_version}` }),
+    apprEl("li", { text: p.requires_new_sandbox ? "Needs a new sandbox: it changes more than network rules, and filesystem and process settings do not reload on a running one." : "Needs a new sandbox: no. Only network rules change, and those reload on a running sandbox." }),
+  ];
+  const box = apprEl("div", {}, apprEl("ul", { class: "appr-change" }, lines), apprDiffBlock(p.rule_diff));
+  if (change.status === "pending" || change.status === "approved") {
+    const name = `policy-${String(change.target).replace(/[^A-Za-z0-9._-]/g, "-")}-${String(change.id).slice(0, 8)}.yaml`;
+    box.append(apprEl("div", { class: "appr-meta" }, apprEl("a", { href: `/api/changes/${encodeURIComponent(change.id)}/policy`, download: name, text: "Download the policy" }), ` (${name})`));
+  }
+  return box;
+}
+
+function apprPolicyForm(profiles, canAct) {
+  const holder = $("appr-policy");
+  const list = apprEl("datalist", { id: "appr-policy-profiles" }, profiles.map(name => apprEl("option", { value: name })));
+  const profile = apprEl("input", { type: "text", maxlength: "128", list: "appr-policy-profiles", placeholder: "Task profile", "aria-label": "Task profile" });
+  const mode = apprEl("select", { "aria-label": "Enforcement mode" }, apprEl("option", { value: "audit", text: "audit (log only)" }), apprEl("option", { value: "enforce", text: "enforce (block)" }));
+  const reason = apprEl("input", { type: "text", maxlength: "1000", placeholder: "Why (required)", "aria-label": "Reason for the proposal" });
+  const error = apprEl("div", { class: "appr-error", role: "alert" });
+  const go = apprEl("button", { type: "button", class: "btn btn-primary", text: "Build and propose", onclick: async () => {
+    error.textContent = "";
+    if (!profile.value.trim()) { error.textContent = "Enter a task profile."; profile.focus(); return; }
+    if (!reason.value.trim()) { error.textContent = "Enter a reason first."; reason.focus(); return; }
+    if (apprBusy) return;
+    apprBusy = true;
+    go.disabled = true;
+    try {
+      await guardrailJson("/api/changes", { method: "POST", headers: apprHeaders(), body: JSON.stringify({
+        kind: "policy_update", task_profile: profile.value.trim(), enforcement: mode.value, reason: reason.value.trim() }) });
+      apprNotice = `Proposed an OpenShell policy for ${profile.value.trim()} (${mode.value}). A different administrator can now approve it; nothing is applied.`;
+    } catch (e) { error.textContent = e.message; }
+    apprBusy = false;
+    go.disabled = !canAct;
+    if (!error.textContent) await loadApprovals();
+  } });
+  if (!canAct) { go.disabled = true; }
+  holder.replaceChildren(list, apprEl("div", { class: "appr-actions" }, profile, mode, reason, go), error,
+    ...(canAct ? [] : [apprEl("div", { class: "appr-meta", text: "Sign in as an administrator (Administrator sign-in) to propose." })]));
 }
 
 function apprCard(change, canAct) {
@@ -7599,7 +7667,7 @@ async function loadApprovals() {
     $("side-approvals-count").textContent = String(pending.length);
     $("appr-mode").textContent = changes.two_person_required
       ? "Two-person approval is on: releasing a quarantine or clearing a lock needs a proposal and a different approver."
-      : "Two-person approval is off for quarantines and locks. Baseline changes always need a second person.";
+      : "Two-person approval is off for quarantines and locks. Baseline changes and OpenShell policy updates always need a second person.";
     const pendingBox = $("appr-pending");
     pendingBox.replaceChildren(...(pending.length ? pending.map(c => apprCard(c, canAct)) : [apprEl("div", { class: "appr-meta", text: apprNotice || "Nothing is waiting." })]));
     if (pending.length && apprNotice) pendingBox.prepend(apprEl("div", { class: "appr-meta", text: apprNotice }));
@@ -7607,6 +7675,7 @@ async function loadApprovals() {
     $("appr-history").replaceChildren(...list.filter(c => c.status !== "pending").slice(0, 20).map(c => apprCard(c, canAct)));
     note.textContent = `Computed from this service's own decision history over ${7} days (needs ${suggestions.needs?.calls} calls over ${suggestions.needs?.hours} hours, none refused, reads only). It never needs the SIEM. Nothing changes until one person proposes and a different one approves.`;
     apprSuggestions(suggestions, canAct);
+    apprPolicyForm((suggestions.profiles || []).map(p => p.task_profile), canAct);
   } catch (e) {
     $("appr-pending").replaceChildren(apprEl("div", { class: "appr-error", text: e.message }));
   }
