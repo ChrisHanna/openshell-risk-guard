@@ -86,6 +86,6 @@ Healthy looks like `batches_accepted` rising by one per interval and `query_fail
 
 ## What is not verified
 
-* The query semantics were checked against the live demo index (see the report that came with this change), not against a production-scale one. The route query reads seven days of route events whole; it refuses (and omits the two route features) beyond 30,000 distinct workload/host/route combinations.
+* The five queries were run read-only against the live demo index and their real answers parsed by the publisher's own code (no shard failures; the denial count matched an independently written query exactly), but not against a production-scale index. The user script's `--apply`, the manifest and the end-to-end post were not run against the cluster. The route query reads seven days of route events whole; it refuses (and omits the two route features) beyond 30,000 distinct workload/host/route combinations.
 * Risk Guard's `/features` handler was not available to test against; the integration test uses a fake mutual-TLS listener that records the verified SPIFFE ID and the body, so the contract is tested from the publisher's side only.
 * `fleet_workloads_with_denials_5m` counts sandboxes (the contract's own table says "distinct sandboxes"), not workloads; a workload that ran several sandboxes counts once per sandbox.
