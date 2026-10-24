@@ -26,6 +26,8 @@ what is already in place. Nothing here is hidden elsewhere: this is the list.
 | 10 | Node pools are not separate trust domains | Security services run on their own nodes, but share one control plane with the sandboxes |
 | 11 | No hardware-backed trust | No confidential computing, no attestation, no DPU-based enforcement; see the [design note](confidential-computing-design.md) |
 
+| 20 | Route lists exist in two places | The deny list and approved routes are in Risk Guard baselines and could be OpenShell policy; see [the plan](plan-policy-consolidation.md) |
+
 ## Evidence and operations
 
 | # | Gap | Detail |

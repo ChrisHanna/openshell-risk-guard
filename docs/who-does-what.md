@@ -70,6 +70,10 @@ Only people decide, and loosening needs two. See [two-person approval](two-perso
 5. If an alert rule matches, OpenSearch can send a signal. It goes through the forwarder to Risk Guard, which may quarantine (dry-run today, so it only records).
 6. People read the dashboards and the Approvals page, and decide what to loosen or promote. Two of them, for loosening.
 
+## Where the lists should live
+
+The deny list and approved routes are method-and-path rules that OpenShell policy can hold, and OpenShell's network rules take effect on running sandboxes within seconds, while a Risk Guard baseline change applies only to new sandboxes. The plan to move them is in [plan: policy consolidation](plan-policy-consolidation.md).
+
 ## Where the confusion usually comes from
 
 - **A "would refuse" in the SIEM is not a block.** It is a shadow decision. Today most of the 400 or so in the last hours say a workload holds a latched restriction; enforcing that would also cut the workload's calls to the model.

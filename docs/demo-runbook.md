@@ -71,6 +71,7 @@ Story (0:45) → Controls (1:00) → act 2 only (0:45) → Approvals self-approv
 * **Garak has no result yet.** Say it was run as an agent tool and the model rate-limited it.
 * **Two-person approval is tested with the token path and in the store, not with two real Entra accounts.**
 * **Deploys can fail on network resets.** Do not redeploy on Monday. If a change is needed, build with `-LocalDocker` and stop on a failed build.
+* **An approved baseline change applies to new sandboxes only, not running ones** (each sandbox keeps the baseline it started with). Say so if asked. OpenShell's own network policy, by contrast, hot-reloads on a running sandbox.
 * **Counts move.** Numbers on the Controls page change every refresh; say "about".
 
 ## If something breaks
