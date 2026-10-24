@@ -33,6 +33,11 @@ network_policies:
           - allow:
               method: GET
               path: /services/*/deployments
+        deny_rules:
+          - method: GET
+            path: /**/*%5C*
+          - method: GET
+            path: /**/*%5C*/**
     binaries:
       - path: /opt/agent/bin/python3.12
       - path: /usr/bin/python3.12

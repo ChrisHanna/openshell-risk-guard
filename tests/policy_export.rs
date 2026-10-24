@@ -10,8 +10,8 @@
 use openshell_policy_schema::parse_policy;
 use openshell_risk_guard::detector::load_baseline_profile;
 use openshell_risk_guard::policy_export::{
-    DemoExceptions, MAX_DEMO_EXCEPTIONS, export_policy, export_policy_with_demo_exceptions,
-    glob_matches,
+    BACKSLASH_GUARDS, DemoExceptions, MAX_DEMO_EXCEPTIONS, export_policy,
+    export_policy_with_demo_exceptions, glob_matches,
 };
 use openshell_risk_guard::types::{RULE_UNAPPROVED_RESOURCE, RuleMode};
 use serde_json::{Value, json};
@@ -458,6 +458,8 @@ fn a_demo_policy_says_it_is_weakened_lists_what_it_adds_and_is_still_proved() {
             for rule in doc.network_policies.values_mut() {
                 rule.name = rule.name.split(" (DEMO").next().unwrap().to_string();
                 for e in &mut rule.endpoints {
+                    e.deny_rules
+                        .retain(|d| !BACKSLASH_GUARDS.contains(&d.path.as_str()));
                     e.rules.truncate(
                         plain_doc
                             .network_policies
@@ -548,4 +550,62 @@ fn the_end_state_profile_enforces_the_resource_rule_and_nothing_else_does() {
             "{dir}: turning the resource rule on for a live profile is a decision for its own change, not for the demo profile"
         );
     }
+}
+
+/// Finding 3 of docs/policy-path-edge-cases.md: OpenShell passes an encoded backslash inside a segment, so every generated policy (audit, enforce, demo) denies it for every
+/// method it allows, and the approved routes themselves are untouched.
+#[test]
+fn every_generated_policy_denies_an_encoded_backslash_for_each_allowed_method() {
+    let mut files = 0;
+    for dir in ENFORCE_PROFILES {
+        for name in [
+            "policy.audit.yaml",
+            "policy.enforce.yaml",
+            "policy.enforce.demo.yaml",
+        ] {
+            let path = format!("{}/{name}", profile_dir(dir));
+            if !std::path::Path::new(&path).exists() {
+                continue;
+            }
+            files += 1;
+            let document = parse_policy(&read_generated(dir, name)).unwrap();
+            for rule in document.network_policies.values() {
+                for endpoint in rule
+                    .endpoints
+                    .iter()
+                    .filter(|e| e.protocol == "rest" && !e.rules.is_empty())
+                {
+                    let methods: std::collections::BTreeSet<_> = endpoint
+                        .rules
+                        .iter()
+                        .map(|r| r.allow.method.clone())
+                        .collect();
+                    for method in methods {
+                        for guard in BACKSLASH_GUARDS {
+                            assert!(
+                                endpoint
+                                    .deny_rules
+                                    .iter()
+                                    .any(|d| d.method == method && d.path == guard),
+                                "{dir}/{name}: no deny of {guard} for {method}"
+                            );
+                        }
+                    }
+                    for guard in BACKSLASH_GUARDS {
+                        assert!(!glob_matches(guard, "/services/web"));
+                        assert!(!glob_matches(guard, "/services/web/deployments"));
+                        assert!(!glob_matches(guard, "/buckets"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        files >= 10,
+        "expected the audit, enforce and demo files of every profile, found {files}"
+    );
+    assert!(glob_matches("/**/*%5C*", "/services/..%5Ccustomers"));
+    assert!(glob_matches("/**/*%5C*", "/services/web%5Cx"));
+    assert!(glob_matches("/**/*%5C*/**", "/services/web%5C/restart"));
+    assert!(glob_matches("/**/*%5C*/**", "/web%5C/restart"));
 }

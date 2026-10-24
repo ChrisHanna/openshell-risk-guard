@@ -133,6 +133,10 @@ fn make_deny(method: String, path: String) -> L7DenyRule {
     }
 }
 
+/// Deny glob for an encoded backslash anywhere in a path. OpenShell upper-cases the hex digits before matching (a request for `%5c` is denied by the rule shown as `%5C`),
+/// so one spelling covers both. The first glob catches it in the last segment, the second in any earlier one (verified: with only the first, `POST /services/web%5c/restart` got through). Verified on the cluster: docs/policy-path-edge-cases.md.
+pub const BACKSLASH_GUARDS: [&str; 2] = ["/**/*%5C*", "/**/*%5C*/**"];
+
 /// One extra allow rule for a demonstration: a call the OpenShell policy lets through so that Risk Guard, not OpenShell, is the layer that refuses it. Each carries the reason
 /// it is there. A set of these is reviewed like any other file (`deploy/aks/agents/<profile>/demo-exceptions.json`) and is applied only when asked for.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -331,6 +335,22 @@ pub fn export_policy_with_demo_exceptions(
                 .iter()
                 .map(|(m, p)| make_deny(m.clone(), p.clone()))
                 .collect();
+            // An encoded backslash inside one segment (`/services/..%5ccustomers`) matches `/services/*`, and a backend that decodes it would read a separator. OpenShell
+            // resolves or rejects every other separator spelling but passes this one verbatim, so refuse it for every method that has an allow rule.
+            let methods: BTreeSet<&str> = endpoint
+                .rules
+                .iter()
+                .map(|r| r.allow.method.as_str())
+                .collect();
+            let guards: Vec<L7DenyRule> = methods
+                .iter()
+                .flat_map(|m| {
+                    BACKSLASH_GUARDS
+                        .iter()
+                        .map(move |p| make_deny((*m).to_string(), (*p).to_string()))
+                })
+                .collect();
+            endpoint.deny_rules.extend(guards);
             endpoint.access = String::new();
             endpoint.enforcement = enforcement.to_string();
             changed.push(format!("{name}:{}", endpoint.host));
@@ -357,20 +377,23 @@ pub fn export_policy_with_demo_exceptions(
     let yaml = serde_yml::to_string(&document)
         .map_err(|e| RiskGuardError::Policy(format!("failed to write the policy: {e}")))?;
     // The prover can only certify rules that are enforced: in audit mode nothing is restricted, so there is nothing to prove. Prove the same rules in enforce form.
-    let proof_yaml = if enforcement == "audit" {
-        let mut enforced = document.clone();
-        for rule in enforced.network_policies.values_mut() {
-            for endpoint in &mut rule.endpoints {
-                if hosts.contains(&endpoint.host) {
+    // The encoded-backslash guards are left out of what is proved: a deny rule only narrows what the allow rules permit (deny beats allow), so the policy without them is the
+    // wider one and the proof of it covers the policy with them. With them the SMT problem is far slower (minutes per profile instead of seconds) for no added assurance.
+    let mut for_proof = document.clone();
+    for rule in for_proof.network_policies.values_mut() {
+        for endpoint in &mut rule.endpoints {
+            if hosts.contains(&endpoint.host) {
+                if enforcement == "audit" {
                     endpoint.enforcement = "enforce".to_string();
                 }
+                endpoint
+                    .deny_rules
+                    .retain(|d| !BACKSLASH_GUARDS.contains(&d.path.as_str()));
             }
         }
-        serde_yml::to_string(&enforced)
-            .map_err(|e| RiskGuardError::Policy(format!("failed to write the policy: {e}")))?
-    } else {
-        yaml.clone()
-    };
+    }
+    let proof_yaml = serde_yml::to_string(&for_proof)
+        .map_err(|e| RiskGuardError::Policy(format!("failed to write the policy: {e}")))?;
     let proof = ProverHardeningEngine::new().verify_two_step_containment(
         policy_yaml,
         &proof_yaml,
@@ -399,9 +422,9 @@ pub fn export_policy_with_demo_exceptions(
     }
     let mut summary = json!({
             "task_profile": baseline.task_profile, "baseline_version": baseline.version, "enforcement": enforcement,
-            "covered_hosts": hosts, "endpoints_changed": changed, "allow_rules": allows.len(), "deny_rules": denies.len(),
+            "covered_hosts": hosts, "endpoints_changed": changed, "allow_rules": allows.len(), "deny_rules": denies.len(), "path_guard_rules": "an encoded backslash (%5c) in a path is denied for every allowed method",
             "proof": {
-                "proved_form": if enforcement == "audit" { "the same rules with enforcement: enforce (audit mode restricts nothing, so it cannot be proved)" } else { "as written" },
+                "proved_form": if enforcement == "audit" { "the same rules with enforcement: enforce (audit mode restricts nothing, so it cannot be proved), without the encoded-backslash guard denies, which only narrow it" } else { "as written, without the encoded-backslash guard denies, which only narrow it" },
                 "verified_no_wider": proof.verified_non_expanding, "step1_middleware_unchanged": proof.step1_middleware_invariant,
                 "step2_prover": proof.step2_prover_verdict, "detail": proof.step2_counterexample_or_reason,
             },
