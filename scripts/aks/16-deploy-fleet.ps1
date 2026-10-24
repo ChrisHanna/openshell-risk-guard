@@ -86,6 +86,9 @@ try {
         [IO.File]::WriteAllText((Join-Path $stage $f), $text, (New-Object Text.UTF8Encoding($false)))
     }
     Copy-Item -Recurse (Join-Path $script:RepoRoot 'deploy/aks/agents') (Join-Path $stage 'deploy/aks/agents')
+    # The end-state demo's deliberately weakened policies, their exception files and its own profile are not part of the fleet: keep them out of the image so no fleet script can select them.
+    Get-ChildItem (Join-Path $stage 'deploy/aks/agents') -Recurse -File -Include 'policy.enforce.demo.yaml', 'demo-exceptions.json' | Remove-Item -Force
+    Remove-Item -Recurse -Force (Join-Path $stage 'deploy/aks/agents/demo-end-state') -ErrorAction SilentlyContinue
     foreach ($f in Get-ChildItem (Join-Path $stage 'deploy/aks/agents') -Recurse -File -Include *.yaml, *.yml, *.json) {
         $text = (Get-Content $f.FullName -Raw) -replace "`r`n", "`n"
         [IO.File]::WriteAllText($f.FullName, $text, (New-Object Text.UTF8Encoding($false)))

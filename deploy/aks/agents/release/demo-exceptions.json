@@ -1,0 +1,10 @@
+{
+  "task_profile": "release-ops",
+  "exceptions": [
+    {
+      "method": "DELETE",
+      "path": "/services/*",
+      "reason": "DEMO ONLY: lets a service delete pass OpenShell so that Risk Guard's refusal and workload lock can be shown. Not part of the profile's baseline; the fleet never uses policy.enforce.demo.yaml."
+    }
+  ]
+}
