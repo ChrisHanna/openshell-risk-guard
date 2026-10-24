@@ -58,8 +58,9 @@ Open these tabs in this order, so you only ever move right:
 | C | `DELETE /services/worker` passes OpenShell (the disclosed exception); Risk Guard refuses it, names the rules, and locks that route for the workload; the destination's counter does not move; the next call is refused by the lock while a routine `GET` still works | "What reaches Risk Guard gets judged against this workload's task, and a refusal follows the workload." |
 | D | `GET /services/payments`: an approved route on a resource the profile does not approve is refused by Risk Guard's resource rule | "A path rule cannot say which repository or service. This can. That is what Risk Guard is for once the fixed rules live in OpenShell." |
 | E | The agreement numbers: what OpenShell would have refused across the fleet in 24 hours, and how many of those Risk Guard also refused (and zero that only OpenShell would) | "This is the evidence we use before switching the fleet from audit to enforce." |
+| F | `GET /services` again; the score is higher than in act A and the decision shows the `siem_context` rule: "openshell_denials_5m=3 (+4)". | "OpenSearch saw OpenShell deny three calls. It handed Risk Guard the count, and Risk Guard raised this workload's score because of it. Three systems, one story: OpenShell permits, Risk Guard judges, OpenSearch remembers." Say that this rule enforces in this profile only (the fleet's copy watches), that it only ever adds points and is capped, and that it did not cross the threshold here (`changes_outcome`). |
 
-The script then finds all six calls in the SIEM. Run `end_state.py --cleanup` afterwards.
+Act B now sends the denied call three times, so the SIEM has three denials to count. Act F waits for the features to travel (a minute or two after act B, up to five minutes) and says so if they have not arrived; **run the demo once earlier in the day**, and do not run it twice within ten minutes (act A would then already show the features). The script then finds all the calls in the SIEM. Run `end_state.py --cleanup` afterwards.
 
 ### Three-minute cut
 

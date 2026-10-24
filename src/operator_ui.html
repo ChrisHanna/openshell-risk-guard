@@ -7613,6 +7613,11 @@ function apprChange(change) {
   for (const route of p.add_action_classes || []) lines.push(apprEl("li", {}, "Allow ", apprEl("code", { text: route })));
   for (const host of p.add_egress_hosts || []) lines.push(apprEl("li", {}, "Allow tunnels to ", apprEl("code", { text: host })));
   for (const [name, value] of Object.entries(p.tighten_rate || {})) lines.push(apprEl("li", {}, "Lower ", apprEl("code", { text: name }), ` to ${value}`));
+  if (change.kind === "baseline_update" && (p.add_action_classes || p.add_egress_hosts)) {
+    lines.push(apprEl("li", { class: "appr-meta", text: p.home === "openshell"
+      ? "Home: Risk Guard enforces these at once; an OpenShell policy candidate is then requested for review (it reaches the next sandbox)."
+      : "Home: kept in Risk Guard." }));
+  }
   if (change.kind === "release_quarantine") lines.push(apprEl("li", { text: `Let ${change.target} make calls again.` }));
   if (change.kind === "clear_restriction") lines.push(apprEl("li", {}, "Clear the lock ", apprEl("code", { text: p.scope || "" }), ` on ${change.target}.`));
   if (change.kind === "disable_two_person") lines.push(apprEl("li", { text: "Anyone could then release or clear without a second person." }));
@@ -7739,6 +7744,9 @@ function apprSuggestions(data, canAct) {
       return apprEl("label", { class: "appr-pick" }, box, apprEl("code", { text: route.action_class }), apprEl("span", { class: "appr-meta", text: `${route.calls} calls over ${route.hours} h, none refused` }));
     });
     const reason = apprEl("input", { type: "text", maxlength: "1000", placeholder: "Why these are safe to allow (required)", "aria-label": "Reason for the proposal" });
+    const home = apprEl("select", { "aria-label": "Where the approved routes are kept" },
+      apprEl("option", { value: "risk_guard", text: "Keep in Risk Guard (can watch first; follows the workload)" }),
+      apprEl("option", { value: "openshell", text: "Also push to OpenShell policy (a candidate to review; reaches the next sandbox)" }));
     const error = apprEl("div", { class: "appr-error", role: "alert" });
     const propose = apprEl("button", { type: "button", class: "btn btn-primary", text: "Propose for approval", onclick: async () => {
       const picked = boxes.map(b => b.querySelector("input")).filter(i => i.checked).map(i => i.dataset.route);
@@ -7749,7 +7757,7 @@ function apprSuggestions(data, canAct) {
       try {
         await guardrailJson("/api/changes", { method: "POST", headers: apprHeaders(), body: JSON.stringify({
           kind: "baseline_update", task_profile: profile.task_profile, reason: reason.value.trim(),
-          params: { add_action_classes: picked, evidence: { source: data.source, window_days: 7, routes: adds.filter(r => picked.includes(r.action_class)) } } }) });
+          params: { add_action_classes: picked, home: home.value, evidence: { source: data.source, window_days: 7, routes: adds.filter(r => picked.includes(r.action_class)) } } }) });
         apprNotice = `Proposed ${picked.length} route(s) for ${profile.task_profile}. A different administrator can now approve it.`;
       } catch (e) { error.textContent = e.message; }
       apprBusy = false;
@@ -7758,7 +7766,7 @@ function apprSuggestions(data, canAct) {
     if (!canAct) propose.disabled = true;
     const card = apprEl("div", { class: "appr-card" },
       apprEl("div", { class: "appr-head" }, apprEl("span", { class: "appr-title", text: profile.task_profile }), apprEl("span", { class: "appr-meta", text: `baseline ${profile.baseline_version}` })),
-      adds.length ? apprEl("div", {}, boxes, apprEl("div", { class: "appr-actions" }, reason, propose)) : apprEl("div", { class: "appr-meta", text: "Nothing steady enough to suggest yet." }),
+      adds.length ? apprEl("div", {}, boxes, apprEl("div", { class: "appr-actions" }, reason, home, propose)) : apprEl("div", { class: "appr-meta", text: "Nothing steady enough to suggest yet." }),
       error);
     if (skipped.length) {
       card.append(apprEl("details", {}, apprEl("summary", { class: "appr-meta", text: `${skipped.length} not suggested, and why` }),

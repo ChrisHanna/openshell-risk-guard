@@ -260,19 +260,40 @@ impl SqliteRiskStore {
             controls.push(json!({
                 "id": "tunnel_restriction", "source": "rule", "name": "Latched restriction at the tunnel gate",
                 "mode": if !started_known { "unknown" } else if !tunnel_on { "off" } else if tunnel_mode.as_deref() == Some("enforce") { "enforcing" } else { "watching" },
-                "what": "After a refused action a workload is restricted. At the tunnel gate this either only records that it would cut the workload's connections (watching) or does cut them, including to the model (enforcing).",
+                "what": "After a refused action a workload is restricted. At the tunnel gate this either only records what it would cut (watching) or does cut it (enforcing). It is host-specific: a restricted workload keeps tunnels to the hosts its task explicitly approves (the model host, for example) and loses every other host.",
                 "evidence": {"note": "Counted in the SIEM as tunnel_would_refuse."}, "data": if started_known { json!({"state": "ok", "note": "Needs no history."}) } else { unknown_start.clone() },
             }));
         }
         // The deny list and the approved routes are method-and-path lists, which OpenShell's own policy can express (allow and deny rules per endpoint), reviewed and prover-checked.
+        // Each approved route change chooses its home: kept in Risk Guard (the default), or also pushed to OpenShell as a policy candidate that a person reviews and that reaches the next sandbox.
+        let (pushed, candidates_approved) = {
+            let conn = self.lock_read_conn()?;
+            (
+                conn.query_row(
+                    "SELECT COUNT(*) FROM change_requests WHERE kind = 'baseline_update' AND status = 'executed' AND json_extract(params_json, '$.home') = 'openshell'",
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )?,
+                conn.query_row(
+                    "SELECT COUNT(*) FROM change_requests WHERE kind = 'policy_update' AND status = 'approved' AND json_extract(params_json, '$.linked_change') IS NOT NULL",
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )?,
+            )
+        };
         for control in &mut controls {
             if matches!(
                 control["id"].as_str(),
                 Some(RULE_FORBIDDEN_ACTION | RULE_UNAPPROVED_ACTION)
             ) {
                 control["recommended_home"] = json!(
-                    "OpenShell policy can hold this list too, and is the better home for it. It is kept here for now so it can run in watching mode and follow a workload between sandboxes."
+                    "OpenShell policy can hold this list too, and is the better home for it. Each approved change chooses: keep it in Risk Guard (it can run in watching mode and follows a workload between sandboxes) or also push it to OpenShell."
                 );
+                control["home"] = json!({
+                    "changes_pushed_to_openshell": pushed,
+                    "policy_candidates_approved": candidates_approved,
+                    "note": "A pushed change is enforced by Risk Guard at once. Its OpenShell policy candidate reaches only the next sandbox you create with it; Risk Guard cannot see that it is in effect.",
+                });
             }
         }
         let mature = profiles

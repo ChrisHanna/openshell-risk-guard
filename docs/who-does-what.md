@@ -74,6 +74,8 @@ Only people decide, and loosening needs two. See [two-person approval](two-perso
 
 The deny list and approved routes are method-and-path rules that OpenShell policy can hold, and OpenShell's network rules take effect on running sandboxes within seconds, while a Risk Guard baseline change applies only to new sandboxes. The plan to move them is in [plan: policy consolidation](plan-policy-consolidation.md).
 
+**Each approved route change chooses its home.** When a baseline change is proposed (Approvals page, "Where the approved routes are kept"), it is either *kept in Risk Guard* (the default: it can run in watching mode and follows a workload between sandboxes) or *also pushed to OpenShell*. A pushed change is enforced by Risk Guard the moment it is approved, so nothing is unprotected meanwhile; Risk Guard then requests a policy candidate for the same profile, generated from the baseline as it now is and proved no wider than the sandbox's current policy. That candidate is an ordinary request in the queue for a person to approve; approving applies nothing (a person runs the command), and it reaches only the next sandbox created with it. If the candidate cannot be built or proved, the change's outcome says so and the entries stay enforced by Risk Guard alone. Rate limits always stay in Risk Guard. Controls shows how many changes chose OpenShell and how many candidates were approved; it cannot see that a sandbox is running one.
+
 ## Where the confusion usually comes from
 
 - **A "would refuse" in the SIEM is not a block.** It is a shadow decision. Today most of the 400 or so in the last hours say a workload holds a latched restriction; enforcing that would also cut the workload's calls to the model.

@@ -338,3 +338,115 @@ fn a_rejected_or_expired_request_has_no_policy_to_download_and_cannot_be_approve
     );
     assert!(store.change_policy("nosuchid", START).unwrap().is_none());
 }
+
+/// Each approved route change chooses its home. Keeping it in Risk Guard (the default) asks for nothing more; choosing OpenShell also asks for a policy candidate, generated from
+/// the baseline as it then is and proved no wider, as an ordinary request for a person to review.
+#[test]
+fn an_approved_baseline_change_can_ask_for_an_openshell_policy_candidate() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(&dir, &["GET /services"]);
+    // The default home: Risk Guard keeps the entry, and no policy request appears. (A host, not a route: the prover's cost grows with the number of routes, and this test
+    // must leave the baseline small enough for it to finish in a debug build.)
+    let kept = store
+        .propose_change(
+            "baseline_update",
+            "release-ops",
+            &json!({"add_egress_hosts": ["api.example.org"]}),
+            "steady",
+            "alice",
+            START + 1,
+        )
+        .unwrap();
+    let result = store
+        .decide_change(&kept, "bob", true, "reviewed", START + 2)
+        .unwrap();
+    assert!(
+        result["outcome"].as_str().unwrap().starts_with("executed"),
+        "{result}"
+    );
+    let listed = store.list_changes(100, START + 3).unwrap();
+    assert!(
+        listed["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["kind"] != "policy_update")
+    );
+
+    // OpenShell as the home: the baseline gets the route at once, and a policy candidate is requested and waits.
+    let _turn = PROVER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let pushed = store
+        .propose_change(
+            "baseline_update",
+            "release-ops",
+            &json!({"add_action_classes": ["GET /services/{svc}"], "home": "openshell"}),
+            "steady",
+            "alice",
+            START + 4,
+        )
+        .unwrap();
+    let result = store
+        .decide_change(&pushed, "bob", true, "reviewed", START + 5)
+        .unwrap();
+    let outcome = result["outcome"].as_str().unwrap();
+    assert!(outcome.starts_with("executed"), "{result}");
+    assert!(
+        outcome.contains("OpenShell policy candidate requested"),
+        "{outcome}"
+    );
+    let baseline = store.get_baseline("release-ops").unwrap().unwrap();
+    assert!(
+        baseline
+            .allowed_action_classes
+            .contains("GET /services/{svc}"),
+        "Risk Guard enforces it at once"
+    );
+
+    let listed = store.list_changes(100, START + 6).unwrap();
+    let candidates: Vec<&Value> = listed["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["kind"] == "policy_update")
+        .collect();
+    assert_eq!(candidates.len(), 1, "{listed}");
+    assert_eq!(candidates[0]["status"], "pending");
+    assert_eq!(candidates[0]["params"]["linked_change"], pushed.as_str());
+    assert_eq!(candidates[0]["params"]["proof"]["verified_no_wider"], true);
+    assert_eq!(
+        candidates[0]["params"]["applied"], false,
+        "nothing is applied by asking"
+    );
+    assert!(
+        candidates[0]["params"]["candidate_yaml"]
+            .as_str()
+            .unwrap()
+            .contains("/services/*")
+    );
+}
+
+#[test]
+fn the_home_choice_is_checked_and_rate_limits_never_move() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(&dir, &ROUTES);
+    let bad = store.propose_change(
+        "baseline_update",
+        "release-ops",
+        &json!({"add_action_classes": ["GET /x"], "home": "elsewhere"}),
+        "r",
+        "alice",
+        START + 1,
+    );
+    assert!(bad.is_err());
+    let rates_only = store.propose_change(
+        "baseline_update",
+        "release-ops",
+        &json!({"tighten_rate": {"max_req_1m_p95": 30}, "home": "openshell"}),
+        "r",
+        "alice",
+        START + 1,
+    );
+    assert!(rates_only.is_err(), "a rate limit has no OpenShell home");
+}

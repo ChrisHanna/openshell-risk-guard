@@ -93,6 +93,15 @@ struct BaselineChange {
     routes: Vec<String>,
     hosts: Vec<String>,
     rates: Vec<(String, u32)>,
+    /// Where the approved routes and hosts are kept: `risk_guard` (the default: Risk Guard's list, which can run in watching mode and follows a workload between sandboxes), or
+    /// `openshell` (also written into a policy candidate for OpenShell, the better home for a path or host list). Rate limits always stay in Risk Guard.
+    home: Home,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Home {
+    RiskGuard,
+    OpenShell,
 }
 
 fn parse_baseline_change(params: &Value) -> Result<BaselineChange> {
@@ -127,10 +136,30 @@ fn parse_baseline_change(params: &Value) -> Result<BaselineChange> {
             "a baseline change must add a route, add an egress host or lower a rate limit".into(),
         ));
     }
+    let home = match params
+        .get("home")
+        .filter(|v| !v.is_null())
+        .map(Value::as_str)
+    {
+        None | Some(Some("risk_guard")) => Home::RiskGuard,
+        Some(Some("openshell")) => Home::OpenShell,
+        Some(_) => {
+            return Err(RiskGuardError::InvalidArgument(
+                "params.home must be risk_guard (keep the list in Risk Guard) or openshell (also write it into an OpenShell policy candidate)".into(),
+            ));
+        }
+    };
+    if home == Home::OpenShell && routes.is_empty() && hosts.is_empty() {
+        return Err(RiskGuardError::InvalidArgument(
+            "params.home openshell needs a route or host to move; rate limits stay in Risk Guard"
+                .into(),
+        ));
+    }
     Ok(BaselineChange {
         routes,
         hosts,
         rates,
+        home,
     })
 }
 
@@ -514,6 +543,18 @@ impl SqliteRiskStore {
                 Ok(text) => ("executed", text),
                 Err(error) => ("failed", error.to_string()),
             };
+            // Home "openshell": the baseline now holds the new entries (so nothing is unprotected meanwhile); ask for the matching OpenShell policy candidate.
+            let text = if kind == "baseline_update"
+                && status == "executed"
+                && parse_baseline_change(&params).is_ok_and(|c| c.home == Home::OpenShell)
+            {
+                format!(
+                    "{text}. {}",
+                    self.request_policy_candidate(&target, id, now_ms)
+                )
+            } else {
+                text
+            };
             self.lock_conn()?.execute(
                 "UPDATE change_requests SET status = ?2, outcome = ?3 WHERE id = ?1",
                 params![id, status, text],
@@ -523,6 +564,28 @@ impl SqliteRiskStore {
         Ok(
             serde_json::json!({"id": id, "kind": kind, "target": target, "proposer": proposer, "decided_by": decider, "approved": approve, "outcome": outcome}),
         )
+    }
+
+    /// After an approved baseline change that chose OpenShell as its home: propose a `policy_update` for the same profile, generated from the baseline as it now is and proven
+    /// no wider than it. It is an ordinary request in the queue; nothing is applied by it, and it reaches only the next sandbox (or a network-rule hot reload). Returns the sentence
+    /// added to the change's outcome: the new request's id, or why none could be built (the rule is then still enforced by Risk Guard).
+    fn request_policy_candidate(&self, task_profile: &str, change_id: &str, now_ms: i64) -> String {
+        let short = &change_id[..change_id.len().min(8)];
+        match self.propose_change(
+            "policy_update",
+            task_profile,
+            &serde_json::json!({"enforcement": "enforce", "linked_change": change_id}),
+            &format!("move the routes and hosts approved in change {short} into OpenShell policy"),
+            &format!("system (after change {short})"),
+            now_ms,
+        ) {
+            Ok(request) => format!(
+                "OpenShell policy candidate requested: {request} (review and approve it in Approvals, then create a new sandbox with it; until a sandbox runs it, Risk Guard still enforces these entries)"
+            ),
+            Err(error) => format!(
+                "no OpenShell policy candidate could be built ({error}); these entries stay enforced by Risk Guard only"
+            ),
+        }
     }
 
     /// The newest stored policy of a sandbox that ran under `task_profile`: the named sandbox, or the latest snapshot of any sandbox for that profile.
@@ -620,6 +683,7 @@ impl SqliteRiskStore {
             "rule_diff": rule_diff,
             "requires_new_sandbox": requires_new_sandbox,
             "notes": export.summary["notes"],
+            "linked_change": asked.get("linked_change").cloned().unwrap_or(Value::Null),
             "applied": false,
         }))
     }

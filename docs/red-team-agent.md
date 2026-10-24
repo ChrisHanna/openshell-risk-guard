@@ -51,7 +51,8 @@ What it does show: the plumbing works end to end (agent → tool → real govern
 
 ## What has not been done (honestly)
 
-* No Garak result, for the reason above. Rerun when the model quota allows: `python scripts/redteam/run.py garak-then-attack`.
+* **Garak now runs inside the model's quota (code changed, image not rebuilt, not run yet).** The 429s above were the key's quota, not Garak's own load (three one-prompt probes, one generation each). `garak_scan` now asks the model one tiny question before each probe and, on a 429, waits as long as `Retry-After` says (up to 90 s, four tries); runs probes one at a time with a pause (`GARAK_PACE_SECONDS`, default 20); retries a probe whose attempts all went unanswered; and reports any probe that never got answers as *no result*, never as a pass. Tested with fakes (`scripts/redteam/test_redteam.py`); running it needs a new agent image and quota.
+* No Garak result yet, for the reason above. Rerun when the model quota allows: `python scripts/redteam/run.py garak-then-attack`.
 * The agent found nothing, which is not a proof. The model tries few spellings; the fuzzer tries 387. Their value is different: the model adapts to the responses it sees.
 * The fleet was paused while the exercise ran (it shares the model quota) and started again afterwards.
 * The agent's identity is a plain workload id registered in Risk Guard (`red-team-agent`), not a Microsoft Entra application: the demo sandbox uses the same arrangement, and a new application in the tenant was not needed.
