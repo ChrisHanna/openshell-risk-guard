@@ -196,6 +196,14 @@ def say_decision(decision_list, leading):
     return d
 
 
+def siem_signal(decision):
+    """The `siem_context` signal of a Risk Guard decision, or None: what OpenSearch's features added to this call's score."""
+    for signal in (decision or {}).get("signals", []):
+        if signal.get("feature") == "siem_context":
+            return signal
+    return None
+
+
 def restrictions(workload):
     out = rd.risk_guard("restriction-list", "--db", DB, "--agent-id", workload, check=False)
     try:
@@ -290,7 +298,36 @@ def agreement_numbers(hours):
     say("  The gate for enforcing the fleet is 'OpenShell only' = 0 (docs/fleet-policy-modes.md). Probe sandboxes are excluded.", DIM)
 
 
-def run(cfg, pause, siem_wait, no_siem):
+def act_f(sid, calls, score_a, carried, wait):
+    """Send the same routine call as act A until Risk Guard's decision carries the `siem_context` signal. The path is: OpenShell denies (act B) -> the supervisor's OCSF
+    event -> the collector -> OpenSearch (a minute or two) -> the feature publisher (every 30 s) -> Risk Guard's /features -> the next score. Nothing is injected."""
+    say("  Three calls were denied by OpenShell in act B. OpenSearch counts them (openshell_denials_5m); the feature publisher hands the count to Risk Guard.", DIM)
+    deadline = time.time() + wait
+    last = None
+    while True:
+        r = call(*ACT_FOLLOWUP)
+        calls.append(ACT_FOLLOWUP)
+        last = (decisions(sid) or [None])[-1]
+        signal = siem_signal(last)
+        if signal or time.time() > deadline:
+            break
+        say(f"  {ACT_FOLLOWUP[0]} {ACT_FOLLOWUP[1]} -> {r['status']}, score {last.get('risk_score') if last else '?'}: the count has not reached Risk Guard yet, trying again in 20 s", DIM)
+        time.sleep(20)
+    if not signal:
+        say(f"  The features had not arrived after {wait} s. Nothing was changed by the SIEM; this is the pipeline's delay, not a decision. Run the act again in a minute.", AMBER)
+        return False
+    score = last.get("risk_score")
+    say(f"  {ACT_FOLLOWUP[0]} {ACT_FOLLOWUP[1]}  ->  {r['status']}   score {score_a} in act A  ->  {score} now", GREEN)
+    if carried:
+        say("  (act A already carried features from an earlier run, so the before/after is not clean: wait 10 minutes between runs for a clean comparison)", AMBER)
+    say(f"    what OpenSearch told Risk Guard: {signal.get('observed_summary')}", DIM)
+    say(f"    the rule: {signal.get('baseline_summary')}", DIM)
+    say("  Risk Guard added the points because this profile enforces the siem_context rule. It only ever adds, it is capped, and it did not change the outcome here "
+        "(see changes_outcome); in the fleet the rule is only watching.", DIM)
+    return True
+
+
+def run(cfg, pause, siem_wait, no_siem, feature_wait=300):
     started = time.time()
     sandbox = sandbox_json()
     if not sandbox:
@@ -310,6 +347,10 @@ def run(cfg, pause, siem_wait, no_siem):
     say(f"  {ACT_A[0]} {ACT_A[1]}  ->  {r['status']}", GREEN if r["status"] == 200 else RED)
     show_events(sid, t)
     say("  OpenShell's rule allowed it, then Risk Guard allowed it; the service answered.", DIM)
+    first = (decisions(sid) or [None])[-1]
+    score_a = first.get("risk_score") if first else None
+    carried = siem_signal(first) is not None
+    say(f"  Risk Guard scored it {score_a} of {first.get('threshold') if first else '?'}" + ("  (OpenSearch features from a run in the last 10 minutes are still in force)" if carried else "  (no OpenSearch features yet)"), DIM)
 
     act("B", "A destructive call that is not an exception is refused by OpenShell; Risk Guard never sees it", pause)
     t = time.time()
@@ -318,6 +359,10 @@ def run(cfg, pause, siem_wait, no_siem):
     b = body_json(r)
     say(f"  {ACT_B[0]} {ACT_B[1]}  ->  {r['status']} {b.get('error')} (rule: {b.get('rule')})", RED if b.get("error") == "policy_denied" else AMBER)
     shown = show_events(sid, t)
+    for _ in range(2):  # three denials in all: the SIEM counts them, and act F shows what that count does to a score
+        again_b = call(*ACT_B)
+        calls.append(ACT_B)
+        say(f"  {ACT_B[0]} {ACT_B[1]}  ->  {again_b['status']} {body_json(again_b).get('error')}   (denial {len(calls) - 1} of 3, for act F)", DIM)
     saw_middleware = any("MIDDLEWARE" in s for s in shown)
     say("  Risk Guard was not consulted: no MIDDLEWARE record for this call." if not saw_middleware else "  UNEXPECTED: Risk Guard was consulted for this call.", GREEN if not saw_middleware else RED)
 
@@ -371,6 +416,9 @@ def run(cfg, pause, siem_wait, no_siem):
     except Exception as error:  # noqa: BLE001
         say(f"  could not read the SIEM: {type(error).__name__}: {error}", AMBER)
 
+    act("F", "OpenSearch remembers: the denials from act B raise the score of the next routine call", pause)
+    act_f(sid, calls, score_a, carried, feature_wait)
+
     if not no_siem:
         siem_check(sid, started, [c for c in calls], siem_wait)
     say(f"\nTotal: {round(time.time() - started)} s", DIM)
@@ -384,6 +432,7 @@ def main():
     parser.add_argument("--profile", choices=sorted(PROFILES), default="demo-end-state")
     parser.add_argument("--siem-wait", type=int, default=150, help="seconds to wait for the events to reach OpenSearch")
     parser.add_argument("--no-siem", action="store_true")
+    parser.add_argument("--feature-wait", type=int, default=300, help="seconds act F waits for the OpenSearch features to reach Risk Guard")
     args = parser.parse_args()
     cfg = PROFILES[args.profile]
     if args.prepare:
@@ -391,7 +440,7 @@ def main():
     elif args.cleanup:
         cleanup(cfg)
     else:
-        run(cfg, args.pause, args.siem_wait, args.no_siem)
+        run(cfg, args.pause, args.siem_wait, args.no_siem, args.feature_wait)
 
 
 if __name__ == "__main__":

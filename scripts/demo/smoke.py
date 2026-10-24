@@ -72,9 +72,11 @@ def end_state():
     expect("403 middleware_denied" in c and "no effect at the destination" in c, "act C: an exception passes OpenShell and Risk Guard refuses it", c.strip()[-300:])
     d = section(out, "Act D", "Act E")
     expect("unapproved_resource" in d and "403" in d, "act D: Risk Guard's resource rule refuses an approved route on an unapproved resource", d.strip()[-300:])
-    e = section(out, "Act E")
+    e = section(out, "Act E", "Act F")
     m = re.search(r"OpenShell only \(enforcing would add\):\s+(\d+)", e)
     expect(bool(m) and int(m.group(1)) == 0, "act E: enforcing the fleet would add no new blocks", e.strip()[-300:])
+    f = section(out, "Act F")
+    expect("what OpenSearch told Risk Guard" in f and "added=" in f, "act F: OpenSearch's features reached Risk Guard and added to a score", f.strip()[-400:])
     expect(re.search(r"all \d+ calls are in the SIEM", out) is not None, "every call of the demo is in the SIEM", out[-300:])
 
 

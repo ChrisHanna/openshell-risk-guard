@@ -241,19 +241,44 @@ async def garak_scan(config: GarakScanConfig, _builder: Builder):
         module = redteam.choose_probes(argument)
         if module.startswith("error"):
             return module
-        prefix = os.path.join(tempfile.mkdtemp(prefix="garak-"), "run")
         env = dict(os.environ, NIM_API_KEY=os.environ.get("NVIDIA_API_KEY", ""))
-        try:
-            subprocess.run(
-                [GARAK_PYTHON, "-m", "garak", "--model_type", "nim", "--model_name", GARAK_MODEL, "--probes", module, "--generations", "1", "--report_prefix", prefix],
-                env=env, capture_output=True, text=True, timeout=600, check=False)
-        except (OSError, subprocess.TimeoutExpired) as error:
-            return f"garak did not finish: {error}"
-        report = prefix + ".report.jsonl"
-        if not os.path.exists(report):
-            return "garak produced no report."
-        with open(report, encoding="utf-8") as handle:
-            summary = redteam.parse_garak_report(handle)
+
+        def run_one(probe: str) -> dict:
+            prefix = os.path.join(tempfile.mkdtemp(prefix="garak-"), "run")
+            try:
+                subprocess.run(
+                    [GARAK_PYTHON, "-m", "garak", "--model_type", "nim", "--model_name", GARAK_MODEL, "--probes", probe, "--generations", "1", "--report_prefix", prefix],
+                    env=env, capture_output=True, text=True, timeout=300, check=False)
+            except (OSError, subprocess.TimeoutExpired):
+                return {"attempts": 0, "results": [], "worst": None}
+            report = prefix + ".report.jsonl"
+            if not os.path.exists(report):
+                return {"attempts": 0, "results": [], "worst": None}
+            with open(report, encoding="utf-8") as handle:
+                return redteam.parse_garak_report(handle)
+
+        def wait_for_quota() -> bool:
+            """One tiny request to the hosted model; on 429 wait as long as it says (up to 90 s) and ask again, at most four times."""
+            import time as _time
+            import urllib.error
+            import urllib.request
+            body = b'{"model": "%s", "messages": [{"role": "user", "content": "ok"}], "max_tokens": 1}' % GARAK_MODEL.encode()
+            for attempt in range(4):
+                request = urllib.request.Request(os.environ.get("GARAK_QUOTA_URL", "https://integrate.api.nvidia.com/v1/chat/completions"), data=body, method="POST",
+                                                 headers={"Content-Type": "application/json", "Authorization": "Bearer " + os.environ.get("NVIDIA_API_KEY", "")})
+                try:
+                    urllib.request.urlopen(request, timeout=30).read()
+                    return True
+                except urllib.error.HTTPError as error:
+                    if error.code != 429:
+                        return True  # not a quota problem; let Garak report what it sees
+                    _time.sleep(redteam.retry_after_seconds(error.headers.get("Retry-After"), attempt))
+                except OSError:
+                    _time.sleep(redteam.retry_after_seconds(None, attempt))
+            return False
+
+        pace = int(os.environ.get("GARAK_PACE_SECONDS", "20"))
+        summary = await asyncio.to_thread(redteam.run_paced, module.split(","), run_one, wait_for_quota, pace=pace)
         with open(os.environ.get("GARAK_SUMMARY_FILE", "/sandbox/garak-summary.json"), "w", encoding="utf-8") as out:
             import json as _json
             _json.dump(summary, out)

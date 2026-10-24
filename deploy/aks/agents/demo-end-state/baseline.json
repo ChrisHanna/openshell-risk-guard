@@ -10,7 +10,7 @@
   "allowed_action_classes": ["GET /services", "GET /services/{svc}", "GET /services/{svc}/deployments"],
   "forbidden_action_classes": [],
   "forbid_unfamiliar_high_impact": true,
-  "rule_modes": {"unapproved_action": "enforce", "unapproved_resource": "enforce", "egress_destination": "shadow"},
+  "rule_modes": {"unapproved_action": "enforce", "unapproved_resource": "enforce", "egress_destination": "shadow", "siem_context": "enforce"},
   "approved_egress_hosts": ["integrate.api.nvidia.com"],
   "max_req_1m_p95": 60,
   "max_req_1m_p99": 120,

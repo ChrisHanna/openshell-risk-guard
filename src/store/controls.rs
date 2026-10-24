@@ -307,10 +307,20 @@ impl SqliteRiskStore {
             "evidence": {"refused_24h": reason(REASON_BEHAVIORAL_RISK_RESTRICTED), "calls_24h": total_24h},
             "data": {"state": "ok", "note": "Needs no history."},
         }));
+        let (models, waiting_review, last_pass) = {
+            let conn = self.lock_read_conn()?;
+            (
+                conn.query_row("SELECT COUNT(*) FROM adaptive_models", [], |r| r.get::<_, i64>(0))?,
+                conn.query_row("SELECT COUNT(*) FROM adaptive_sessions WHERE status = 'pending_review'", [], |r| r.get::<_, i64>(0))?,
+                conn.query_row("SELECT MAX(created_at_ms) FROM adaptive_audit WHERE actor = 'scheduled-trainer'", [], |r| r.get::<_, Option<i64>>(0))?,
+            )
+        };
         controls.push(json!({
             "id": "adaptive_learning", "source": "learned", "name": "Adaptive learning", "mode": "watching",
             "what": "Learns each workload's normal behavior from allowed traffic and offers a model for a person to review. It never refuses anything until a person promotes it.",
-            "evidence": {"note": "See the Adaptive tab on a workload."}, "data": {"state": "ok", "note": "Reports its own maturity per workload."},
+            "evidence": {"models": models, "sessions_waiting_for_a_person": waiting_review, "last_scheduled_training_ms": last_pass,
+                         "note": "See the Adaptive tab on a workload."},
+            "data": {"state": "ok", "note": format!("{models} model(s) in all. {waiting_review} captured session(s) wait for a person to approve or reject them; runs that end clean are approved and trained automatically, and a scheduled pass (--adaptive-schedule-minutes) trains any approved windows a model has not seen yet.")},
         }));
         controls.push(json!({
             "id": "quarantine", "source": "operator", "name": "Quarantine", "mode": "enforcing",

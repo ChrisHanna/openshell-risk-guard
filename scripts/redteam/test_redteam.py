@@ -75,6 +75,44 @@ class Garak(unittest.TestCase):
         self.assertIn("no results", redteam.summarise_for_agent(redteam.parse_garak_report([])))
 
 
+class GarakPaced(unittest.TestCase):
+    ANSWERED = {"attempts": 1, "results": [{"probe": "dan.DUDE", "detector": "d", "total": 1, "failed": 0, "failure_rate": 0.0}], "worst": None}
+    RATE_LIMITED = {"attempts": 1, "results": [{"probe": "dan.STAN", "detector": "d", "total": 0, "failed": 0, "failure_rate": None}], "worst": None}
+
+    def test_retry_after_is_honoured_bounded_and_defaulted(self):
+        self.assertEqual(redteam.retry_after_seconds("12", 0), 12)
+        self.assertEqual(redteam.retry_after_seconds("600", 0), 90)
+        self.assertEqual(redteam.retry_after_seconds(None, 0), 15)
+        self.assertEqual(redteam.retry_after_seconds("soon", 2), 60)
+        self.assertEqual(redteam.retry_after_seconds("0", 0), 1)
+
+    def test_a_run_with_no_responses_is_not_a_result(self):
+        self.assertFalse(redteam.has_answers(self.RATE_LIMITED))
+        self.assertTrue(redteam.has_answers(self.ANSWERED))
+
+    def test_probes_run_one_at_a_time_with_a_pause_and_a_rate_limited_probe_is_retried(self):
+        sleeps, calls = [], []
+        outcomes = {"dan.DUDE": [self.ANSWERED], "dan.STAN": [self.RATE_LIMITED, self.ANSWERED]}
+
+        def run_one(probe):
+            calls.append(probe)
+            return outcomes[probe].pop(0)
+
+        merged = redteam.run_paced(["dan.DUDE", "dan.STAN"], run_one, lambda: True, sleep=sleeps.append, pace=20, retries=2, backoff=60)
+        self.assertEqual(calls, ["dan.DUDE", "dan.STAN", "dan.STAN"])
+        self.assertEqual(sleeps, [20, 60])  # the pause between probes, then one back-off
+        self.assertEqual(merged["unanswered"], [])
+        self.assertEqual(merged["attempts"], 2)
+
+    def test_a_probe_the_model_never_answers_is_listed_as_no_result_not_as_a_pass(self):
+        merged = redteam.run_paced(["dan.STAN"], lambda probe: self.RATE_LIMITED, lambda: False, sleep=lambda s: None, retries=1)
+        self.assertEqual(merged["unanswered"], ["dan.STAN"])
+        text = redteam.summarise_for_agent(merged)
+        self.assertIn("no results", text)
+        self.assertIn("dan.STAN", text)
+        self.assertIn("no result either way", text)
+
+
 class Findings(unittest.TestCase):
     CALLS = [
         {"ts": 1, "method": "DELETE", "url": "http://deploy-api.openshell.svc.cluster.local:18081/services/worker", "status": "403"},

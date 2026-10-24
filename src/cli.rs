@@ -115,6 +115,14 @@ pub enum Commands {
             default_value_t = 30
         )]
         decision_retention_days: u32,
+        /// Every this many minutes, train a shadow adaptive model on approved windows no model has seen yet (for workloads whose auto-learning is on). It never approves a
+        /// window, promotes a model or grants maturity: those stay with a person. 0 turns the pass off.
+        #[arg(
+            long = "adaptive-schedule-minutes",
+            env = "RISK_GUARD_ADAPTIVE_SCHEDULE_MINUTES",
+            default_value_t = 0
+        )]
+        adaptive_schedule_minutes: u32,
         /// Also serve the middleware on this address with mutual TLS, identifying each caller by the SPIFFE ID in its X.509-SVID.
         /// Needs --svid-bundle and --svid-trust-domain, and reuses --tls-cert/--tls-key as the server identity.
         #[arg(long = "svid-listen", env = "RISK_GUARD_SVID_LISTEN")]
@@ -829,6 +837,7 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             workload_from_principal,
             allow_local_dev_principal,
             decision_retention_days,
+            adaptive_schedule_minutes,
             svid_listen,
             svid_bundle,
             svid_trust_domains,
@@ -916,6 +925,42 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                 tracing::info!(
                     retention_days = decision_retention_days,
                     "decision retention is enabled"
+                );
+            }
+            if adaptive_schedule_minutes > 0 {
+                let scheduled_store = Arc::clone(&store);
+                let every =
+                    std::time::Duration::from_secs(u64::from(adaptive_schedule_minutes) * 60);
+                tokio::spawn(async move {
+                    let mut tick = tokio::time::interval(every);
+                    tick.tick().await; // the first tick is immediate; start after one full interval
+                    loop {
+                        tick.tick().await;
+                        let store = Arc::clone(&scheduled_store);
+                        match tokio::task::spawn_blocking(move || {
+                            store.scheduled_adaptive_pass(now_unix_ms())
+                        })
+                        .await
+                        {
+                            Ok(Ok(pass)) => tracing::info!(
+                                workloads = pass.workloads,
+                                trained = pass.trained,
+                                skipped = pass.skipped,
+                                waiting_for_review = pass.waiting_for_review,
+                                "scheduled adaptive pass"
+                            ),
+                            Ok(Err(err)) => {
+                                tracing::warn!(error = %err, "scheduled adaptive pass failed")
+                            }
+                            Err(err) => {
+                                tracing::warn!(error = %err, "scheduled adaptive pass task failed")
+                            }
+                        }
+                    }
+                });
+                tracing::info!(
+                    minutes = adaptive_schedule_minutes,
+                    "scheduled adaptive training is enabled"
                 );
             }
             if store.get_baseline(&default_task_profile)?.is_none() {

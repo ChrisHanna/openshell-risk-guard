@@ -165,6 +165,75 @@ fn train_one(store: &SqliteRiskStore, t: i64) -> Value {
 }
 
 #[test]
+fn the_scheduled_pass_trains_windows_a_person_approved_and_does_nothing_else() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seed(&dir.path().join("scheduled.db"));
+    let t = now();
+
+    // A person captures, finishes and approves a window by hand. Approving does not train, so there is no model yet.
+    let session = start(&store, "run-1", LearningScope::LocalDemo, t);
+    for i in 0..12 {
+        native(
+            &store,
+            &request("sandbox-1", &format!("sched-{i}"), "GET", t + 1 + i),
+        );
+    }
+    review(&store, &session, CaptureReview::Finish, t + 30);
+    let view = review(&store, &session, CaptureReview::Approve, t + 31);
+    assert_eq!(view["models"].as_array().unwrap().len(), 0);
+
+    let pass = store.scheduled_adaptive_pass(t + 40).unwrap();
+    assert_eq!((pass.trained, pass.skipped), (1, 0), "{pass:?}");
+    let view = store.agent_adaptive("learner", t + 41).unwrap().unwrap();
+    let models = view["models"].as_array().unwrap();
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0]["shadow"], true, "a scheduled model only watches");
+    assert_eq!(models[0]["enforced"], false);
+
+    // Nothing is newer than the model now, so a second pass does nothing.
+    let again = store.scheduled_adaptive_pass(t + 50).unwrap();
+    assert_eq!((again.trained, again.skipped), (0, 0), "{again:?}");
+    assert_eq!(
+        store.agent_adaptive("learner", t + 51).unwrap().unwrap()["models"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn the_scheduled_pass_leaves_a_workload_whose_auto_learning_a_person_paused() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seed(&dir.path().join("scheduled-paused.db"));
+    let t = now();
+    let session = start(&store, "run-1", LearningScope::LocalDemo, t);
+    for i in 0..12 {
+        native(
+            &store,
+            &request("sandbox-1", &format!("paused-{i}"), "GET", t + 1 + i),
+        );
+    }
+    review(&store, &session, CaptureReview::Finish, t + 30);
+    review(&store, &session, CaptureReview::Approve, t + 31);
+    apply(
+        &store,
+        AdaptiveOperation::SetAutoLearning { enabled: false },
+        t + 32,
+    );
+
+    let pass = store.scheduled_adaptive_pass(t + 40).unwrap();
+    assert_eq!(pass.trained, 0, "{pass:?}");
+    assert_eq!(
+        store.agent_adaptive("learner", t + 41).unwrap().unwrap()["models"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+#[test]
 fn only_fresh_native_calls_in_an_explicit_window_are_training_evidence() {
     let dir = tempfile::tempdir().unwrap();
     let store = seed(&dir.path().join("learning.db"));

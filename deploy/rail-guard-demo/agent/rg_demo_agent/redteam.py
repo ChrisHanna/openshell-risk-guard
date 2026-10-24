@@ -103,10 +103,56 @@ def parse_garak_report(lines) -> dict:
             "worst": max((r for r in results if r["failure_rate"] is not None), key=lambda r: r["failure_rate"], default=None)}
 
 
+def has_answers(summary: dict) -> bool:
+    """True when the model answered at least one attempt. A run where every evaluation has 0 responses is a rate-limited run (HTTP 429), not a result."""
+    return any(r["total"] > 0 for r in summary.get("results", []))
+
+
+def retry_after_seconds(header, attempt: int, cap: int = 90) -> int:
+    """How long to wait after a 429: the server's Retry-After (seconds) when it gives one, else 15 s doubling per attempt. Never more than `cap`, never less than 1."""
+    try:
+        wait = int(float(header))
+    except (TypeError, ValueError):
+        wait = 15 * (2 ** attempt)
+    return max(1, min(wait, cap))
+
+
+def merge_summaries(parts) -> dict:
+    results = [r for part in parts for r in part.get("results", [])]
+    return {"attempts": sum(part.get("attempts", 0) for part in parts), "results": results,
+            "worst": max((r for r in results if r["failure_rate"] is not None), key=lambda r: r["failure_rate"], default=None)}
+
+
+def run_paced(probes, run_one, wait_for_quota, sleep=time.sleep, pace: int = 20, retries: int = 2, backoff: int = 60) -> dict:
+    """Run Garak one probe at a time inside the model's quota. Before each probe `wait_for_quota()` returns True once the model is answering (it does its own waiting); a probe
+    whose every attempt went unanswered is retried after a growing pause. A probe that never gets answers is listed as `unanswered`: no result, which is not the same as a pass."""
+    parts, unanswered = [], []
+    for index, probe in enumerate(probes):
+        if index:
+            sleep(pace)
+        answered = False
+        for attempt in range(retries + 1):
+            if wait_for_quota():
+                summary = run_one(probe)
+                if has_answers(summary):
+                    parts.append(summary)
+                    answered = True
+                    break
+            if attempt < retries:
+                sleep(backoff * (attempt + 1))
+        if not answered:
+            unanswered.append(probe)
+    merged = merge_summaries(parts)
+    merged["unanswered"] = unanswered
+    return merged
+
+
 def summarise_for_agent(summary: dict) -> str:
+    unanswered = summary.get("unanswered") or []
+    note = f" Probes the model never answered (rate-limited, no result either way): {', '.join(unanswered)}." if unanswered else ""
     if not summary["results"]:
-        return "garak produced no results (the model may not have answered)."
+        return "garak produced no results (the model did not answer)." + note
     lines = [f"garak ran {summary['attempts']} attempts. Failure rate per probe/detector (a failure is the model doing what the attack wanted):"]
     for r in summary["results"][:12]:
         lines.append(f"- {r['probe']} / {r['detector']}: {r['failed']} of {r['total']} failed ({r['failure_rate']})")
-    return "\n".join(lines)
+    return "\n".join(lines) + note

@@ -40,6 +40,26 @@ pub(super) struct Frame<'a> {
     pub request: &'a NormalizedRequest,
     pub window: &'a WindowSnapshot,
     pub cooldown_ms: i64,
+    /// The fresh SIEM features the detector used for this same decision (none on a path that never loaded any). The learner receives them as
+    /// bounded context: they can add to an anomaly it already sees, never start one.
+    pub features: Option<&'a ContextFeatures>,
+}
+
+/// The counts OpenSearch published, in the learner's vocabulary. `None` when there are no features, so a decision without them scores exactly as before.
+fn context_inputs(features: Option<&ContextFeatures>) -> Option<learner::ContextInputs> {
+    use crate::types::FeatureScope::{Fleet, Sandbox, Workload};
+    let features = features.filter(|features| !features.is_empty())?;
+    let inputs = learner::ContextInputs {
+        openshell_denials_5m: features.get(Sandbox, "openshell_denials_5m"),
+        openshell_denials_1h: features.get(Sandbox, "openshell_denials_1h"),
+        openshell_would_block_5m: features.get(Sandbox, "openshell_would_block_5m"),
+        refusal_ratio_15m_permille: features.get(Workload, "refusal_ratio_15m_permille"),
+        fleet_openshell_denials_5m: features.get(Fleet, "fleet_openshell_denials_5m"),
+        fleet_workloads_with_denials_5m: features.get(Fleet, "fleet_workloads_with_denials_5m"),
+        fleet_refusal_ratio_15m_permille: features.get(Fleet, "fleet_refusal_ratio_15m_permille"),
+        fleet_active_workloads_15m: features.get(Fleet, "fleet_active_workloads_15m"),
+    };
+    (!inputs.is_empty()).then_some(inputs)
 }
 
 pub(super) struct Assessment {
@@ -541,6 +561,107 @@ impl SqliteRiskStore {
             .ok_or_else(|| RiskGuardError::Storage("agent disappeared".into()))?;
         tx.commit()?;
         Ok(AdaptiveUpdateResult::Applied(result))
+    }
+}
+
+/// What one scheduled pass did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScheduledPass {
+    /// Workloads looked at (auto-learning on, and at least one capture session).
+    pub workloads: usize,
+    /// Shadow models trained because approved windows were newer than the newest model.
+    pub trained: usize,
+    /// Trainings that could not run (too few windows, too many, a changed scoring context); nothing was changed for them.
+    pub skipped: usize,
+    /// Captured sessions waiting for a person, across the workloads looked at.
+    pub waiting_for_review: usize,
+}
+
+impl SqliteRiskStore {
+    /// The scheduled half of adaptive learning. A run that ends clean is approved and trained at once; this pass catches what that path leaves behind: windows a person
+    /// approved by hand (approving does not train), and trainings that were skipped. For each workload with auto-learning on, any approved window newer than the newest
+    /// model for its (context, scope, guardrails revision) gets one new SHADOW model. Never approves a window, never promotes a model, never grants a maturity credit:
+    /// those stay with a person. Workloads whose auto-learning a person paused are left alone.
+    pub fn scheduled_adaptive_pass(&self, now_ms: i64) -> Result<ScheduledPass> {
+        let mut conn = self.lock_conn()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let agents: Vec<String> = {
+            let mut stmt =
+                tx.prepare("SELECT DISTINCT agent_id FROM adaptive_sessions ORDER BY agent_id")?;
+            stmt.query_map([], |row| row.get(0))?
+                .collect::<std::result::Result<_, _>>()?
+        };
+        let mut pass = ScheduledPass::default();
+        for agent in agents {
+            if !auto_learning_enabled(&tx, &agent)? {
+                continue;
+            }
+            pass.workloads += 1;
+            let revision = current_revision(&tx, &agent)?;
+            let windows: Vec<(String, String, i64)> = {
+                let mut stmt = tx.prepare(
+                    "SELECT context_id, scope, MAX(COALESCE(ended_at_ms, started_at_ms)) FROM adaptive_sessions
+                     WHERE agent_id = ?1 AND status = 'approved' AND guardrails_revision = ?2 GROUP BY context_id, scope",
+                )?;
+                stmt.query_map(params![agent, revision], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })?
+                .collect::<std::result::Result<_, _>>()?
+            };
+            for (context, scope_text, newest_window) in windows {
+                let newest_model: Option<i64> = tx.query_row(
+                    "SELECT MAX(created_at_ms) FROM adaptive_models
+                     WHERE agent_id = ?1 AND context_id = ?2 AND scope = ?3 AND guardrails_revision = ?4",
+                    params![agent, context, scope_text, revision],
+                    |row| row.get(0),
+                )?;
+                if newest_model.is_some_and(|model| model >= newest_window) {
+                    continue;
+                }
+                let scope = match scope_text.as_str() {
+                    "verified" => LearningScope::Verified,
+                    "local_demo" => LearningScope::LocalDemo,
+                    _ => continue,
+                };
+                // One savepoint per training: a failure must leave no half-written model behind.
+                tx.execute_batch("SAVEPOINT scheduled_train")?;
+                match train(
+                    &tx,
+                    &agent,
+                    &context,
+                    scope,
+                    revision,
+                    "scheduled-trainer",
+                    now_ms,
+                ) {
+                    Ok(()) => {
+                        tx.execute_batch("RELEASE scheduled_train")?;
+                        audit(
+                            &tx,
+                            &agent,
+                            "scheduled-trainer",
+                            "scheduled_train",
+                            now_ms,
+                            json!({"context_id": context, "scope": scope_text, "newest_window_ms": newest_window}),
+                        )?;
+                        pass.trained += 1;
+                    }
+                    Err(error) => {
+                        tx.execute_batch("ROLLBACK TO scheduled_train; RELEASE scheduled_train")?;
+                        tracing::info!(%agent, %context, %error, "scheduled adaptive training skipped");
+                        pass.skipped += 1;
+                    }
+                }
+            }
+            pass.waiting_for_review += usize::try_from(tx.query_row(
+                "SELECT COUNT(*) FROM adaptive_sessions WHERE agent_id = ?1 AND status = 'pending_review'",
+                params![agent],
+                |row| row.get::<_, i64>(0),
+            )?)
+            .unwrap_or(0);
+        }
+        tx.commit()?;
+        Ok(pass)
     }
 }
 
@@ -1289,8 +1410,7 @@ fn load_and_assess(
         frame.request,
         &window.0,
         Some(&window.1),
-        // SIEM context is not wired in yet: the learner accepts it (see `learner::ContextInputs`) and the store passes none.
-        None,
+        context_inputs(frame.features).as_ref(),
     );
     Ok(Some((model, result)))
 }
@@ -1939,4 +2059,42 @@ pub(super) fn ensure_maturity_table(conn: &Connection) -> Result<()> {
         "../../migrations/0008_adaptive_maturity_credits.sql"
     ))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{ContextFeature, FeatureScope};
+
+    fn feature(scope: FeatureScope, name: &str, value: u32) -> ContextFeature {
+        ContextFeature {
+            scope,
+            name: name.to_string(),
+            value,
+            subject: "test".to_string(),
+            age_ms: 0,
+        }
+    }
+
+    #[test]
+    fn no_features_means_no_learner_context() {
+        assert!(context_inputs(None).is_none());
+        assert!(context_inputs(Some(&ContextFeatures::default())).is_none());
+    }
+
+    #[test]
+    fn the_siem_features_reach_the_learner_under_their_own_names() {
+        let features = ContextFeatures::new([
+            feature(FeatureScope::Sandbox, "openshell_denials_5m", 4),
+            feature(FeatureScope::Workload, "refusal_ratio_15m_permille", 400),
+            feature(FeatureScope::Fleet, "fleet_workloads_with_denials_5m", 3),
+            // Route features are not the learner's vocabulary; they are used only by the rule `siem_context`.
+            feature(FeatureScope::Workload, "new_routes_1h", 9),
+        ]);
+        let inputs = context_inputs(Some(&features)).expect("context");
+        assert_eq!(inputs.openshell_denials_5m, Some(4));
+        assert_eq!(inputs.refusal_ratio_15m_permille, Some(400));
+        assert_eq!(inputs.fleet_workloads_with_denials_5m, Some(3));
+        assert_eq!(inputs.openshell_denials_1h, None);
+    }
 }

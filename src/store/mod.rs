@@ -29,6 +29,7 @@ mod operations;
 mod replay;
 mod siem_features;
 mod signals;
+pub use adaptive::ScheduledPass;
 use identity::{AgentIdentity, resolve_identity};
 pub use operations::RestrictionTarget;
 pub use siem_features::{
@@ -1647,6 +1648,7 @@ impl SqliteRiskStore {
                 request: req,
                 window: &window,
                 cooldown_ms: adaptive_cooldown_ms,
+                features: None,
             };
             let base_evaluation = eval.clone();
             let assessments = adaptive::evaluate(&tx, &adaptive_frame, &mut eval)?;
@@ -1721,6 +1723,7 @@ impl SqliteRiskStore {
             request: req,
             window: &window,
             cooldown_ms: adaptive_cooldown_ms,
+            features: Some(&features),
         };
         let base_evaluation = eval.clone();
         let assessments = adaptive::evaluate(&tx, &adaptive_frame, &mut eval)?;
