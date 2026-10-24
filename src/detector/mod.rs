@@ -45,9 +45,11 @@ pub const REASON_BASELINE_INSUFFICIENT: &str = "baseline_insufficient";
 /// Stable reason code when a request is within normal behavioral bounds ($S < 20$).
 pub const REASON_OK: &str = "ok";
 
-/// Version identifier for the interaction-aware risk detector. `v2` added the `siem_context` rule (R1 to R4, see `siem`); with no SIEM features a
-/// decision scores exactly as it did under `interaction-v1`, but the identifier and the configuration hash changed on purpose.
-pub const DETECTOR_VERSION: &str = "interaction-v2";
+/// Version identifier for the interaction-aware risk detector. It did NOT change when the `siem_context` rule (R1 to R4, see `siem`) was added, on purpose: the rule is
+/// purely additive (with no SIEM features, or while it only watches, a decision scores exactly as before), and it can change an outcome only after a profile's baseline sets
+/// it to enforce, which changes the baseline hash and so starts a new scoring context anyway. Changing this identifier would instead refuse every run that started before an
+/// upgrade ("scoring configuration no longer matches its immutable binding"), and long-lived workloads (the SVID listener's, with a fixed run id) cannot start a new one.
+pub const DETECTOR_VERSION: &str = "interaction-v1";
 
 /// Scoring variant for comparative evaluation and ablation studies (`t10-eval-benchmark-harness`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -262,7 +264,7 @@ impl InteractionRiskDetector {
 impl RiskDetector for InteractionRiskDetector {
     fn configuration_id(&self) -> String {
         let configuration = format!(
-            "{}:{}:{}:{}:{}:siem_context=R1-R4/1",
+            "{}:{}:{}:{}:{}",
             self.detector_version(),
             self.observe_threshold,
             self.enforce_threshold,
@@ -699,9 +701,9 @@ impl RiskDetector for InteractionRiskDetector {
     fn detector_version(&self) -> &str {
         match self.variant {
             ScoringVariant::FullContextual => DETECTOR_VERSION,
-            ScoringVariant::NoveltyOnly => "interaction-v2-novelty-only",
-            ScoringVariant::TaskConstraintOnly => "interaction-v2-task-constraint-only",
-            ScoringVariant::WithoutInteractionTerm => "interaction-v2-no-interaction",
+            ScoringVariant::NoveltyOnly => "interaction-v1-novelty-only",
+            ScoringVariant::TaskConstraintOnly => "interaction-v1-task-constraint-only",
+            ScoringVariant::WithoutInteractionTerm => "interaction-v1-no-interaction",
         }
     }
 }

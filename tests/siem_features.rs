@@ -800,7 +800,7 @@ fn with_request_id(plain: &RiskEvaluation, id: &str, like: &RiskEvaluation) -> R
 fn a_decision_without_features_carries_nothing_new() {
     let eval = scored(None, None, None);
     assert!(eval.signals.iter().all(|s| s.feature != "siem_context"));
-    assert_eq!(eval.detector_version, "interaction-v2");
+    assert_eq!(eval.detector_version, "interaction-v1");
     let json = serde_json::to_string(&eval).unwrap();
     assert!(!json.contains("siem"), "{json}");
 }
@@ -1136,13 +1136,15 @@ fn a_bundle_recorded_without_any_features_still_replays_and_looks_as_it_did_befo
 }
 
 #[test]
-fn the_detector_version_and_configuration_hash_changed_on_purpose() {
+fn the_detector_identity_did_not_change_so_runs_started_before_the_upgrade_keep_working() {
+    // A run is bound to its scoring configuration for life. The siem_context rule is additive and only changes an outcome once a baseline enforces it (which changes the
+    // baseline hash and so the scoring context), so the identity must stay what it was: otherwise every long-lived run (the SVID listener's have a fixed run id and
+    // cannot start a new one) is refused after an upgrade.
     let detector = InteractionRiskDetector::new_default();
-    assert_eq!(detector.detector_version(), "interaction-v2");
-    // The v1 configuration was the hash of "interaction-v1:20:70:300000:full_contextual"; this build's differs.
+    assert_eq!(detector.detector_version(), "interaction-v1");
     use sha2::{Digest, Sha256};
     let v1 = hex::encode(Sha256::digest(
         b"interaction-v1:20:70:300000:full_contextual",
     ));
-    assert_ne!(detector.configuration_id(), v1);
+    assert_eq!(detector.configuration_id(), v1);
 }
