@@ -122,5 +122,15 @@ class RealSummaries(unittest.TestCase):
         self.assertLessEqual(report["flagged"], 3)
 
 
+class RustHarnessFleet(unittest.TestCase):
+    def test_the_fleet_the_rust_evaluation_reads_is_the_fleet_defined_here(self):
+        import agents
+        path = os.path.join(os.path.dirname(__file__), "..", "..", "testdata", "adaptive-eval", "fleet.json")
+        with open(path, encoding="utf-8") as handle:
+            committed = json.load(handle)
+        self.assertEqual(committed, json.loads(json.dumps(agents.fleet_json())),
+                         "testdata/adaptive-eval/fleet.json is stale; run: python scripts/ml/agents.py --dump > testdata/adaptive-eval/fleet.json")
+
+
 if __name__ == "__main__":
     unittest.main()

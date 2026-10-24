@@ -279,9 +279,18 @@ impl SqliteRiskStore {
             .iter()
             .filter(|p| p.maturity() == BaselineMaturity::Mature)
             .count();
+        // Workloads whose maturity an operator backed with what the adaptive learner observed (who, when, which model).
+        let credits = adaptive::counting_credits(&*self.lock_read_conn()?)?;
         let learning: Vec<Value> = profiles
             .iter()
-            .map(|p| json!({"task_profile": p.task_profile, "sessions": p.training_sessions, "requests": p.training_requests, "enough": p.maturity() == BaselineMaturity::Mature}))
+            .map(|p| {
+                let credited: Vec<Value> = credits
+                    .iter()
+                    .filter(|c| c.task_profile == p.task_profile)
+                    .map(|c| json!({"workload": c.agent_id, "sessions": c.sessions, "requests": c.requests, "credited_by": c.granted_by, "credited_at_ms": c.granted_at_ms, "model_id": c.model_id}))
+                    .collect();
+                json!({"task_profile": p.task_profile, "sessions": p.training_sessions, "requests": p.training_requests, "enough": p.maturity() == BaselineMaturity::Mature, "credited_workloads": credited})
+            })
             .collect();
         controls.push(json!({
             "id": "behavioral_score", "source": "learned", "name": "Behavioral score",
@@ -290,7 +299,7 @@ impl SqliteRiskStore {
             "profiles": learning,
             "evidence": {"refused_24h": reason(REASON_BEHAVIORAL_RISK_DENIED), "scored_but_not_enforceable_24h": reason(REASON_BASELINE_INSUFFICIENT), "calls_24h": total_24h},
             "data": {"state": if mature == profiles.len() && !profiles.is_empty() { "ok" } else { "not_enough_data" },
-                     "note": format!("{mature} of {} task profiles have learned enough (20 sessions and 200 requests each). Until a profile has, OpenShell policy and the approved lists above are what protect it.", profiles.len())},
+                     "note": format!("{mature} of {} task profiles have learned enough (20 sessions and 200 requests each). Until a profile has, OpenShell policy and the approved lists above are what protect it.{}", profiles.len(), if credits.is_empty() { String::new() } else { format!(" {} workload(s) are mature through an operator-credited adaptive model instead of the hand-kept counters (see credited_workloads).", credits.len()) })},
         }));
         controls.push(json!({
             "id": "latched_restriction", "source": "rule", "name": "Latched restriction (after a refused action)", "mode": "enforcing",

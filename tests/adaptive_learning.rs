@@ -1090,3 +1090,222 @@ fn zero_click_auto_shadow_learning_enrolls_approves_and_fits_on_run_end_while_bl
             .any(|s| s["run_id"] == "resumed-run" && s["status"] == "recording")
     );
 }
+
+/// Train twenty-five qualifying runs, gather the shadow evidence and promote the model. Returns its id and the time to continue from.
+fn enforced_model(store: &SqliteRiskStore, t: i64) -> (String, i64) {
+    let mut context = String::new();
+    for index in 0..25 {
+        let run = format!("mature-run-{index}");
+        let sandbox = format!("mature-sandbox-{index}");
+        bind(store, &run, &sandbox);
+        let start_time = t + index * 60_000 + if index >= 20 { 1 } else { 0 };
+        let session = start(store, &run, LearningScope::LocalDemo, start_time);
+        for event in 0..10 {
+            native(
+                store,
+                &request(
+                    &sandbox,
+                    &format!("m-{index}-{event}"),
+                    "GET",
+                    start_time + 1_000 + event * 100,
+                ),
+            );
+        }
+        review(store, &session, CaptureReview::Finish, start_time + 60_000);
+        let view = review(store, &session, CaptureReview::Approve, start_time + 60_001);
+        context = view["sessions"][0]["context_id"].as_str().unwrap().into();
+    }
+    let fitted_at = t + 25 * 60_000 + 10;
+    let view = apply(
+        store,
+        AdaptiveOperation::Train {
+            context_id: context,
+            scope: LearningScope::LocalDemo,
+            expected_guardrails_revision: 0,
+        },
+        fitted_at,
+    );
+    let model_id = view["models"][0]["model_id"].as_str().unwrap().to_string();
+    assert_eq!(
+        view["models"][0]["profile"]["algorithm_version"],
+        "network-metadata-empirical-v2"
+    );
+    assert_eq!(view["models"][0]["profile"]["ready_for_enforcement"], true);
+    for index in 0..5 {
+        let run = format!("shadow-run-{index}");
+        let sandbox = format!("shadow-sandbox-{index}");
+        bind(store, &run, &sandbox);
+        for event in 0..10 {
+            native(
+                store,
+                &request(
+                    &sandbox,
+                    &format!("s-{index}-{event}"),
+                    "GET",
+                    fitted_at + 60_000 + index * 60_000 + event * 100,
+                ),
+            );
+        }
+    }
+    let at = fitted_at + 7 * 60_000;
+    let reviewed = reviewed_would_block(store, at);
+    apply(
+        store,
+        AdaptiveOperation::SetModel {
+            model_id: model_id.clone(),
+            mode: ModelMode::Enforce,
+            expected_active_model_id: None,
+            acknowledge_shadow_review: true,
+            reviewed_shadow_would_block: Some(reviewed),
+        },
+        at,
+    );
+    (model_id, at)
+}
+
+fn behavioral_row(store: &SqliteRiskStore, ts: i64) -> Value {
+    store.controls_overview(ts).unwrap()["controls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "behavioral_score")
+        .unwrap()
+        .clone()
+}
+
+fn set_mode(store: &SqliteRiskStore, model: &str, mode: ModelMode, ts: i64) -> Value {
+    let (expected, reviewed) = if mode == ModelMode::Enforce {
+        (None, Some(reviewed_would_block(store, ts)))
+    } else {
+        (Some(model.to_string()), None)
+    };
+    apply(
+        store,
+        AdaptiveOperation::SetModel {
+            model_id: model.into(),
+            mode,
+            expected_active_model_id: expected,
+            acknowledge_shadow_review: mode == ModelMode::Enforce,
+            reviewed_shadow_would_block: reviewed,
+        },
+        ts,
+    )
+}
+
+#[test]
+fn maturity_is_credited_only_by_an_explicit_operator_action_on_an_enforced_model_and_is_audited() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = seed(&dir.path().join("maturity.db"));
+    let t = now();
+    let (model_id, at) = enforced_model(&store, t);
+    let credit = |ack: bool| AdaptiveOperation::CreditMaturity {
+        model_id: model_id.clone(),
+        acknowledge_behavioral_enforcement: ack,
+        note: "reviewed the shadow results".into(),
+    };
+    let maturity = |id: &str, ts: i64| {
+        let result = native(&store, &request("sandbox-1", id, "GET", ts));
+        (result.baseline_maturity, result)
+    };
+
+    // Nothing changes without the action: the hand-kept counters are 0.
+    assert_eq!(maturity("before", at + 1).0, BaselineMaturity::Insufficient);
+    assert!(
+        behavioral_row(&store, at + 2)["profiles"][0]["credited_workloads"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    // It needs the explicit acknowledgement.
+    assert!(
+        store
+            .apply_adaptive_operation("learner", &credit(false), "operator", at + 3)
+            .is_err()
+    );
+    // A model that is not the enforced one cannot be credited.
+    let demoted = set_mode(&store, &model_id, ModelMode::Shadow, at + 4);
+    assert_eq!(demoted["models"][0]["enforced"], false);
+    assert!(
+        store
+            .apply_adaptive_operation("learner", &credit(true), "operator", at + 5)
+            .is_err()
+    );
+    set_mode(&store, &model_id, ModelMode::Enforce, at + 6);
+    assert_eq!(
+        maturity("still-before", at + 7).0,
+        BaselineMaturity::Insufficient
+    );
+
+    let view = apply(&store, credit(true), at + 8);
+    let record = &view["maturity_credits"][0];
+    assert_eq!(record["granted_by"], "test-operator");
+    assert_eq!(record["granted_at_ms"], at + 8);
+    assert_eq!(record["model_id"], model_id);
+    assert_eq!(record["training_sessions"], 20);
+    assert_eq!(record["training_requests"], 200);
+    assert_eq!(record["counts_now"], true);
+    assert_eq!(view["audit"][0]["operation"], "credit_maturity");
+
+    let (state, credited) = maturity("after", at + 9);
+    assert_eq!(state, BaselineMaturity::Mature);
+    assert!(
+        credited
+            .signals
+            .iter()
+            .any(|s| s.feature == "maturity_credit")
+    );
+    let row = behavioral_row(&store, at + 10);
+    assert_eq!(
+        row["profiles"][0]["credited_workloads"][0]["credited_by"],
+        "test-operator"
+    );
+    // The hand-kept counters are untouched.
+    assert_eq!(row["profiles"][0]["sessions"], 0);
+
+    // A replay bundle does not carry credits, so it says so.
+    let bundle = store.export_replay_bundle("learner", None).unwrap();
+    assert!(!bundle.history.complete);
+    assert!(
+        bundle
+            .history
+            .problems
+            .iter()
+            .any(|p| p.contains("credited")),
+        "{:?}",
+        bundle.history.problems
+    );
+
+    // Demoting the model withdraws the effect without deleting the record.
+    set_mode(&store, &model_id, ModelMode::Shadow, at + 11);
+    assert_eq!(
+        maturity("demoted", at + 12).0,
+        BaselineMaturity::Insufficient
+    );
+    let view = store.agent_adaptive("learner", at + 13).unwrap().unwrap();
+    assert_eq!(view["maturity_credits"][0]["counts_now"], false);
+    assert!(view["maturity_credits"][0]["revoked_at_ms"].is_null());
+
+    // Promoting again restores it; revoking ends it for good and keeps the record.
+    set_mode(&store, &model_id, ModelMode::Enforce, at + 14);
+    assert_eq!(maturity("restored", at + 15).0, BaselineMaturity::Mature);
+    let context = view["maturity_credits"][0]["context_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let revoked = apply(
+        &store,
+        AdaptiveOperation::RevokeMaturityCredit {
+            context_id: context,
+            reason: "reviewing again".into(),
+        },
+        at + 16,
+    );
+    assert_eq!(
+        revoked["maturity_credits"][0]["revoked_by"],
+        "test-operator"
+    );
+    assert_eq!(
+        maturity("revoked", at + 17).0,
+        BaselineMaturity::Insufficient
+    );
+}

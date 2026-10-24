@@ -65,6 +65,20 @@ pub enum AdaptiveOperation {
     SetAutoLearning {
         enabled: bool,
     },
+    /// Back the scoring context's baseline maturity with what this enforced model actually observed. Never automatic: a person
+    /// does this, after promoting the model, and it is recorded with who and when. See docs/adaptive-v2.md.
+    CreditMaturity {
+        model_id: String,
+        /// The person confirms that crediting maturity lets the behavioral score refuse on rarity for this workload.
+        acknowledge_behavioral_enforcement: bool,
+        #[serde(default)]
+        note: String,
+    },
+    /// Withdraw a maturity credit. The record stays; it stops counting.
+    RevokeMaturityCredit {
+        context_id: String,
+        reason: String,
+    },
 }
 
 #[derive(Debug)]

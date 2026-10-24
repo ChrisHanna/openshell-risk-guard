@@ -159,3 +159,21 @@ ATTACKS = {
     "slow_and_low": attack_slow_and_low,
     "subtle_write": attack_subtle_write,
 }
+
+
+def fleet_json() -> dict:
+    """The fleet as plain data. `testdata/adaptive-eval/fleet.json` is this output; the Rust evaluation harness (src/adaptive_eval.rs) reads it so the two generators
+    cannot drift apart. `python scripts/ml/agents.py --dump > testdata/adaptive-eval/fleet.json` regenerates it."""
+    out = {}
+    for name, m in FLEET.items():
+        route = lambda r: {"method": r.method, "template": r.template, "weight": r.weight, "values": list(r.values)}  # noqa: E731
+        out[name] = {"task_profile": m.task_profile, "host": m.host, "routes": [route(r) for r in m.routes], "tempting": [route(r) for r in m.tempting],
+                     "sessions_per_hour": m.sessions_per_hour, "calls_per_session": list(m.calls_per_session), "think_ms": list(m.think_ms), "binary": m.binary}
+    return out
+
+
+if __name__ == "__main__":
+    import json
+    import sys
+    if "--dump" in sys.argv:
+        print(json.dumps(fleet_json(), indent=1, sort_keys=True))
