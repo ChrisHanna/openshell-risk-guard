@@ -45,6 +45,15 @@ pub const RULE_EGRESS_DESTINATION: &str = "egress_destination";
 /// a supervisor that stopped calling Risk Guard (crashed, misconfigured, or compromised) looks like from the network path. Like the egress rule it
 /// is set in the profile's `rule_modes`, and defaults to shadow: it is recorded, not enforced, until an operator promotes it.
 pub const RULE_SUPERVISOR_SILENT: &str = "supervisor_silent";
+/// Risk features from the SIEM (OpenShell policy denials, refusal ratios, fleet counts) that may add a bounded number of points to a score. Set in
+/// the profile's `rule_modes`; default: shadow, which records what it would have added and adds nothing. See docs/design-siem-features.md.
+pub const RULE_SIEM_CONTEXT: &str = "siem_context";
+/// The most points `siem_context` may add when the profile does not say otherwise.
+pub const SIEM_CONTEXT_DEFAULT_MAX_POINTS: u32 = 15;
+/// The most a profile may allow `siem_context` to add, whatever it asks for.
+pub const SIEM_CONTEXT_HARD_CAP_POINTS: u32 = 30;
+/// The most features one decision can carry: the vocabulary has ten names, each at most once per scope.
+pub const MAX_CONTEXT_FEATURES: usize = 16;
 /// The rules an operator can run in shadow or enforce mode, in display order.
 pub const CONFIGURABLE_RULES: [&str; 3] = [
     RULE_UNFAMILIAR_HIGH_IMPACT,
@@ -219,6 +228,10 @@ pub struct BaselineProfile {
     /// the serialized profile so existing baselines keep their hash.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub rule_modes: BTreeMap<String, RuleMode>,
+    /// The most points the `siem_context` rule may add to a score (at most 30; default 15). Left out of the serialized profile when unset so existing
+    /// baselines keep their hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub siem_context_max_points: Option<u32>,
     /// Hostnames this task may open an encrypted connection to, checked at the network-path tunnel gate (the `egress_destination` rule). An
     /// entry is a hostname (`integrate.api.nvidia.com`) or a subdomain wildcard (`*.example.com`). Empty means not specified: nothing is
     /// refused. Left out of the serialized profile when empty so existing baselines keep their hash.
@@ -440,6 +453,72 @@ pub trait RequestNormalizer: Send + Sync {
     fn normalizer_version(&self) -> &str;
 }
 
+/// Whose a SIEM risk feature is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FeatureScope {
+    /// The sandbox the request came from (also how a SPIFFE-subject feature is stored).
+    Sandbox,
+    /// The workload (agent) the sandbox belongs to.
+    Workload,
+    /// The whole fleet.
+    Fleet,
+}
+
+/// One risk feature as the scorer saw it: stored with the decision so replay can supply the same one.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ContextFeature {
+    pub scope: FeatureScope,
+    pub name: String,
+    pub value: u32,
+    /// The subject it was published for (a sandbox id, an agent id or `fleet`), for the audit trail. The scorer does not read it.
+    pub subject: String,
+    /// How old the batch was when the decision was made.
+    pub age_ms: i64,
+}
+
+/// The SIEM risk features available to one decision. Bounded (`MAX_CONTEXT_FEATURES`), sorted, at most one value per (scope, name) and empty by default;
+/// an empty set leaves the score exactly as it is without the SIEM.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextFeatures(Vec<ContextFeature>);
+
+impl ContextFeatures {
+    /// Keep the largest value for each (scope, name), sort, and cut to the bound, so the same inputs always make the same set.
+    #[must_use]
+    pub fn new(items: impl IntoIterator<Item = ContextFeature>) -> Self {
+        let mut best: BTreeMap<(FeatureScope, String), ContextFeature> = BTreeMap::new();
+        for item in items {
+            let key = (item.scope, item.name.clone());
+            match best.get(&key) {
+                Some(kept) if kept.value >= item.value => {}
+                _ => {
+                    best.insert(key, item);
+                }
+            }
+        }
+        Self(best.into_values().take(MAX_CONTEXT_FEATURES).collect())
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    #[must_use]
+    pub fn as_slice(&self) -> &[ContextFeature] {
+        &self.0
+    }
+
+    /// The value of a feature, if the decision has it.
+    #[must_use]
+    pub fn get(&self, scope: FeatureScope, name: &str) -> Option<u32> {
+        self.0
+            .iter()
+            .find(|f| f.scope == scope && f.name == name)
+            .map(|f| f.value)
+    }
+}
+
 /// Context passed into the pure detector evaluation.
 #[derive(Debug, Clone)]
 pub struct DetectorContext<'a> {
@@ -447,6 +526,8 @@ pub struct DetectorContext<'a> {
     pub baseline: &'a BaselineProfile,
     pub window: &'a WindowSnapshot,
     pub credentialed_endpoint: bool,
+    /// Fresh SIEM risk features for this decision. Empty unless the SIEM has published some.
+    pub features: ContextFeatures,
 }
 
 /// Trait for pure, deterministic behavioral risk scoring.

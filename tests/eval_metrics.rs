@@ -550,6 +550,7 @@ fn gates_g02_g03_g04_g05_comparator_and_ablation_evaluation() {
                 baseline: &ep.baseline,
                 window: &WindowSnapshot::default(),
                 credentialed_endpoint: ep.credentialed_endpoint,
+                features: Default::default(),
             };
 
             let eval_without = no_interaction_detector

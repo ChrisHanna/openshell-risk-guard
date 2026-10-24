@@ -21,7 +21,7 @@ use std::sync::Arc;
 use axum::extract::{DefaultBodyLimit, Extension, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use hmac::{Hmac, Mac};
 use serde_json::json;
@@ -294,6 +294,65 @@ async fn post_signal(
     }
 }
 
+/// `POST /features`: a batch of risk features from the SIEM. The source is who the certificate says (or `bearer-token` on the plain-HTTP demo listener),
+/// never anything in the body, which has no field for it and refuses unknown ones.
+async fn post_features(
+    State(state): State<SignalsState>,
+    headers: HeaderMap,
+    peer: Option<Extension<Peer>>,
+    body: axum::body::Bytes,
+) -> Response {
+    let source = match state.authorize(&headers, peer.as_ref().map(|Extension(peer)| peer)) {
+        Ok(sender) => sender.unwrap_or_else(|| "bearer-token".to_string()),
+        Err(response) => return response,
+    };
+    let bytes = body.len();
+    let batch: crate::store::FeatureBatch = match serde_json::from_slice(&body) {
+        Ok(batch) => batch,
+        Err(error) => {
+            tracing::warn!(%error, %source, "features rejected: the body is not a valid batch");
+            let store = Arc::clone(&state.store);
+            let audited = source.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                store.record_rejected_feature_body(&audited, bytes, "malformed_body", now_ms())
+            })
+            .await;
+            return reply(
+                StatusCode::BAD_REQUEST,
+                json!({"error": format!("invalid feature batch: {error}")}),
+            );
+        }
+    };
+    let store = Arc::clone(&state.store);
+    let result = tokio::task::spawn_blocking(move || {
+        store.ingest_siem_features(&source, bytes, &batch, now_ms())
+    })
+    .await;
+    match result {
+        Ok(Ok(outcome)) => {
+            let status = match outcome.status {
+                crate::store::IngestStatus::Accepted => StatusCode::OK,
+                crate::store::IngestStatus::Invalid => StatusCode::BAD_REQUEST,
+                crate::store::IngestStatus::Stale => StatusCode::UNPROCESSABLE_ENTITY,
+                crate::store::IngestStatus::RateLimited => StatusCode::TOO_MANY_REQUESTS,
+            };
+            tracing::info!(status = outcome.status.as_str(), accepted = outcome.accepted, rejected = outcome.rejected, "features handled");
+            reply(status, serde_json::to_value(&outcome).unwrap_or_default())
+        }
+        Ok(Err(error)) => {
+            tracing::error!(%error, "handling a feature batch failed");
+            reply(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"error": "features could not be recorded; nothing was changed"}),
+            )
+        }
+        Err(_) => reply(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"error": "feature handling stopped; nothing was changed"}),
+        ),
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct ListParams {
     limit: Option<u32>,
@@ -320,11 +379,15 @@ async fn list_signals(
 }
 
 pub fn router(state: SignalsState) -> Router {
-    Router::new()
+    // A signal is small; a feature batch may be up to 64 KiB. Each router carries its own limit and they are merged, so neither limit leaks onto the other.
+    let signals = Router::new()
         .route("/v1/signals", get(list_signals).post(post_signal))
         .route("/healthz", get(|| async { "ok" }))
-        .layer(DefaultBodyLimit::max(8 * 1024))
-        .with_state(state)
+        .layer(DefaultBodyLimit::max(8 * 1024));
+    let features = Router::new()
+        .route("/features", post(post_features))
+        .layer(DefaultBodyLimit::max(crate::store::FEATURE_BATCH_MAX_BYTES));
+    signals.merge(features).with_state(state)
 }
 
 /// Serve until the process stops. Off loopback the caller must have said plain HTTP is acceptable (it is for a NetworkPolicy-fenced demo).

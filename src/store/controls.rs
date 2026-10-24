@@ -322,11 +322,58 @@ impl SqliteRiskStore {
             "evidence": {"received_24h": signal_counts.iter().map(|(_, n)| n).sum::<i64>(), "applied_24h": count("applied"), "dry_run_24h": count("dry_run")},
             "data": if started_known { json!({"state": "ok", "note": "Needs no history."}) } else { unknown_start.clone() },
         }));
-        controls.push(json!({
-            "id": "siem_hints", "source": "siem", "name": "SIEM context as a risk hint", "mode": "not_built",
-            "what": "Planned: OpenSearch would send a bounded, time-limited extra risk score for a workload (for example a recent anomaly). It could only add risk, would start in watching mode, and enforcement would never wait on OpenSearch.",
-            "evidence": {}, "data": {"state": "not_built", "note": "Not built yet. Anomaly detection has too little real data to justify it today."},
-        }));
+        {
+            // SIEM context: OpenShell denials and fleet counts published by the SIEM, which can add a bounded number of points to a score.
+            let (any_batch, fresh_features, newest_age_ms) = self.siem_features_status(now_ms)?;
+            let context_states: Vec<&str> = profiles
+                .iter()
+                .map(|p| match p.rule_mode(RULE_SIEM_CONTEXT) {
+                    RuleMode::Enforce => "enforcing",
+                    RuleMode::Shadow => "watching",
+                    RuleMode::Off => "off",
+                })
+                .collect();
+            let (mut would_change, mut changed, mut would_add_decisions) = (0i64, 0i64, 0i64);
+            for (summary, n) in self.count_by_text(
+                "SELECT json_extract(s.value, '$.baseline_summary'), COUNT(*) FROM decisions d, json_each(d.evaluation_json, '$.signals') s
+                  WHERE d.created_at_ms >= ?1 AND json_extract(s.value, '$.feature') = 'siem_context' GROUP BY 1",
+                since,
+            )? {
+                let changes = summary.contains("changes_outcome=1");
+                if summary.contains("mode=enforce;") {
+                    changed += if changes { n } else { 0 };
+                } else {
+                    would_add_decisions += n;
+                    would_change += if changes { n } else { 0 };
+                }
+            }
+            let mode = overall(&context_states);
+            let (state, note) = if !any_batch {
+                (
+                    "not_enough_data",
+                    "no features received: the SIEM has not published any batch to this service yet.".to_string(),
+                )
+            } else {
+                (
+                    "ok",
+                    format!(
+                        "{fresh_features} fresh features; the newest batch arrived {} s ago.",
+                        newest_age_ms.unwrap_or(0) / 1000
+                    ),
+                )
+            };
+            controls.push(json!({
+                "id": RULE_SIEM_CONTEXT, "source": "siem", "name": "SIEM context (risk features)", "mode": if profiles.is_empty() { "watching" } else { mode },
+                "what": "The SIEM publishes how often OpenShell's policy refused each sandbox, how a workload's refusals compare with the fleet's, and whether several workloads are being refused at once. These can add a bounded number of points (15 by default, 30 at most) to a call's risk score and never subtract. Watching records the points it would have added; enforcing adds them. Missing or old features add nothing, and a call never waits on the SIEM.",
+                "profiles": profiles.iter().map(|p| json!({"task_profile": p.task_profile, "state": match p.rule_mode(RULE_SIEM_CONTEXT) { RuleMode::Enforce => "enforcing", RuleMode::Shadow => "watching", RuleMode::Off => "off" }, "max_points": crate::detector::siem::effective_max(p.siem_context_max_points)})).collect::<Vec<_>>(),
+                "evidence": {
+                    "fresh_features": fresh_features, "newest_batch_age_seconds": newest_age_ms.map(|ms| ms / 1000),
+                    "would_have_changed_24h": would_change, "changed_24h": changed, "scored_with_points_while_watching_24h": would_add_decisions,
+                    "calls_24h": total_24h,
+                },
+                "data": {"state": state, "note": note},
+            }));
+        }
         Ok(json!({
             "generated_at_ms": now_ms, "window_hours": 24, "calls_24h": total_24h, "profiles": profiles.len(),
             "vocabulary": {

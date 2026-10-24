@@ -26,7 +26,8 @@ use crate::guardrails::{AgentGuardrails, GuardrailsSaveResult, GuardrailsUpdate}
 use crate::store::RestrictionTarget;
 use crate::store::SqliteRiskStore;
 use crate::types::{
-    BaselineProfile, EnforcementMode, EpochRecord, NormalizedRequest, RiskDetector, RiskEvaluation,
+    BaselineProfile, ContextFeature, ContextFeatures, EnforcementMode, EpochRecord, NormalizedRequest,
+    RiskDetector, RiskEvaluation,
     RiskStore,
 };
 
@@ -104,6 +105,9 @@ pub enum ReplayEvent {
         guardrail_revision: Option<u64>,
         request: Box<NormalizedRequest>,
         recorded: Box<RiskEvaluation>,
+        /// The SIEM risk features the original decision was scored with (left out when it had none, so a bundle without them is unchanged).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        features: Vec<ContextFeature>,
     },
     Clearance {
         scope: String,
@@ -328,6 +332,7 @@ pub fn replay(bundle: &ReplayBundle, allow_incomplete: bool) -> Result<ReplayRep
                 guardrail_revision,
                 request,
                 recorded,
+                features,
             } => {
                 if let Some(revision) = guardrail_revision {
                     apply(&store, *revision)?;
@@ -355,11 +360,13 @@ pub fn replay(bundle: &ReplayBundle, allow_incomplete: bool) -> Result<ReplayRep
                     store.bind_agent_run(&epoch.run_id, &epoch.sandbox_id, &epoch.gateway_id)?;
                     active.insert(request.sandbox_id.clone(), epoch_id.clone());
                 }
-                let replayed = store.evaluate_authenticated(
+                // The decision is scored with the SIEM features it recorded, not with whatever the replay store holds (nothing).
+                let replayed = store.evaluate_with_recorded_features(
                     request,
                     &detector as &dyn RiskDetector,
                     &epoch.gateway_id,
                     true,
+                    &ContextFeatures::new(features.iter().cloned()),
                 )?;
                 report.decisions += 1;
                 let mut diverged = false;

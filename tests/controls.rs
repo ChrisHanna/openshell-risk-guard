@@ -234,9 +234,13 @@ fn the_siem_door_is_reported_as_off_watching_or_enforcing_from_how_the_service_s
         .unwrap();
     assert_eq!(mode(&store), "enforcing");
     let view = store.controls_overview(START + 1).unwrap();
-    assert_eq!(
-        control(&view, "siem_hints")["mode"],
-        "not_built",
-        "what is only designed is labelled that way"
+    // The SIEM risk-feature row replaced the "not built" placeholder; with no batch ever received it says so.
+    let context = control(&view, "siem_context");
+    assert_eq!(context["mode"], "watching");
+    assert!(
+        context["data"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("no features received")
     );
 }

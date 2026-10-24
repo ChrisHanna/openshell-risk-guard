@@ -55,6 +55,7 @@ fn evaluate(profile: &BaselineProfile, host: &str, method: &str, path: &str) -> 
                 baseline: profile,
                 window: &WindowSnapshot::default(),
                 credentialed_endpoint: false,
+                features: Default::default(),
             },
         )
         .unwrap()
