@@ -59,7 +59,8 @@ audited reason.
 ![Detections: score 100, signal breakdown and active restriction with audited recovery](docs/images/console-detections.png)
 
 **Adaptive** learns each workload's normal behavior automatically in shadow mode. It never blocks
-until an operator reviews and promotes a model.
+until an operator reviews and promotes a model. How it is measured, what it catches on scripted
+traffic and what that does and does not show: [docs/adaptive-v2.md](docs/adaptive-v2.md).
 
 ![Adaptive: learning automatically, shadow model, deterministic guardrails only](docs/images/console-adaptive.png)
 
