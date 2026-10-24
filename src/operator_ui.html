@@ -2593,6 +2593,26 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
                 </table>
               </div>
               <p class="quiet-note">Backend window samples are descriptive support, not hard quotas or production-trained guarantees. In particular, sparse candidates cannot certify p99 or false-positive rates.</p>
+              <div class="adaptive-gates">
+                <h4>What this model looks at</h4>
+                <p id="adp-features-summary" class="muted"></p>
+                <ul id="adp-feature-list"></ul>
+              </div>
+              <div class="adaptive-gates">
+                <h4>Against the model it would replace · same holdout, same injected probes</h4>
+                <ul id="adp-comparison"></ul>
+                <p class="quiet-note">Probes are generic attack shapes (bursts, enumeration, slow drips, a never-used write, an unseen destination) built from this model’s own most common traffic. They are a regression check, not an unseen attacker. A candidate that would block more benign holdout traffic, or catch fewer probes, than the model it replaces cannot be promoted.</p>
+              </div>
+              <div class="adaptive-gates">
+                <h4>Baseline maturity from what was observed</h4>
+                <p id="adp-maturity-state" class="muted"></p>
+                <ul id="adp-maturity-list"></ul>
+                <div class="inline-actions" style="margin-top:8px">
+                  <button type="button" class="btn" id="adp-credit" disabled>Credit maturity from this model…</button>
+                  <button type="button" class="btn" id="adp-revoke-credit" disabled>Revoke credit…</button>
+                </div>
+                <p class="quiet-note">Explicit and audited, never automatic. Only the enforced model can be credited, and only with at least the maturity minimums of independent runs and requests. Crediting lets the behavioral score refuse on rarity for this workload; the hand-kept baseline counters are not changed. Demoting the model withdraws the credit’s effect.</p>
+              </div>
               <details style="margin-top:16px">
                 <summary>Observed resource, action, destination and binary support</summary>
                 <div class="adaptive-support" id="adp-support"></div>
@@ -4361,6 +4381,7 @@ function renderAdaptiveModel(state, writable) {
   adaptiveText("adp-membership", Array.isArray(profile.training_sessions) && Array.isArray(profile.holdout_sessions)
     ? `Training: ${profile.training_sessions.join(", ") || "none"} · Holdout: ${profile.holdout_sessions.join(", ") || "none"}`
     : `${adaptiveNumber(profile.training_sessions)} training windows · ${adaptiveNumber(profile.holdout_sessions)} holdout windows. Session counts are shown here; membership is frozen by the dataset hash.`);
+  renderAdaptiveV2(state, model, profile, writable, compatible);
   adaptiveList("adp-readiness-reasons", profile.readiness_reasons, "No additional algorithm readiness notes reported.");
   adaptiveList("adp-server-blockers", serverBlockers, "No server blockers reported. This alone is not promotion approval.");
   adaptiveList("adp-safety-blockers", safetyBlockers, model.enforced
@@ -4372,6 +4393,87 @@ function renderAdaptiveModel(state, writable) {
   $("adp-shadow").disabled = !writable || !compatible || (model.shadow && !model.enforced);
   $("adp-shadow").textContent = model.enforced ? "Return to shadow…" : "Use in shadow…";
   $("adp-off").disabled = !writable || (!model.shadow && !model.enforced);
+}
+
+function adaptiveRangeText(label, range) {
+  return range && typeof range === "object"
+    ? `${label}: median ${adaptiveNumber(range.median)}, p99 ${adaptiveNumber(range.p99)}, max ${adaptiveNumber(range.max)} over ${adaptiveNumber(range.samples)} windows`
+    : `${label}: not enough windows to learn a range`;
+}
+
+function adaptiveProbeText(label, evaluation) {
+  const probes = Array.isArray(evaluation?.probes) ? evaluation.probes : [];
+  const total = key => probes.reduce((sum, probe) => sum + (Number(probe[key]) || 0), 0);
+  return `${label}: holdout would-blocks ${adaptiveNumber(evaluation?.holdout_would_block)} of ${adaptiveNumber(evaluation?.holdout_requests)} requests · injected probes alerted ${total("alerted")} of ${total("probes")}, would-block ${total("blocked")} of ${total("probes")}`;
+}
+
+function renderAdaptiveV2(state, model, profile, writable, compatible) {
+  const isV2 = typeof profile.algorithm_version === "string" && profile.algorithm_version.endsWith("-v2");
+  const options = profile.options || {};
+  const features = ["Destination, resource, action and binary seen before (fixed weights over learned frequencies)", "Request rate and resource fan-out against the learned limits"];
+  if (isV2) {
+    if (options.method_mix !== false) features.push("An HTTP method this workload never used");
+    if (options.novelty !== false) features.push("Never-seen resources turning up over the last hour (2 add 15, 3 or more add 30)");
+    if (options.shape !== false) {
+      const shape = profile.shape || {};
+      features.push("Shape of recent activity, capped at 30 points and never alerting alone:");
+      features.push(adaptiveRangeText("  burst peak (most calls in any 10 seconds)", shape.burst_peak));
+      features.push(adaptiveRangeText("  route entropy", shape.route_entropy));
+      features.push(adaptiveRangeText("  write share (permille)", shape.write_share));
+      features.push(adaptiveRangeText("  gap regularity (permille; near 0 is machine-regular)", shape.gap_regularity));
+    }
+    if (profile.prior) features.push(`Shrunk toward a prior pooled from ${profile.prior.sources.length} other workload model(s) of the same ${profile.prior.tier.replace("_", " ")} (counts as at most 200 requests, fading as this workload’s own history grows)`);
+    if (options.context !== false) features.push("Optional SIEM context counts: can add at most 12 points, only to an anomaly already scoring 15 or more (none is supplied yet)");
+  }
+  adaptiveText("adp-features-summary", isV2 ? `Algorithm ${profile.algorithm_version}. Fixed rules over learned statistics; not a probability, not a permission.`
+    : `Algorithm ${profile.algorithm_version} (first generation): category frequencies and rate/fan-out limits only. It keeps scoring exactly as before.`);
+  adaptiveList("adp-feature-list", features, "No feature description is available.");
+
+  const comparison = model.comparison;
+  adaptiveList("adp-comparison", comparison ? [
+    `Compared with ${comparison.previous_model_id} (${comparison.previous_algorithm}).`,
+    adaptiveProbeText("This model", comparison.candidate),
+    adaptiveProbeText("Previous model", comparison.previous),
+    ...(comparison.blockers.length ? ["Worse than the previous model, so promotion is refused (details under the server blockers)."] : ["Not worse than the previous model on either measure."]),
+  ] : [], "No earlier model to compare with: this is the first model for this context, or it was built before comparisons were recorded.");
+
+  const credits = (state.view.maturity_credits || []).filter(credit => credit.context_id === model.context_id);
+  const live = credits.find(credit => !credit.revoked_at_ms);
+  const thresholds = state.view.maturity_thresholds || { sessions: 20, requests: 200 };
+  adaptiveText("adp-maturity-state", live
+    ? live.counts_now ? `Credited and counting: the baseline reads ${adaptiveNumber(live.training_sessions)} runs and ${adaptiveNumber(live.training_requests)} requests from this model, so the behavioral score can refuse on rarity for this workload.`
+      : "A credit is recorded but not counting now: its model is no longer the enforced one, was revoked, or belongs to an older enforcement-settings revision."
+    : "No credit. The hand-kept baseline counters decide maturity; until they reach the minimums the behavioral score records and never refuses on rarity alone.");
+  adaptiveList("adp-maturity-list", credits.map(credit => `${credit.revoked_at_ms ? "Revoked" : credit.counts_now ? "Counting" : "Not counting"} · ${credit.credit_id} · model ${credit.model_id} · ${adaptiveNumber(credit.training_sessions)} runs / ${adaptiveNumber(credit.training_requests)} requests · credited by ${credit.granted_by} at ${time(credit.granted_at_ms)} · ${adaptiveNumber(credit.person_approved_sessions)} windows approved by a person, ${adaptiveNumber(credit.auto_approved_sessions)} by the automatic clean-run policy${credit.revoked_at_ms ? ` · revoked by ${credit.revoked_by} at ${time(credit.revoked_at_ms)}: ${credit.revoke_reason}` : ""}`),
+    "No maturity credits recorded for this context.");
+  const enough = profile.training_runs >= thresholds.sessions && profile.training_requests >= thresholds.requests;
+  $("adp-credit").disabled = !writable || !compatible || !model.enforced || model.revoked || !enough || Boolean(live?.counts_now && live.model_id === model.model_id);
+  $("adp-revoke-credit").disabled = !writable || !live;
+}
+
+function creditAdaptiveMaturity() {
+  const state = currentAdaptiveState();
+  if (!adaptiveCanWrite(state)) return;
+  const model = adaptiveModels(state).find(item => item.model_id === state.modelId);
+  if (!model || !model.enforced || model.revoked || !adaptiveCompatible(state, model)) return;
+  if (!window.confirm(adaptiveRedact(`Credit baseline maturity from this model?\n\nAgent: ${state.agentId}\nContext: ${model.context_id}\nModel: ${model.model_id}\nObserved: ${model.profile.training_runs} independent runs, ${model.profile.training_requests} requests\nTraining windows auto-approved without a person: ${model.auto_approved_sessions ?? 0}\n\nThis lets the behavioral score REFUSE calls on rarity for this workload. It is recorded with your name and the time, and it stops counting if the model is demoted. The hand-kept baseline counters are not changed.`))) return;
+  void adaptiveCommand({
+    operation: "credit_maturity", model_id: model.model_id,
+    acknowledge_behavioral_enforcement: true, note: ""
+  }, "Recording maturity credit.");
+}
+
+function revokeAdaptiveMaturityCredit() {
+  const state = currentAdaptiveState();
+  if (!adaptiveCanWrite(state)) return;
+  const model = adaptiveModels(state).find(item => item.model_id === state.modelId);
+  const live = model && (state.view.maturity_credits || []).find(credit => credit.context_id === model.context_id && !credit.revoked_at_ms);
+  if (!live) return;
+  const reason = window.prompt(adaptiveRedact(`Revoke maturity credit ${live.credit_id}? The record stays. Give a reason:`), "");
+  if (!reason || !reason.trim()) return;
+  void adaptiveCommand({
+    operation: "revoke_maturity_credit", context_id: live.context_id, reason: reason.trim()
+  }, "Revoking maturity credit.");
 }
 
 function renderAdaptiveAudit(state) {
@@ -4564,6 +4666,14 @@ async function adaptiveCommand(command, pendingLabel) {
       state.notice = actual
         ? "Learning resumed for this workload. Unflagged read-only runs auto-approve at run end and update the shadow model; anything flagged waits for review."
         : "Learning paused for this workload. Only manual captures and approvals will update learning evidence.";
+    } else if (command.operation === "credit_maturity") {
+      const credit = (state.view.maturity_credits || []).find(item => item.model_id === command.model_id && item.counts_now);
+      if (!credit) throw new Error("The service did not return a counting maturity credit. Refresh to verify the outcome; no credit is assumed.");
+      state.notice = "Maturity credit recorded with your name and the time. It counts while this model stays enforced.";
+    } else if (command.operation === "revoke_maturity_credit") {
+      const stillLive = (state.view.maturity_credits || []).some(item => item.context_id === command.context_id && !item.revoked_at_ms);
+      if (stillLive) throw new Error("The service did not confirm the revocation. Refresh to verify the outcome.");
+      state.notice = "Maturity credit revoked. The record is kept; the hand-kept baseline counters decide maturity again.";
     } else if (command.operation === "set_model") {
       const model = state.view.models.find(item => item.model_id === command.model_id);
       const confirmed = model && (command.mode === "off" ? !model.enforced && !model.shadow
@@ -7174,6 +7284,8 @@ $("adp-train").addEventListener("click", trainAdaptiveCandidate);
 $("adp-enforce").addEventListener("click", () => setAdaptiveModel("enforce"));
 $("adp-shadow").addEventListener("click", () => setAdaptiveModel("shadow"));
 $("adp-off").addEventListener("click", () => setAdaptiveModel("off"));
+$("adp-credit").addEventListener("click", creditAdaptiveMaturity);
+$("adp-revoke-credit").addEventListener("click", revokeAdaptiveMaturityCredit);
 window.addEventListener("beforeunload", event => {
   if ([...guardrailDrafts.values()].some(state => state.dirty || state.saving)) {
     event.preventDefault();
