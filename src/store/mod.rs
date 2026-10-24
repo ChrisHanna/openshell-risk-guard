@@ -13,11 +13,11 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{Result, RiskGuardError};
 use crate::types::{
-    BaselineProfile, BindingAudit, ContextFeatures, DecisionOutcome, DetectorContext, EnforcementMode, EpochRecord,
-    HardeningCandidate, NativeObservationSource, NetworkState, NormalizedRequest,
-    REASON_BEHAVIORAL_RISK_RESTRICTED, REASON_WORKLOAD_QUARANTINED, RatchetAction, RiskDetector,
-    RULE_SIEM_CONTEXT, RiskEvaluation, RiskStore, RuleMode, SandboxBinding, SignalContribution,
-    WindowSnapshot,
+    BaselineProfile, BindingAudit, ContextFeatures, DecisionOutcome, DetectorContext,
+    EnforcementMode, EpochRecord, HardeningCandidate, NativeObservationSource, NetworkState,
+    NormalizedRequest, REASON_BEHAVIORAL_RISK_RESTRICTED, REASON_WORKLOAD_QUARANTINED,
+    RULE_SIEM_CONTEXT, RatchetAction, RiskDetector, RiskEvaluation, RiskStore, RuleMode,
+    SandboxBinding, SignalContribution, WindowSnapshot,
 };
 
 mod adaptive;
@@ -27,14 +27,15 @@ mod guardrails;
 mod identity;
 mod operations;
 mod replay;
-mod signals;
 mod siem_features;
+mod signals;
 use identity::{AgentIdentity, resolve_identity};
 pub use operations::RestrictionTarget;
-pub use signals::{SignalOutcome, SignalPolicy, SignalRequest};
 pub use siem_features::{
-    FeatureBatch, FeatureIngest, FeatureSubject, IngestStatus, MAX_BODY_BYTES as FEATURE_BATCH_MAX_BYTES,
+    FeatureBatch, FeatureIngest, FeatureSubject, IngestStatus,
+    MAX_BODY_BYTES as FEATURE_BATCH_MAX_BYTES,
 };
+pub use signals::{SignalOutcome, SignalPolicy, SignalRequest};
 
 const INITIAL_MIGRATION_SQL: &str = include_str!("../../migrations/0001_initial.sql");
 const AGENT_MIGRATION_SQL: &str = include_str!("../../migrations/0002_agent_identity.sql");
@@ -1680,7 +1681,9 @@ impl SqliteRiskStore {
         // SIEM risk features: a replay supplies the ones the original decision used; otherwise read the fresh ones from the local table.
         let features = match recorded_features {
             Some(recorded) => recorded.clone(),
-            None if baseline.rule_mode(RULE_SIEM_CONTEXT) == RuleMode::Off => ContextFeatures::default(),
+            None if baseline.rule_mode(RULE_SIEM_CONTEXT) == RuleMode::Off => {
+                ContextFeatures::default()
+            }
             None => siem_features::load_context(
                 &tx,
                 &req.sandbox_id,
@@ -1821,8 +1824,8 @@ impl SqliteRiskStore {
         if let (Some(saved), Some(identity)) = (&saved_guardrails, &identity) {
             guardrails::annotate_revision(&identity.agent_id, saved, &mut eval);
         }
-        siem_features::record_used(&tx, &epoch.epoch_id, &req.request_id, &features)?;
         insert_decision_row(&tx, &epoch.epoch_id, req, &eval)?;
+        siem_features::record_used(&tx, &epoch.epoch_id, &req.request_id, &features)?;
         insert_identity(&tx, req, &epoch, identity.as_ref())?;
         adaptive::record(&tx, &adaptive_frame, &base_evaluation, &assessments)?;
         if let (Some(saved), Some(identity)) = (&saved_guardrails, &identity) {

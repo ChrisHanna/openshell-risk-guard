@@ -26,9 +26,8 @@ use crate::guardrails::{AgentGuardrails, GuardrailsSaveResult, GuardrailsUpdate}
 use crate::store::RestrictionTarget;
 use crate::store::SqliteRiskStore;
 use crate::types::{
-    BaselineProfile, ContextFeature, ContextFeatures, EnforcementMode, EpochRecord, NormalizedRequest,
-    RiskDetector, RiskEvaluation,
-    RiskStore,
+    BaselineProfile, ContextFeature, ContextFeatures, EnforcementMode, EpochRecord,
+    NormalizedRequest, RiskDetector, RiskEvaluation, RiskStore,
 };
 
 pub const FORMAT_VERSION: u32 = 1;

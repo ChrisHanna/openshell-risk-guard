@@ -225,9 +225,9 @@ impl SqliteRiskStore {
             Ok(())
         };
 
-        // One batch per source per ten seconds. A batch that was itself refused for rate does not move the clock, so a flood cannot lock a sender out.
+        // One batch per source per ten seconds. A batch refused for rate, or a body that was not a batch at all (no generated time), does not move the clock, so a flood or a bad body cannot lock a sender out.
         let last: Option<i64> = tx.query_row(
-            "SELECT MAX(received_at_ms) FROM siem_feature_batches WHERE source = ?1 AND outcome != 'rate_limited'",
+            "SELECT MAX(received_at_ms) FROM siem_feature_batches WHERE source = ?1 AND outcome != 'rate_limited' AND generated_at_ms IS NOT NULL",
             params![source],
             |row| row.get(0),
         )?;
@@ -482,7 +482,11 @@ impl SqliteRiskStore {
             params![now_ms],
             |row| row.get(0),
         )?;
-        Ok((newest.is_some(), fresh, newest.map(|at| (now_ms - at).max(0))))
+        Ok((
+            newest.is_some(),
+            fresh,
+            newest.map(|at| (now_ms - at).max(0)),
+        ))
     }
 
     /// Run the decision path's lookup on its own (for tests and tooling): the features a request from `sandbox_id` would be scored with at `now_ms`.
@@ -506,31 +510,32 @@ pub(super) fn load_context(
     now_ms: i64,
 ) -> Result<ContextFeatures> {
     let mut found = Vec::new();
-    let mut read = |sql: &str, params: &[&dyn rusqlite::ToSql], scope: FeatureScope| -> Result<()> {
-        let mut stmt = conn.prepare_cached(sql)?;
-        let rows = stmt
-            .query_map(params, |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
-                ))
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        for (name, value, subject, generated_at_ms) in rows {
-            if vocabulary::lookup(&name).is_some_and(|(allowed, _)| allowed == scope) {
-                found.push(ContextFeature {
-                    scope,
-                    name,
-                    value: u32::try_from(value).unwrap_or(0),
-                    subject,
-                    age_ms: (now_ms - generated_at_ms).max(0),
-                });
+    let mut read =
+        |sql: &str, params: &[&dyn rusqlite::ToSql], scope: FeatureScope| -> Result<()> {
+            let mut stmt = conn.prepare_cached(sql)?;
+            let rows = stmt
+                .query_map(params, |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            for (name, value, subject, generated_at_ms) in rows {
+                if vocabulary::lookup(&name).is_some_and(|(allowed, _)| allowed == scope) {
+                    found.push(ContextFeature {
+                        scope,
+                        name,
+                        value: u32::try_from(value).unwrap_or(0),
+                        subject,
+                        age_ms: (now_ms - generated_at_ms).max(0),
+                    });
+                }
             }
-        }
-        Ok(())
-    };
+            Ok(())
+        };
     read(
         "SELECT name, value, subject_id, generated_at_ms FROM siem_features
          WHERE sandbox_id = ?1 AND kind IN ('sandbox', 'spiffe') AND expires_at_ms > ?2 ORDER BY name, value DESC, kind, subject_id",
@@ -566,7 +571,11 @@ pub(super) fn record_used(
     }
     tx.execute(
         "UPDATE decisions SET siem_features_json = ?3 WHERE epoch_id = ?1 AND request_id = ?2",
-        params![epoch_id, request_id, serde_json::to_string(features.as_slice())?],
+        params![
+            epoch_id,
+            request_id,
+            serde_json::to_string(features.as_slice())?
+        ],
     )?;
     Ok(())
 }

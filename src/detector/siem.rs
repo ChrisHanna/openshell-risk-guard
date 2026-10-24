@@ -67,7 +67,11 @@ pub const VOCABULARY: [(&str, FeatureScope, Range); 10] = [
         FeatureScope::Workload,
         Range::Permille,
     ),
-    (FLEET_OPENSHELL_DENIALS_5M, FeatureScope::Fleet, Range::Count),
+    (
+        FLEET_OPENSHELL_DENIALS_5M,
+        FeatureScope::Fleet,
+        Range::Count,
+    ),
     (
         FLEET_WORKLOADS_WITH_DENIALS_5M,
         FeatureScope::Fleet,
@@ -78,7 +82,11 @@ pub const VOCABULARY: [(&str, FeatureScope, Range); 10] = [
         FeatureScope::Fleet,
         Range::Permille,
     ),
-    (FLEET_ACTIVE_WORKLOADS_15M, FeatureScope::Fleet, Range::Count),
+    (
+        FLEET_ACTIVE_WORKLOADS_15M,
+        FeatureScope::Fleet,
+        Range::Count,
+    ),
 ];
 
 /// The scope and range a feature name is allowed for, or `None` when the name is not in the vocabulary.

@@ -5,6 +5,7 @@
 //! file is the door: its own port, its own token (never the operator's), a small body, and no way to loosen anything.
 //!
 //! `POST /v1/signals` sends one signal, `GET /v1/signals` lists the recent ones, `GET /healthz` answers without a token.
+//! `POST /features` takes a batch of SIEM risk features (see `store/siem_features.rs` and docs/design-siem-features.md) under the same authentication.
 //! Two ways to prove who is sending:
 //!
 //! * **mTLS with a SPIFFE identity** (`serve_mtls`): the sender presents an X.509-SVID, the listener checks it against the SPIRE trust bundle and an allow-list of exact SPIFFE IDs,
@@ -336,7 +337,12 @@ async fn post_features(
                 crate::store::IngestStatus::Stale => StatusCode::UNPROCESSABLE_ENTITY,
                 crate::store::IngestStatus::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             };
-            tracing::info!(status = outcome.status.as_str(), accepted = outcome.accepted, rejected = outcome.rejected, "features handled");
+            tracing::info!(
+                status = outcome.status.as_str(),
+                accepted = outcome.accepted,
+                rejected = outcome.rejected,
+                "features handled"
+            );
             reply(status, serde_json::to_value(&outcome).unwrap_or_default())
         }
         Ok(Err(error)) => {

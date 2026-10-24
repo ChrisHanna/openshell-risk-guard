@@ -522,10 +522,13 @@ impl RiskDetector for InteractionRiskDetector {
             // "Changed" means the points move the score across the observe threshold, or across the enforce threshold once the baseline is mature.
             let crosses = |threshold: u32| {
                 score_without_siem < threshold
-                    && score_without_siem.saturating_add(adjustment.points).min(100) >= threshold
+                    && score_without_siem
+                        .saturating_add(adjustment.points)
+                        .min(100)
+                        >= threshold
             };
-            let changes = crosses(self.observe_threshold)
-                || (is_mature && crosses(self.enforce_threshold));
+            let changes =
+                crosses(self.observe_threshold) || (is_mature && crosses(self.enforce_threshold));
             let enforcing = siem_mode == RuleMode::Enforce;
             signals.push(SignalContribution {
                 feature: "siem_context".to_string(),
