@@ -494,6 +494,13 @@ def build_agent_dashboards():
 # --- Start here: the three systems side by side -----------------------------------------------------------------------------------------------------------------
 OS_L7_DENIED = 'firewall_rule.type:"l7" and action:"Denied"'
 OS_AUDIT = 'message:"L7_REQUEST audit"'          # a policy endpoint in audit mode: logged as a violation, and let through
+# What OpenShell itself refused (the sandbox supervisor, not Risk Guard's middleware, which the supervisor also logs with firewall_rule.type "middleware"). A DNS
+# refusal is left out because the connection attempt that follows it is logged on its own, so one attempt would count twice. Every sandbox also tries
+# events.telemetry.data.nvidia.com in the background and is refused (about 97% of the denied connections in the demo), so that one destination is not counted:
+# without that, every sandbox would look like it was being refused repeatedly. Change OS_BACKGROUND_HOSTS if a deployment has other background noise.
+OS_BACKGROUND_HOSTS = ["events.telemetry.data.nvidia.com"]
+OS_ENFORCED = ('metadata.product.name:"OpenShell Sandbox Supervisor" and action:"Denied" and not firewall_rule.type:"middleware" and not activity_name:"Refuse"'
+               + "".join(f' and not dst_endpoint.domain:"{h}"' for h in OS_BACKGROUND_HOSTS))
 OS_ANY_DENIED = '(class_name:"Network Activity" and action:"Denied") or (firewall_rule.type:"l7" and action:"Denied")'
 
 
@@ -525,6 +532,11 @@ def build_layers_objects():
                       [COUNT, terms("2", "unmapped.risk_guard.reason_code.keyword", "bucket", 8)], TABLE_PARAMS, RG_MIDDLEWARE),
         visualization("h3-sx-sources", "Where the events come from", "pie",
                       [COUNT, terms("2", "metadata.product.name.keyword", "segment", 6)], PIE_PARAMS),
+        visualization("h3-os-by-sandbox", "OpenShell denials per sandbox, over time (background telemetry host not counted)", "histogram",
+                      [COUNT, TIME_BUCKET, terms("3", "container.name.keyword", "group", 10)], BAR_PARAMS, OS_ENFORCED),
+        saved_search("h3-search-os-denied", "What OpenShell denied (enforced, background telemetry host not counted)",
+                     "Requests and connections OpenShell's policy refused. Risk Guard never sees these calls. A watch-only alert in Alerting flags 3 or more of these in 5 minutes for one sandbox.",
+                     OS_ENFORCED, columns=("container.name", "class_name", "dst_endpoint.domain", "http_request.http_method", "http_request.url.path", "message")),
         visualization("h3-who", "Who stopped calls, over time", "histogram",
                       [COUNT, TIME_BUCKET, filters_agg("3", [("OpenShell refused", OS_ANY_DENIED), ("Risk Guard refused", RG_MIDDLEWARE),
                                                              ("Risk Guard tunnel gate flagged", RG_TUNNEL)])], BAR_PARAMS),
@@ -538,7 +550,8 @@ def build_layers_objects():
         ("h3-sx-events", "visualization", 32, 11, 16, 6), ("h3-sx-signals", "visualization", 32, 17, 16, 6),
         ("oa-denied-dest", "visualization", 0, 23, 16, 13), ("h3-rg-reasons", "visualization", 16, 23, 16, 13), ("h3-sx-sources", "visualization", 32, 23, 16, 13),
         ("h3-who", "visualization", 0, 36, 48, 14),
-        ("oa-search-both", "search", 0, 50, 48, 13)], time_from="now-24h")
+        ("oa-search-both", "search", 0, 50, 48, 13),
+        ("h3-os-by-sandbox", "visualization", 0, 63, 48, 14), ("h3-search-os-denied", "search", 0, 77, 48, 13)], time_from="now-24h")
     return objects + [board]
 
 
@@ -830,7 +843,38 @@ WATCH_MONITORS = {
 }
 
 
+# The OpenShell watch: OpenShell checks its policy before Risk Guard's middleware, so a call it refuses first never reaches Risk Guard and Risk Guard cannot count it.
+# This is a bucket-level monitor, so each sandbox over the line is its own alert, named by its bucket keys (sandbox name and id). Like the others it has no action:
+# nothing is sent to Risk Guard or anywhere else.
+OPENSHELL_WATCH = "Watch: OpenShell refused one sandbox 3 or more times in 5 minutes (Risk Guard never saw these)"
+
+
+def openshell_watch_body():
+    query = {"size": 0, "query": {"bool": {"filter": [
+        {"term": {"metadata.product.name.keyword": "OpenShell Sandbox Supervisor"}}, {"term": {"action.keyword": "Denied"}}, _since(5)],
+        "must_not": [{"term": {"firewall_rule.type.keyword": "middleware"}}, {"term": {"activity_name.keyword": "Refuse"}},
+                     {"terms": {"dst_endpoint.domain.keyword": OS_BACKGROUND_HOSTS}}]}},
+        "aggregations": {"by_sandbox": {"composite": {"size": 50, "sources": [{"sandbox": {"terms": {"field": "container.name.keyword"}}},
+                                                                              {"sandbox_id": {"terms": {"field": "container.uid.keyword"}}}]}}}}
+    return {"type": "monitor", "name": OPENSHELL_WATCH, "monitor_type": "bucket_level_monitor", "enabled": True,
+            "schedule": {"period": {"interval": 1, "unit": "MINUTES"}},
+            "inputs": [{"search": {"indices": [INDEX], "query": query}}],
+            "triggers": [{"bucket_level_trigger": {
+                "name": "OpenShell keeps refusing one sandbox", "severity": "2",
+                "condition": {"buckets_path": {"_count": "_count"}, "parent_bucket_path": "by_sandbox", "script": {"source": "params._count >= 3", "lang": "painless"}},
+                "actions": []}}]}
+
+
+def install_openshell_watch():
+    found = opensearch("POST", "/_plugins/_alerting/monitors/_search", {"query": {"match_phrase": {"monitor.name": OPENSHELL_WATCH}}})
+    for hit in (found.get("hits") or {}).get("hits") or []:
+        opensearch("DELETE", f"/_plugins/_alerting/monitors/{hit['_id']}")
+    created = opensearch("POST", "/_plugins/_alerting/monitors", openshell_watch_body())
+    print(f"watch monitor '{OPENSHELL_WATCH[:60]}': " + ("created" if "_id" in created else "NOT created: " + json.dumps(created)[:300]))
+
+
 def install_watch_monitors():
+    install_openshell_watch()
     for name, spec in WATCH_MONITORS.items():
         found = opensearch("POST", "/_plugins/_alerting/monitors/_search", {"query": {"match_phrase": {"monitor.name": name}}})
         for hit in (found.get("hits") or {}).get("hits") or []:

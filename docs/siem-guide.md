@@ -50,6 +50,30 @@ agent's name is the one set with `agent-rename`. OpenShell's events know only th
 
 Two words in the data that matter: a **refusal** (`middleware_denied:...`) means Risk Guard decided the behaviour was too risky. A **failure** (`middleware_failed`) means Risk Guard did not answer in time or at all, and OpenShell refused because the middleware is set to fail closed. They need different responses: refusals are the guard working; failures are the guard having a bad moment.
 
+## Watching what OpenShell refuses (Risk Guard cannot see it)
+
+OpenShell checks its network policy **before** Risk Guard's middleware. A call OpenShell refuses first never reaches Risk Guard, so Risk Guard cannot count it, and a sandbox that keeps hitting the policy would look quiet to Risk Guard. The SIEM sees both, so it is where a person can notice it.
+
+**The alert: `Watch: OpenShell refused one sandbox 3 or more times in 5 minutes (Risk Guard never saw these)`** (Alerting, severity 2, runs every minute).
+
+- **Watch-only.** It has no action: it raises an alert in OpenSearch Alerting for a person to look at. It sends nothing to Risk Guard and changes nothing. Any restriction or risk hint fed back to Risk Guard is deliberately later work.
+- **What it counts**, per sandbox, in the last 5 minutes: OpenShell enforced denials, meaning events from `OpenShell Sandbox Supervisor` with `action` Denied that are not Risk Guard's own (`firewall_rule.type` is not `middleware`). That is both L7 request denials (HTTP Activity, message `L7_REQUEST deny ... not permitted by policy`) and denied connections (Network Activity: `transparent_tcp_policy_denied` and the L7 tunnel or request-target rejections). Two things are deliberately not counted: DNS refusals (`activity_name` Refuse; the connection attempt that follows is logged on its own, so one attempt would count twice) and the destination `events.telemetry.data.nvidia.com`, which every sandbox tries in the background and is refused (about 97% of denied connections in the demo data), so counting it would make every sandbox look attacked. The excluded hosts are `OS_BACKGROUND_HOSTS` in `install_content.py`.
+- **It names the sandbox.** It is a bucket-level monitor: each sandbox over the line is its own alert, and the alert's bucket key reads `<sandbox name>#<sandbox id>`.
+- **Audit-mode would-blocks (`L7_REQUEST audit ... not permitted by policy`, action Allowed) are not an alert.** They are expected, and wanted, during a trial of a new policy: they are the list of what enforcing would start refusing, and an alert on them would fire for the whole trial. They are a count and a saved search on the dashboard instead.
+- **Dashboard:** on **Start here**, under the existing panels, **OpenShell denials per sandbox, over time** (top 10 sandboxes per bar, same exclusions) and the saved search **What OpenShell denied**. The existing "Connections OpenShell denied" and "Requests OpenShell's L7 policy denied" counts above them are unfiltered.
+
+How the three kinds differ in the data (checked on the live index):
+
+| | Class | `action` | Tells it apart |
+|---|---|---|---|
+| Enforced L7 denial | HTTP Activity | Denied, disposition Blocked | `firewall_rule.type` l7, `message` starts `L7_REQUEST deny`, `http_request.*` present |
+| Audit-mode would-block | HTTP Activity | **Allowed**, disposition Allowed | `message` starts `L7_REQUEST audit` and ends `not permitted by policy`; severity Informational |
+| Denied connection | Network Activity | Denied, status Failure | `status_detail` `transparent_tcp_policy_denied` (activity Open) or an L7 tunnel/request rejection (`firewall_rule.type` l7); DNS refusals are `policy_dns_ineligible` (activity Refuse) |
+
+Risk Guard's own refusals are also logged by the supervisor as HTTP Activity Denied, with `firewall_rule.type` **middleware**; that field is what separates them from OpenShell's.
+
+**Verified:** the field findings above (queries on the live index); the monitor and the dashboard objects install cleanly and again (idempotent); the monitor's dry run (`_execute?dryrun=true`) runs without error and finds nothing in the current 5 minutes; with the window widened to 24 hours the same query returns a triggering bucket with the sandbox name and id; `check_dashboards.py` shows the new chart with data and no new empty or failing rows. **Not verified:** the alert firing on its own in a real 5-minute window (none occurred while building it; no test events were written to the index), how the panels look in a browser, and anything about other deployments' background noise. The monitor looks at the first 50 sandboxes in a window.
+
 ## What to expect, honestly
 
 - **Anomaly detectors need history.** They need roughly 128 one-minute intervals of data (about two hours of steady traffic) before they produce results, and they do poorly on very sparse data. This demo mostly has bursts when you run a scenario, so expect "initializing" first, and noisy or empty results after. It becomes useful when agents run for hours or days, not in a five-minute demo. Treat them as a feature to show, not as proof of detection quality.
