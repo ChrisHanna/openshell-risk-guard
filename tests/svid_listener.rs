@@ -994,6 +994,49 @@ async fn a_task_can_only_open_tunnels_to_the_hosts_it_approves_when_the_rule_enf
     running.stop.notify_one();
 }
 
+/// A latched restriction is host-specific: a locked workload keeps the hosts its task approves (the model host) and loses every other.
+#[tokio::test]
+async fn a_latched_restriction_refuses_only_hosts_the_task_does_not_approve() {
+    use openshell_risk_guard::types::RuleMode;
+
+    let authority = Authority::new();
+    let proxy_id = "spiffe://example.org/ns/edge/sa/sandbox-egress";
+    let resolver: Arc<dyn PodResolver> = Arc::new(StaticPodResolver(
+        [
+            ("10.0.1.3".parse().unwrap(), "sbx-locked".to_string()),
+            ("10.0.1.4".parse().unwrap(), "sbx-locked-shadow".to_string()),
+        ]
+        .into(),
+    ));
+    let running = start_full(
+        &authority,
+        &[TRUST_DOMAIN],
+        &[proxy_id],
+        Some((resolver, TunnelMode::Enforce)),
+    )
+    .await;
+    // The destination rule is watching, so only the lock can refuse an unapproved host here.
+    enrol_with_egress_list(&running.store, "sbx-locked", RuleMode::Shadow);
+    latch_restriction(&running.store, "sbx-locked");
+    let (cert, key) = authority.svid(&[proxy_id]);
+    let channel = connect(&running, Some((&cert, &key))).await.unwrap();
+
+    for (destination, allowed) in [
+        ("integrate.api.nvidia.com:443", true),
+        ("api.example.org:443", true),
+        ("evil.example.com:443", false),
+        ("93.184.216.34:443", false),
+    ] {
+        let response = tunnel_check_to(channel.clone(), "10.0.1.3", destination).await;
+        assert_eq!(
+            response.ok_response.is_some(),
+            allowed,
+            "locked: {destination} -> {response:?}"
+        );
+    }
+    running.stop.notify_one();
+}
+
 /// Failure containment: when Risk Guard cannot record or read its own state it must not forward the request. The database is a real file;
 /// a second connection then makes every write fail the way a full disk or a read-only volume would, while reads still work.
 #[tokio::test]

@@ -291,6 +291,12 @@ impl BaselineProfile {
             })
     }
 
+    /// True only when the task's list is non-empty and names this host. An empty list approves everything for the destination check
+    /// (`egress_host_allowed`), but it must not exempt a locked workload: with no list, nothing says which hosts are safe.
+    pub fn egress_host_explicitly_approved(&self, host: &str) -> bool {
+        !self.approved_egress_hosts.is_empty() && self.egress_host_allowed(host)
+    }
+
     /// Check the approved-egress list is well formed: lowercase hostnames or `*.` wildcards, no scheme, port, path or address.
     pub fn validate_egress_hosts(&self) -> std::result::Result<(), String> {
         for entry in &self.approved_egress_hosts {

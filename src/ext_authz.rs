@@ -350,7 +350,15 @@ impl ExtAuthzService {
             .await;
         }
 
-        let (verdict, reason) = match state {
+        // A latched restriction is host-specific: it refuses tunnels to hosts the task does not explicitly approve, and leaves the approved
+        // ones (the model host, for example) alone. Quarantine, the destination rule and the silence rule are unchanged.
+        let approved_host = baseline
+            .as_ref()
+            .is_some_and(|baseline| baseline.egress_host_explicitly_approved(&host));
+        let (verdict, reason) = match state.map(|mut state| {
+            state.restricted &= !approved_host;
+            state
+        }) {
             None => ("deny", "Risk Guard has no record of this sandbox"),
             Some(state) if state.quarantined => ("deny", "the sandbox's workload is quarantined"),
             Some(_) if egress == Some((RuleMode::Enforce, false)) => (
@@ -370,12 +378,13 @@ impl ExtAuthzService {
                     "shadow: the destination is not approved for this sandbox's task, which would block this tunnel in enforce mode",
                 )
             }
-            Some(state) if state.restricted && enforcing => {
-                ("deny", "the sandbox's workload holds a latched restriction")
-            }
+            Some(state) if state.restricted && enforcing => (
+                "deny",
+                "the sandbox's workload holds a latched restriction and this host is not explicitly approved for its task",
+            ),
             Some(state) if state.restricted => (
                 "allow",
-                "shadow: the workload holds a latched restriction, which would block this tunnel in enforce mode",
+                "shadow: the workload holds a latched restriction and this host is not explicitly approved, which would block this tunnel in enforce mode",
             ),
             Some(_) if silent_for_ms.is_some() => (
                 "allow",
