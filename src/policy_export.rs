@@ -133,6 +133,17 @@ fn make_deny(method: String, path: String) -> L7DenyRule {
     }
 }
 
+/// How long the prover may take. The proof is a satisfiability check whose cost grows with the number of rules and is noticeably slower on a small machine, and an inconclusive
+/// answer (time ran out) is refused, never treated as a pass, so the budget errs long. `RISK_GUARD_PROOF_TIMEOUT_SECONDS` overrides it.
+fn proof_timeout() -> Duration {
+    let seconds = std::env::var("RISK_GUARD_PROOF_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|s| (1..=600).contains(s))
+        .unwrap_or(60);
+    Duration::from_secs(seconds)
+}
+
 /// Write `baseline`'s lists into `policy_yaml` as OpenShell rules, set the endpoints' mode to `enforcement` (`audit` or `enforce`), and prove the result is no wider.
 pub fn export_policy(
     baseline: &BaselineProfile,
@@ -224,7 +235,7 @@ pub fn export_policy(
     let proof = ProverHardeningEngine::new().verify_two_step_containment(
         policy_yaml,
         &proof_yaml,
-        Duration::from_secs(10),
+        proof_timeout(),
     )?;
     let mut notes = vec![
         "Network rules take effect on a running sandbox within seconds and close connections opened under the old rules; filesystem and process settings are unchanged.".to_string(),

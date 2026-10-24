@@ -72,6 +72,8 @@ Story (0:45) → Controls (1:00) → act 2 only (0:45) → Approvals self-approv
 * **Two-person approval is tested with the token path and in the store, not with two real Entra accounts.**
 * **Deploys can fail on network resets.** Do not redeploy on Monday. If a change is needed, build with `-LocalDocker` and stop on a failed build.
 * **An approved baseline change applies to new sandboxes only, not running ones** (each sandbox keeps the baseline it started with). Say so if asked. OpenShell's own network policy, by contrast, hot-reloads on a running sandbox.
+* **Act 4 (replay) picks a workload whose recorded history is complete**, since retention prunes old decisions; it names the workload it used. If none qualifies it says so and skips.
+* **A policy proposal can take up to a minute** while the prover runs (the budget is 60 s, `RISK_GUARD_PROOF_TIMEOUT_SECONDS` changes it); a proof that runs out of time is refused, never treated as a pass.
 * **Counts move.** Numbers on the Controls page change every refresh; say "about".
 
 ## If something breaks

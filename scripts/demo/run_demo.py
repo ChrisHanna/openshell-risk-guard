@@ -204,18 +204,24 @@ def run(pause):
         say("  New connections are refused at once. A tunnel already open ends within 120 s (measured 81 s and 112 s).", DIM)
 
     act(4, "The recorded decisions replay from nothing", pause)
-    agents = {a["display_name"]: a["agent_id"] for a in console_state()["agents"]}
-    agent = next((id_ for name, id_ in agents.items() if "nat-agent" in name), None)
-    if agent is None:
-        say("  skipped: no nat-agent in the fleet", AMBER)
-    else:
-        bundle = f"/var/lib/openshell-risk-guard/demo-replay.json"
-        exported = json.loads(risk_guard("replay-export", "--db", DB, "--agent-id", agent, "--out", bundle))
-        say(f"  exported {exported['events']} decisions; history complete: {exported['history_complete']}", DIM)
+    # A replay needs the whole history from the first decision, and retention prunes old ones. Try the workloads with at least 50 recorded decisions, smallest first (quick to
+    # export), and use the first whose history is complete. Names change when agents are renamed, so do not depend on one.
+    candidates = sorted((a for a in console_state()["agents"] if a.get("decision_count", 0) >= 50), key=lambda a: a["decision_count"])
+    bundle = "/var/lib/openshell-risk-guard/demo-replay.json"
+    replayed = False
+    for candidate in candidates[:8]:
+        exported = json.loads(risk_guard("replay-export", "--db", DB, "--agent-id", candidate["agent_id"], "--out", bundle))
+        if not exported["history_complete"]:
+            continue
+        say(f"  exported {exported['events']} decisions for {candidate.get('display_name') or candidate['agent_id']}; history complete: True", DIM)
         report = json.loads(risk_guard("replay-verify", "--bundle", bundle))
         say(f"  replayed in a fresh store: {report['matched']} of {report['decisions']} decisions and reason codes reproduced"
             f" ({'no differences' if not report['divergences'] else str(len(report['divergences'])) + ' differences'})",
             GREEN if report["reproduced"] else RED)
+        replayed = True
+        break
+    if not replayed:
+        say("  skipped: no workload has a complete recorded history yet (older decisions were pruned)", AMBER)
     say(f"\nTotal: {round(time.time() - started)} s", DIM)
 
 
