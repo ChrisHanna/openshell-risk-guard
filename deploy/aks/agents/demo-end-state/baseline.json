@@ -1,0 +1,19 @@
+{
+  "task_profile": "demo-end-state",
+  "version": "v1",
+  "approved_by": "local-demo-operator",
+  "normalizer_version": "v1",
+  "training_sessions": 0,
+  "training_requests": 0,
+  "expected_binaries": ["/opt/agent/bin/python3.12", "/usr/bin/python3.12"],
+  "approved_resources": ["services", "web", "api"],
+  "allowed_action_classes": ["GET /services", "GET /services/{svc}", "GET /services/{svc}/deployments"],
+  "forbidden_action_classes": [],
+  "forbid_unfamiliar_high_impact": true,
+  "rule_modes": {"unapproved_action": "enforce", "unapproved_resource": "enforce", "egress_destination": "shadow"},
+  "approved_egress_hosts": ["integrate.api.nvidia.com"],
+  "max_req_1m_p95": 60,
+  "max_req_1m_p99": 120,
+  "max_distinct_resources_15m_p95": 4,
+  "max_distinct_resources_15m_p99": 6
+}

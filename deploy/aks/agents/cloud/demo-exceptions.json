@@ -1,0 +1,10 @@
+{
+  "task_profile": "cloud-hygiene",
+  "exceptions": [
+    {
+      "method": "GET",
+      "path": "/secrets/*",
+      "reason": "DEMO ONLY: lets a read of a named secret pass OpenShell so that Risk Guard's refusal can be shown. Not part of the profile's baseline; the fleet never uses policy.enforce.demo.yaml."
+    }
+  ]
+}

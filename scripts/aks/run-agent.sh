@@ -27,16 +27,19 @@ if [ -n "${AGENT_PROFILE:-}" ]; then
 else
   POLICY_FILE="$HERE/deploy/aks/agent-sandbox-policy.yaml"; WORKFLOW_FILE="$HERE/deploy/aks/agent-workflow.yml"
 fi
-# AGENT_POLICY_MODE=audit runs the sandbox on the policy generated from the profile's baseline (policy.audit.yaml, written by
-# scripts/policy/generate_audit_policies.py): OpenShell logs what it would block and blocks nothing. Unset, the hand-written
-# policy.yaml is used, exactly as before. Audit without a profile that has a generated file is an error, not a silent fallback.
-if [ "${AGENT_POLICY_MODE:-}" = audit ]; then
-  [ -n "${AGENT_PROFILE:-}" ] && [ -f "$HERE/deploy/aks/agents/$AGENT_PROFILE/policy.audit.yaml" ]     || { echo "AGENT_POLICY_MODE=audit needs a profile with a generated policy.audit.yaml (profile: ${AGENT_PROFILE:-none})" >&2; exit 2; }
-  POLICY_FILE="$HERE/deploy/aks/agents/$AGENT_PROFILE/policy.audit.yaml"
-  echo "policy: generated audit policy ($AGENT_PROFILE)"
-elif [ -n "${AGENT_POLICY_MODE:-}" ]; then
-  echo "unknown AGENT_POLICY_MODE '$AGENT_POLICY_MODE' (only 'audit', or unset)" >&2; exit 2
-fi
+# AGENT_POLICY_MODE selects the policy generated from the profile's baseline by scripts/policy/generate_audit_policies.py:
+#   audit    policy.audit.yaml    OpenShell logs what it would block and blocks nothing; Risk Guard decides (the fleet's setting today)
+#   enforce  policy.enforce.yaml  the same rules; OpenShell refuses what the baseline does not approve, and Risk Guard never sees those calls
+# Unset, the hand-written policy.yaml is used, exactly as before: that is also the rollback. A mode without the profile's generated file is an error, never a silent fallback.
+# policy.enforce.demo.yaml (the demo's deliberately weakened policy) is not selectable here: only scripts/demo/end_state.py uses it.
+case "${AGENT_POLICY_MODE:-}" in
+  audit|enforce)
+    [ -n "${AGENT_PROFILE:-}" ] && [ -f "$HERE/deploy/aks/agents/$AGENT_PROFILE/policy.$AGENT_POLICY_MODE.yaml" ]       || { echo "AGENT_POLICY_MODE=$AGENT_POLICY_MODE needs a profile with a generated policy.$AGENT_POLICY_MODE.yaml (profile: ${AGENT_PROFILE:-none})" >&2; exit 2; }
+    POLICY_FILE="$HERE/deploy/aks/agents/$AGENT_PROFILE/policy.$AGENT_POLICY_MODE.yaml"
+    echo "policy: generated $AGENT_POLICY_MODE policy ($AGENT_PROFILE)" ;;
+  "") ;;
+  *) echo "unknown AGENT_POLICY_MODE '$AGENT_POLICY_MODE' (only 'audit', 'enforce', or unset)" >&2; exit 2 ;;
+esac
 [ -f "$POLICY_FILE" ] && [ -f "$WORKFLOW_FILE" ] || { echo "no policy or workflow for profile ${AGENT_PROFILE:-default}" >&2; exit 2; }
 
 case "$TASK" in

@@ -551,6 +551,9 @@ pub enum Commands {
         /// `audit` logs violations and allows the request (default); `enforce` blocks.
         #[arg(long, default_value = "audit")]
         enforcement: String,
+        /// A reviewed file of demo exceptions (extra allow rules) to add. DEMO ONLY: the result is deliberately wider than the baseline, and its rule name says so.
+        #[arg(long)]
+        demo_exceptions: Option<PathBuf>,
         /// Write the policy here (otherwise it is printed after the summary).
         #[arg(long)]
         out: Option<PathBuf>,
@@ -1295,16 +1298,26 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             baseline,
             policy,
             enforcement,
+            demo_exceptions,
             out,
         } => {
             let baseline = load_baseline_profile(&baseline)?;
+            let demo = demo_exceptions
+                .as_deref()
+                .map(crate::policy_export::DemoExceptions::load)
+                .transpose()?;
             let base = std::fs::read_to_string(&policy).map_err(|err| {
                 RiskGuardError::InvalidArgument(format!(
                     "failed to read policy '{}': {err}",
                     policy.display()
                 ))
             })?;
-            let export = crate::policy_export::export_policy(&baseline, &base, &enforcement)?;
+            let export = crate::policy_export::export_policy_with_demo_exceptions(
+                &baseline,
+                &base,
+                &enforcement,
+                demo.as_ref(),
+            )?;
             match out {
                 Some(path) => {
                     std::fs::write(&path, &export.yaml).map_err(|err| {

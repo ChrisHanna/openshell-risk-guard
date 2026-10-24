@@ -159,6 +159,18 @@ __SVID_POD_SPEC__
               memory: 64Mi
           securityContext: *baseline-security
           volumeMounts: *baseline-mounts
+        # The end-state demo's profile (scripts/demo/end_state.py): one route family, a short approved-resource list, and the resource rule enforcing. No fleet agent uses it.
+        - name: baseline-import-demo-end-state
+          image: __IMAGE__
+          args: [baseline-import, --db=/var/lib/openshell-risk-guard/risk-guard.db, --profile=/etc/openshell-risk-guard/baseline/demo-end-state.json]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          securityContext: *baseline-security
+          volumeMounts: *baseline-mounts
       containers:
         - name: risk-guard
           image: __IMAGE__

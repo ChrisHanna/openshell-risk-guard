@@ -47,6 +47,14 @@ class Matching(unittest.TestCase):
         r = agreement.compare([openshell("s1", "GET", "/b", 1000)], [openshell("s9", "DELETE", "/services/w", 1000)])
         self.assertEqual(len(r["risk_guard_only"]), 0)
 
+    def test_a_call_risk_guard_errored_on_is_not_agreement_and_not_a_new_block(self):
+        r = agreement.compare([openshell("s1", "DELETE", "/buckets/x", 1000)], [], failures=[openshell("s1", "DELETE", "/buckets/x", 1100)])
+        self.assertEqual((len(r["both"]), len(r["openshell_only"]), len(r["errored_closed"])), (0, 0, 1))
+
+    def test_an_error_on_a_different_call_does_not_excuse_this_one(self):
+        r = agreement.compare([openshell("s1", "DELETE", "/buckets/x", 1000)], [], failures=[openshell("s1", "GET", "/buckets/x", 1000)])
+        self.assertEqual((len(r["openshell_only"]), len(r["errored_closed"])), (1, 0))
+
 
 if __name__ == "__main__":
     unittest.main()

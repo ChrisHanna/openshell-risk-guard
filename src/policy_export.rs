@@ -133,6 +133,97 @@ fn make_deny(method: String, path: String) -> L7DenyRule {
     }
 }
 
+/// One extra allow rule for a demonstration: a call the OpenShell policy lets through so that Risk Guard, not OpenShell, is the layer that refuses it. Each carries the reason
+/// it is there. A set of these is reviewed like any other file (`deploy/aks/agents/<profile>/demo-exceptions.json`) and is applied only when asked for.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct DemoException {
+    pub method: String,
+    pub path: String,
+    pub reason: String,
+}
+
+/// The reviewed file of demo exceptions for one task profile.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct DemoExceptions {
+    /// Which task profile the exceptions are for (`release-ops`); checked against the baseline so a file cannot be applied to the wrong profile.
+    pub task_profile: String,
+    pub exceptions: Vec<DemoException>,
+}
+
+/// At most this many: the point is a couple of examples, not a second policy.
+pub const MAX_DEMO_EXCEPTIONS: usize = 3;
+
+/// Marks a rule name as weakened for a demonstration. YAML comments do not survive serialization, so the name itself carries the disclosure.
+#[must_use]
+pub fn demo_rule_name(name: &str, count: usize) -> String {
+    format!("{name} (DEMO EXCEPTIONS: {count})")
+}
+
+impl DemoExceptions {
+    pub fn load(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let raw = std::fs::read_to_string(path).map_err(|err| {
+            RiskGuardError::InvalidArgument(format!(
+                "failed to read demo exceptions '{}': {err}",
+                path.display()
+            ))
+        })?;
+        let parsed: Self = serde_json::from_str(&raw).map_err(|err| {
+            RiskGuardError::InvalidArgument(format!(
+                "demo exceptions '{}' are not valid: {err}",
+                path.display()
+            ))
+        })?;
+        parsed.validate()?;
+        Ok(parsed)
+    }
+
+    /// Refuse a file that is empty, too long, or has an entry without a method, a rooted path or a reason.
+    pub fn validate(&self) -> Result<()> {
+        let bad = |message: String| Err(RiskGuardError::InvalidArgument(message));
+        if self.exceptions.is_empty() {
+            return bad("demo exceptions list no exceptions".into());
+        }
+        if self.exceptions.len() > MAX_DEMO_EXCEPTIONS {
+            return bad(format!(
+                "demo exceptions list {} entries; keep it to {MAX_DEMO_EXCEPTIONS} or fewer, they are examples and not a second policy",
+                self.exceptions.len()
+            ));
+        }
+        let mut seen = BTreeSet::new();
+        for e in &self.exceptions {
+            if !matches!(
+                e.method.as_str(),
+                "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
+            ) {
+                return bad(format!(
+                    "demo exception method '{}' must be one of GET, POST, PUT, PATCH, DELETE (upper case)",
+                    e.method
+                ));
+            }
+            if !e.path.starts_with('/') || e.path.contains(char::is_whitespace) {
+                return bad(format!(
+                    "demo exception path '{}' must start with / and hold no spaces",
+                    e.path
+                ));
+            }
+            if e.reason.trim().len() < 12 {
+                return bad(format!(
+                    "demo exception {} {} needs a reason of at least a sentence fragment",
+                    e.method, e.path
+                ));
+            }
+            if !seen.insert((e.method.clone(), e.path.clone())) {
+                return bad(format!(
+                    "demo exception {} {} is listed twice",
+                    e.method, e.path
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// How long the prover may take. The proof is a satisfiability check whose cost grows with the number of rules and is noticeably slower on a small machine, and an inconclusive
 /// answer (time ran out) is refused, never treated as a pass, so the budget errs long. `RISK_GUARD_PROOF_TIMEOUT_SECONDS` overrides it.
 fn proof_timeout() -> Duration {
@@ -150,6 +241,27 @@ pub fn export_policy(
     policy_yaml: &str,
     enforcement: &str,
 ) -> Result<PolicyExport> {
+    export_policy_with_demo_exceptions(baseline, policy_yaml, enforcement, None)
+}
+
+/// [`export_policy`] plus, when `demo` is given, the reviewed demo exceptions as extra allow rules. The result is deliberately **weaker** than the profile's baseline: the
+/// endpoint's rule name says so (`<name> (DEMO EXCEPTIONS: n)`), the summary lists every exception with its reason, and the prover still checks the whole thing against the
+/// original policy. Without `demo` the output is byte for byte what [`export_policy`] always wrote.
+pub fn export_policy_with_demo_exceptions(
+    baseline: &BaselineProfile,
+    policy_yaml: &str,
+    enforcement: &str,
+    demo: Option<&DemoExceptions>,
+) -> Result<PolicyExport> {
+    if let Some(demo) = demo {
+        demo.validate()?;
+        if demo.task_profile != baseline.task_profile {
+            return Err(RiskGuardError::InvalidArgument(format!(
+                "the demo exceptions are for task profile '{}' but the baseline is '{}'",
+                demo.task_profile, baseline.task_profile
+            )));
+        }
+    }
     if !matches!(enforcement, "audit" | "enforce") {
         return Err(RiskGuardError::InvalidArgument(
             "enforcement must be audit or enforce".into(),
@@ -185,6 +297,7 @@ pub fn export_policy(
         .filter_map(|c| action_class_rule(c))
         .collect();
     let mut changed = Vec::new();
+    let mut weakened: BTreeSet<String> = BTreeSet::new();
     for (name, rule) in &mut document.network_policies {
         for endpoint in &mut rule.endpoints {
             if !hosts.contains(&endpoint.host) {
@@ -200,6 +313,20 @@ pub fn export_policy(
                 .iter()
                 .map(|(m, p)| make_allow(m.clone(), p.clone()))
                 .collect();
+            if let Some(demo) = demo {
+                for e in &demo.exceptions {
+                    if allows.iter().any(|(m, p)| m == &e.method && p == &e.path) {
+                        return Err(RiskGuardError::InvalidArgument(format!(
+                            "demo exception {} {} is already an approved route; it would not be an exception",
+                            e.method, e.path
+                        )));
+                    }
+                    endpoint
+                        .rules
+                        .push(make_allow(e.method.clone(), e.path.clone()));
+                }
+                weakened.insert(name.clone());
+            }
             endpoint.deny_rules = denies
                 .iter()
                 .map(|(m, p)| make_deny(m.clone(), p.clone()))
@@ -207,6 +334,18 @@ pub fn export_policy(
             endpoint.access = String::new();
             endpoint.enforcement = enforcement.to_string();
             changed.push(format!("{name}:{}", endpoint.host));
+        }
+    }
+    if let Some(demo) = demo {
+        for name in &weakened {
+            if let Some(rule) = document.network_policies.get_mut(name) {
+                let base = if rule.name.is_empty() {
+                    name.clone()
+                } else {
+                    rule.name.clone()
+                };
+                rule.name = demo_rule_name(&base, demo.exceptions.len());
+            }
         }
     }
     if changed.is_empty() {
@@ -244,9 +383,21 @@ pub fn export_policy(
     if enforcement == "audit" {
         notes.push("audit mode logs a violation and allows the request: nothing is blocked until enforcement is set to enforce.".into());
     }
-    Ok(PolicyExport {
-        yaml,
-        summary: json!({
+    if let Some(demo) = demo {
+        notes.insert(
+            0,
+            format!(
+                "DEMO ONLY - WEAKENED ON PURPOSE: this policy also allows {} so that those calls reach Risk Guard. It is wider than the profile's baseline. Do not use it for the fleet. The rule name ends in (DEMO EXCEPTIONS: {}).",
+                demo.exceptions
+                    .iter()
+                    .map(|e| format!("{} {}", e.method, e.path))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                demo.exceptions.len()
+            ),
+        );
+    }
+    let mut summary = json!({
             "task_profile": baseline.task_profile, "baseline_version": baseline.version, "enforcement": enforcement,
             "covered_hosts": hosts, "endpoints_changed": changed, "allow_rules": allows.len(), "deny_rules": denies.len(),
             "proof": {
@@ -255,8 +406,14 @@ pub fn export_policy(
                 "step2_prover": proof.step2_prover_verdict, "detail": proof.step2_counterexample_or_reason,
             },
             "notes": notes,
-        }),
-    })
+    });
+    if let Some(d) = demo {
+        summary["demo_exceptions"] = json!({
+            "count": d.exceptions.len(), "weakened_rules": weakened, "proved_against": "the original policy given with --policy, including the exceptions",
+            "exceptions": d.exceptions,
+        });
+    }
+    Ok(PolicyExport { yaml, summary })
 }
 
 /// The network rules of a policy as readable lines, keyed by rule name and endpoint: the mode, the allow rules and the deny rules, in the order written.

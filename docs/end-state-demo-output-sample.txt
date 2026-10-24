@@ -1,0 +1,82 @@
+NOTE: this is a real run of `scripts/demo/end_state.py --prepare --profile release`, the run, and `--cleanup --profile release` on 2026-10-24, against the live release-ops profile.
+It is NOT a run of the default demo-end-state profile: that profile's baseline is not imported into the running Risk Guard (see docs/end-state-demo.md), so act D shows the
+resource rule only watching here. Nothing in this file is edited except this note.
+
+Preparing the end-state demo sandbox
+  ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  │ DEMO NOTICE: this sandbox's OpenShell policy is deliberately WEAKER than the release-ops baseline.
+  │ It also allows: DELETE /services/*. Those calls reach Risk Guard on purpose; every other rule is the baseline's.
+  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+creating sandbox demo-endstate (about a minute)...
+ready. first call GET /services -> 200 through OpenShell and Risk Guard. Policy rule on the gateway: release-api (DEMO EXCEPTIONS: 1)
+OpenShell enforces the approved routes; Risk Guard decides what a path rule cannot
+profile release-ops, live cluster, sandbox demo-endstate
+  ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  │ DEMO NOTICE: this sandbox's OpenShell policy is deliberately WEAKER than the release-ops baseline.
+  │ It also allows: DELETE /services/*. Those calls reach Risk Guard on purpose; every other rule is the baseline's.
+  │ Read back from the gateway: the sandbox's policy rule is named "release-api (DEMO EXCEPTIONS: 1)".
+  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+Act A  A routine call passes both layers
+  GET /services  ->  200
+  OCSF  HTTP Activity   Allowed  L7_REQUEST allow GET deploy-api.openshell.svc.cluster.local:18081/services reason=
+  OCSF  HTTP Activity   Allowed  MIDDLEWARE risk-guard risk-guard decision=Allow
+  OpenShell's rule allowed it, then Risk Guard allowed it; the service answered.
+
+Act B  A destructive call that is not an exception is refused by OpenShell; Risk Guard never sees it
+  POST /services/payments/rollback  ->  403 policy_denied (rule: POST /services/payments/rollback)
+  OCSF  HTTP Activity   Denied   L7_REQUEST deny POST deploy-api.openshell.svc.cluster.local:18081/services/payments/rollback reason=POST /services/payments/rollba
+  Risk Guard was not consulted: no MIDDLEWARE record for this call.
+
+Act C  An exception passes OpenShell; Risk Guard refuses it (naming the rule) and locks that route for the workload
+  ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  │ DEMO NOTICE: this sandbox's OpenShell policy is deliberately WEAKER than the release-ops baseline.
+  │ It also allows: DELETE /services/*. Those calls reach Risk Guard on purpose; every other rule is the baseline's.
+  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  DELETE /services/worker  ->  403 middleware_denied (middleware risk-guard, reason_code task_constraint_denied)
+  OCSF  HTTP Activity   Allowed  L7_REQUEST allow DELETE deploy-api.openshell.svc.cluster.local:18081/services/worker reason=
+  OCSF  HTTP Activity   Denied   MIDDLEWARE risk-guard risk-guard decision=Deny   [middleware_denied:risk-guard:task_constraint_denied]
+  Risk Guard's own record of this call: outcome deny, reason task_constraint_denied, score 70 of 70
+    rule(s) that refused it: unapproved_action
+    ratchet: latch_tier1_strict_epoch on scope 'http://deploy-api.openshell.svc.cluster.local:18081 DELETE /services/{svc} worker'
+  destination's own DELETE /services/worker counter: 1 before, 1 after  ->  no effect at the destination
+  restrictions now held on workload endstate-release: 1  (locked)
+    scope: http://deploy-api.openshell.svc.cluster.local:18081 DELETE /services/{svc} worker
+  the same call again  ->  403 behavioral_risk_restricted   (the lock: that route on that resource stays refused for this workload)
+  a routine GET /services straight afterwards  ->  200   (the lock is narrow: approved work continues)
+  operator step: 1 restriction(s) cleared with break-glass so that act D shows the resource rule alone (recorded in the audit trail).
+
+Act D  The same approved route on an unapproved resource is refused by Risk Guard's resource rule
+  GET /services/payments  ->  200
+  OCSF  HTTP Activity   Allowed  L7_REQUEST allow GET deploy-api.openshell.svc.cluster.local:18081/services/payments reason=
+  OCSF  HTTP Activity   Allowed  MIDDLEWARE risk-guard risk-guard decision=Allow
+  Risk Guard's own record of this call: outcome allow, reason baseline_insufficient, score 0 of 70
+    rule(s) only watching (shadow, did not block): unapproved_resource
+  The resource rule is only watching (shadow) in the release-ops profile, so Risk Guard allowed this and logged it. It refuses only in demo-end-state.
+
+Act E  The agreement tool: what enforcing the fleet would change
+  the fleet's last 24 h in audit mode: OpenShell would have refused 80 calls
+    both layers refused:                     79
+    OpenShell only (enforcing would add):    0
+    OpenShell only, Risk Guard errored:      1
+    Risk Guard only (rate, resource, rules): 7
+  The gate for enforcing the fleet is 'OpenShell only' = 0 (docs/fleet-policy-modes.md). Probe sandboxes are excluded.
+
+The same events in the SIEM (OpenSearch, index ocsf-openshell)
+  GET    /services                        Allowed  L7_REQUEST allow GET deploy-api.openshell.svc.cluster.local:18081/services reason=
+  GET    /services                        Allowed  MIDDLEWARE risk-guard risk-guard decision=Allow
+  GET    /services                        Allowed  L7_REQUEST allow GET deploy-api.openshell.svc.cluster.local:18081/services reason=
+  GET    /services                        Allowed  MIDDLEWARE risk-guard risk-guard decision=Allow
+  POST   /services/payments/rollback      Denied   L7_REQUEST deny POST deploy-api.openshell.svc.cluster.local:18081/services/payments/rollback reason=POST /serv
+  DELETE /services/worker                 Allowed  L7_REQUEST allow DELETE deploy-api.openshell.svc.cluster.local:18081/services/worker reason=
+  DELETE /services/worker                 Denied   MIDDLEWARE risk-guard risk-guard decision=Deny  [middleware_denied:risk-guard:task_constraint_denied]
+  DELETE /services/worker                 Allowed  L7_REQUEST allow DELETE deploy-api.openshell.svc.cluster.local:18081/services/worker reason=
+  DELETE /services/worker                 Denied   MIDDLEWARE risk-guard risk-guard decision=Deny  [middleware_denied:risk-guard:behavioral_risk_restricted]
+  GET    /services                        Allowed  L7_REQUEST allow GET deploy-api.openshell.svc.cluster.local:18081/services reason=
+  GET    /services                        Allowed  MIDDLEWARE risk-guard risk-guard decision=Allow
+  GET    /services/payments               Allowed  L7_REQUEST allow GET deploy-api.openshell.svc.cluster.local:18081/services/payments reason=
+  GET    /services/payments               Allowed  MIDDLEWARE risk-guard risk-guard decision=Allow
+  all 6 calls are in the SIEM
+
+Total: 33 s
+sandbox removed; 0 restriction(s) of workload endstate-release cleared (recorded in Risk Guard's audit trail as break-glass by end-state-demo)
