@@ -14,7 +14,7 @@ what is already in place. Nothing here is hidden elsewhere: this is the list.
 | 3 | **Throughput ceiling of about 100 decisions/s** | Past about 8 concurrent callers requests are refused | Measured, fails closed, explicit thresholds; faster disk and batched commits are the planned fixes |
 | 4 | **Probes and shutdown not tested under load** | Slow startup, database contention or termination under load could cause unsafe behaviour or restart loops | Separate startup, readiness (read connection) and liveness (no database) probes; no load test yet |
 | 5 | **Evidence is deletable by a database administrator** | An attacker who reaches the volume can erase the record of what happened | Refusals, signals and per-minute summaries are exported as OCSF to OpenSearch (14-day retention); a short window is unexported and the SIEM is not append-only |
-| 6 | **Second-person approval has no UI; policy is not signed** | Loosening needs two people by CLI/API, but break-glass exists and the Entra path is untested | Change requests, proposer ≠ approver, 24 h expiry ([two-person](two-person.md)); a promotion gate before enforce ([promotion gate](promotion-gate.md)) |
+| 6 | **Two-person approval is not shown end to end; policy is not signed** | The Approvals page and API exist, but a completed approval by two real accounts has not been shown, break-glass exists and the Entra path is untested | Change requests, proposer ≠ approver, 24 h expiry ([two-person](two-person.md)); a promotion gate before enforce ([promotion gate](promotion-gate.md)) |
 
 ## Limits of what it can see or stop
 

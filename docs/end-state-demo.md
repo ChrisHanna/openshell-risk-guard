@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 | E | The agreement tool's numbers for the fleet's audit-mode run | Both layers refused / OpenShell only / OpenShell only with Risk Guard errored / Risk Guard only. The evidence for enforcing the fleet ([fleet-policy-modes.md](fleet-policy-modes.md)) |
 | F | The same `GET /services` as act A, repeated until Risk Guard's decision carries the `siem_context` signal | Act B sent three denials in all. OpenSearch counts them (`openshell_denials_5m`), the feature publisher (every 30 s) hands the count to Risk Guard, and the next routine call's score rises by the rule's points (+4 for 3 to 9 denials, +8 for 10 or more), with the rule and `changes_outcome` printed. The rule is **enforcing in this profile only**; in the fleet it only watches. Nothing is injected: the path is OpenShell's event, the collector, OpenSearch, the publisher, `/features`. It takes one to three minutes after act B, so act F waits (up to `--feature-wait`, default 300 s) and says so honestly if the features have not arrived. Run again within ten minutes and act A already carries the features, which the script reports |
 
-At the end the script polls OpenSearch until the calls' events appear (about a minute and a half) and prints them.
+At the end the script polls OpenSearch until the calls' events appear (usually seconds; it waits up to 150 s) and prints them.
 
 ## The `demo-end-state` profile
 

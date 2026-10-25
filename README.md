@@ -227,6 +227,7 @@ cargo run -- hardening-report \
 | [Running on AKS](docs/aks.md) | Deploy OpenShell and Risk Guard on Azure Kubernetes Service with scripts: Kata VM sandboxes, Key Vault credentials, Entra agent identities, a protected public console, and what a real cluster showed |
 | [Demo and local deployment](docs/demo.md) | Running the local demo stack and its traffic generator |
 | [Requirements](docs/requirements.md), [Design](docs/design.md), [Anomaly detection](docs/anomaly-detection.md) | Specifications and the scoring model |
+| [Architecture and security review](docs/architecture-review.md) | A critical review of how the three systems fit, what the SIEM really adds, and the gaps |
 
 ## Building
 

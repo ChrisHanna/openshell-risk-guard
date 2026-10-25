@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Design: OpenSearch features that improve Risk Guard's scoring
 
-Status: Risk Guard's side is built (see "What was built on Risk Guard's side" at the end); it has not been deployed. The publisher on the SIEM side is separate work. This document was the contract for three pieces of work (Risk Guard's side, the publisher, and the adaptive learner), written so they could be built in parallel.
+Status (2026-10-25): **built, deployed and running.** Risk Guard's side, the publisher (`src/feature_publisher.rs`, every 30 s, see [the publisher](siem-features-publisher.md)) and the adaptive learner's use of the counts are all in the live deployment; a live demo act shows an OpenShell denial changing a score. Measured on the live system (two samples): a denial is searchable in OpenSearch after 5 to 8 s and scored by Risk Guard after 20 to 34 s. The rule watches in the fleet and enforces in the end-state demo profile only; its value on real traffic is not measured. This document was the contract for three pieces of work, written so they could be built in parallel; the sections below keep their original wording, and "What was built" is the record of the first build.
 
 ## Goal
 
@@ -89,7 +89,7 @@ OpenSearch anomaly-detection scores as a feature (there is too little real data;
 
 ## What was built on Risk Guard's side
 
-Built and tested; **not deployed**, and nothing here has been run against a live OpenSearch or the live cluster. The publisher (`src/signal_forwarder.rs`) is separate work, so nothing has yet sent a real batch to this endpoint; the tests post batches themselves.
+Built and tested at the time of the first build; since then deployed (see the status above). The text in this section describes the first build, before the publisher existed; the publisher is now `src/feature_publisher.rs`.
 
 **Ingest.** `POST /features` on the signals listener (`src/signals.rs`, `src/store/siem_features.rs`). Same mutual TLS and SPIFFE allow-list as signals; the source recorded is the verified SPIFFE ID (a bearer-token listener records `bearer-token`). The body is schema 1 exactly as above and **refuses unknown fields**, so a body that tries to carry a `source` is a 400, not a quiet ignore. Limits: 64 KiB body (413 over it, before the body is read), at most 2,000 subjects, one batch per source per 10 seconds (429), `window_seconds` 60 to 3,600, a batch generated more than 10 minutes ago is refused as stale (422), one generated more than 5 minutes ahead is refused (400). Features are checked one by one against the closed vocabulary (`src/detector/siem.rs`): an unknown name, a name for the wrong kind of subject (for example a fleet name on a sandbox), a non-integer or negative value, or a value over its range (counts 0 to 100,000, permille 0 to 1,000) is rejected and counted by reason, and the rest of the batch is still stored. The answer says how many were accepted and rejected, why, and how many sandbox and SPIFFE subjects resolved to a workload.
 

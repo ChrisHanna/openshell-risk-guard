@@ -262,7 +262,7 @@ def cleanup(cfg):
 
 
 def siem_check(sandbox_id, started, expected, wait):
-    """Find OpenShell's records of the calls in the SIEM (OpenSearch). Ingestion takes a minute or two, so poll."""
+    """Find OpenShell's records of the calls in the SIEM (OpenSearch). Ingestion usually takes seconds (measured 5 to 8 s), so poll."""
     import install_content as siem
     say("\nThe same events in the SIEM (OpenSearch, index ocsf-openshell)", BOLD)
     deadline = time.time() + wait
@@ -300,7 +300,7 @@ def agreement_numbers(hours):
 
 def act_f(sid, calls, score_a, carried, wait):
     """Send the same routine call as act A until Risk Guard's decision carries the `siem_context` signal. The path is: OpenShell denies (act B) -> the supervisor's OCSF
-    event -> the collector -> OpenSearch (a minute or two) -> the feature publisher (every 30 s) -> Risk Guard's /features -> the next score. Nothing is injected."""
+    event -> the collector -> OpenSearch (5 to 8 s measured) -> the feature publisher (every 30 s) -> Risk Guard's /features -> the next score. Nothing is injected."""
     say("  Three calls were denied by OpenShell in act B. OpenSearch counts them (openshell_denials_5m); the feature publisher hands the count to Risk Guard.", DIM)
     deadline = time.time() + wait
     last = None

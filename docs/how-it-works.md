@@ -86,7 +86,7 @@ See [production gaps](production-gaps.md) for the full list. The ones most relev
 
 - The model-call would-refuse decisions and thin traffic keep the promotion gate at HOLD; nothing has been enforced broadly.
 - The signals path is in dry-run; it has been shown end to end, not run in anger.
-- Two-person approval has no UI and its Entra path is untested; quarantine and release by CLI sit outside authenticated identity.
+- Two-person approval has an Approvals page, but a completed approval by two real accounts has not been shown, and its Entra path is untested; quarantine and release by CLI sit outside authenticated identity.
 - Scheduled backups and an Azure disk snapshot are not built.
 - Garak has not produced a result; the exercise covers three fixture services only.
 - The webhook hop into the forwarder is a shared token inside the SIEM namespace.

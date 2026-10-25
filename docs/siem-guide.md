@@ -92,7 +92,7 @@ Risk Guard's own refusals are also logged by the supervisor as HTTP Activity Den
 
 ## Where this goes next
 
-Today the SIEM only listens. The design for sending what it learns back to Risk Guard (tighten automatically, loosen only with a person's approval, every automated action limited, logged and expiring) is in [siem-integration.md](siem-integration.md); the action API it needs is not built.
+The SIEM sends two things back to Risk Guard, both tighten-only, limited, logged and expiring (see [siem-integration.md](siem-integration.md) and [siem-signals.md](siem-signals.md)): alert-driven signals, which are built and running in dry run (recorded, nothing is quarantined), and risk features every 30 s, which are live and add bounded points to a score (watching in the fleet). Loosening needs a person's approval. For an honest account of what this changes today, see [the architecture review](architecture-review.md).
 
 ## Checking the dashboards
 
