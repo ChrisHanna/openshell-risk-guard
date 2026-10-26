@@ -204,6 +204,14 @@ pub enum Commands {
             value_delimiter = ','
         )]
         signals_allow_spiffe: Vec<String>,
+        /// Optional separate SPIFFE IDs allowed to post `/features` (defaults to `--signals-allow-spiffe` when omitted).
+        /// Separating this ensures the feature publisher cannot call `/v1/signals` to quarantine workloads.
+        #[arg(
+            long = "features-allow-spiffe",
+            env = "RISK_GUARD_FEATURES_ALLOW_SPIFFE",
+            value_delimiter = ','
+        )]
+        features_allow_spiffe: Vec<String>,
         /// The SPIRE trust bundle that client certificates must chain to (default: --svid-bundle).
         #[arg(
             long = "signals-client-bundle",
@@ -852,6 +860,7 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
             signals_max_active,
             signals_allow_plaintext,
             signals_allow_spiffe,
+            features_allow_spiffe,
             signals_client_bundle,
             ocsf_otlp_endpoint,
             ocsf_trust_domain,
@@ -1026,6 +1035,9 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                     &signals_allow_spiffe,
                     policy,
                 )?;
+                if !features_allow_spiffe.is_empty() {
+                    state = state.with_features_spiffe(&features_allow_spiffe)?;
+                }
                 if let Some(emitter) = &ocsf {
                     state = state.with_ocsf(Arc::clone(emitter));
                 }

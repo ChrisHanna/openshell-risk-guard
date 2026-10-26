@@ -509,7 +509,13 @@ impl SupervisorMiddleware for RiskGuardMiddlewareService {
             }
         };
 
-        if let Some(ocsf) = &self.ocsf {
+        if let Some(ocsf) = &self.ocsf
+            && !matches!(
+                eval.reason_code.as_str(),
+                crate::types::REASON_BEHAVIORAL_RISK_RESTRICTED
+                    | crate::types::REASON_WORKLOAD_QUARANTINED
+            )
+        {
             ocsf.record_decision(
                 &eval.sandbox_id,
                 eval.outcome == DecisionOutcome::Deny,

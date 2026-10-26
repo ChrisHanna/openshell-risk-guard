@@ -126,7 +126,7 @@ impl SqliteRiskStore {
 
     /// List stored restrictions, including whether each still blocks new requests.
     pub fn list_restrictions(&self, target: RestrictionTarget<'_>, now_ms: i64) -> Result<Value> {
-        let mut conn = self.lock_conn()?;
+        let mut conn = self.lock_read_conn()?;
         let tx = conn.transaction()?;
         let mut rows = Vec::new();
         for owner in owners(&tx, target)? {
@@ -168,8 +168,8 @@ impl SqliteRiskStore {
         now_ms: i64,
     ) -> Result<Value> {
         operator_text(scope, "scope", 2048)?;
-        operator_text(operator, "operator", 128)?;
-        operator_text(reason, "reason", 1000)?;
+        operator_text(operator, "operator", 300)?;
+        operator_text(reason, "reason", 1500)?;
         let mut conn = self.lock_conn()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut matches = Vec::new();
@@ -288,7 +288,7 @@ impl SqliteRiskStore {
 
     /// Export operational counters and gauges in Prometheus text exposition format.
     pub fn prometheus_metrics(&self, now_ms: i64) -> Result<String> {
-        let mut conn = self.lock_conn()?;
+        let mut conn = self.lock_read_conn()?;
         let tx = conn.transaction()?;
 
         let agents_total: i64 =

@@ -145,6 +145,15 @@ impl HardeningEngine for ProverHardeningEngine {
         let mut candidate_proj_doc = candidate_doc.clone();
         boundary_proj_doc.network_middlewares.clear();
         candidate_proj_doc.network_middlewares.clear();
+        for doc in [&mut boundary_proj_doc, &mut candidate_proj_doc] {
+            for rule in doc.network_policies.values_mut() {
+                for endpoint in &mut rule.endpoints {
+                    endpoint.deny_rules.retain(|d| {
+                        !crate::policy_export::BACKSLASH_GUARDS.contains(&d.path.as_str())
+                    });
+                }
+            }
+        }
 
         if endpoint_extensions_invariant(&boundary_proj_doc, &candidate_proj_doc) {
             strip_invariant_endpoint_extensions(&mut boundary_proj_doc);

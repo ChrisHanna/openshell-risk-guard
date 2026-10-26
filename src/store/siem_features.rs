@@ -93,6 +93,157 @@ pub struct FeatureIngest {
     pub unresolved: u64,
 }
 
+#[derive(Debug, Clone)]
+struct CachedFeatureRow {
+    kind: String,
+    subject_id: String,
+    name: String,
+    value: u32,
+    generated_at_ms: i64,
+    expires_at_ms: i64,
+    sandbox_id: Option<String>,
+}
+
+/// In-memory cache of `siem_features` so the hot decision path never has to run SQLite feature-row queries when scoring a request.
+#[derive(Debug, Default, Clone)]
+pub(super) struct SiemFeatureCache {
+    warmed: bool,
+    last_batch_id: i64,
+    rows: Vec<CachedFeatureRow>,
+}
+
+impl SiemFeatureCache {
+    #[must_use]
+    pub const fn new_empty_warmed() -> Self {
+        Self {
+            warmed: true,
+            last_batch_id: 0,
+            rows: Vec::new(),
+        }
+    }
+
+    fn reload_from_conn(&mut self, conn: &Connection) -> Result<()> {
+        let latest_batch: i64 = conn
+            .prepare_cached(
+                "SELECT COALESCE(MAX(id), 0) FROM siem_feature_batches WHERE outcome = 'accepted'",
+            )?
+            .query_row([], |row| row.get(0))?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT kind, subject_id, name, value, generated_at_ms, expires_at_ms, sandbox_id
+             FROM siem_features",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(CachedFeatureRow {
+                    kind: row.get(0)?,
+                    subject_id: row.get(1)?,
+                    name: row.get(2)?,
+                    value: u32::try_from(row.get::<_, i64>(3)?).unwrap_or(0),
+                    generated_at_ms: row.get(4)?,
+                    expires_at_ms: row.get(5)?,
+                    sandbox_id: row.get(6)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        self.rows = rows;
+        self.last_batch_id = latest_batch;
+        self.warmed = true;
+        Ok(())
+    }
+
+    fn lookup(
+        &self,
+        sandbox_id: &str,
+        agent_id: Option<&str>,
+        now_ms: i64,
+    ) -> ContextFeatures {
+        if self.rows.is_empty() {
+            return ContextFeatures::default();
+        }
+        let mut found = Vec::new();
+
+        // 1. Sandbox scope (sandbox and spiffe subjects for `sandbox_id`), ordered by (name, value DESC, kind, subject_id)
+        let mut sbx_rows: Vec<&CachedFeatureRow> = self
+            .rows
+            .iter()
+            .filter(|r| {
+                r.expires_at_ms > now_ms
+                    && r.sandbox_id.as_deref() == Some(sandbox_id)
+                    && matches!(r.kind.as_str(), "sandbox" | "spiffe")
+            })
+            .collect();
+        sbx_rows.sort_by(|a, b| {
+            a.name
+                .cmp(&b.name)
+                .then_with(|| b.value.cmp(&a.value))
+                .then_with(|| a.kind.cmp(&b.kind))
+                .then_with(|| a.subject_id.cmp(&b.subject_id))
+        });
+        for r in sbx_rows {
+            if vocabulary::lookup(&r.name).is_some_and(|(allowed, _)| allowed == FeatureScope::Sandbox) {
+                found.push(ContextFeature {
+                    scope: FeatureScope::Sandbox,
+                    name: r.name.clone(),
+                    value: r.value,
+                    subject: r.subject_id.clone(),
+                    age_ms: (now_ms - r.generated_at_ms).max(0),
+                });
+            }
+        }
+
+        // 2. Workload scope
+        if let Some(agent_id) = agent_id {
+            let mut wl_rows: Vec<&CachedFeatureRow> = self
+                .rows
+                .iter()
+                .filter(|r| {
+                    r.expires_at_ms > now_ms
+                        && r.kind == "workload"
+                        && r.subject_id == agent_id
+                })
+                .collect();
+            wl_rows.sort_by(|a, b| a.name.cmp(&b.name));
+            for r in wl_rows {
+                if vocabulary::lookup(&r.name)
+                    .is_some_and(|(allowed, _)| allowed == FeatureScope::Workload)
+                {
+                    found.push(ContextFeature {
+                        scope: FeatureScope::Workload,
+                        name: r.name.clone(),
+                        value: r.value,
+                        subject: r.subject_id.clone(),
+                        age_ms: (now_ms - r.generated_at_ms).max(0),
+                    });
+                }
+            }
+        }
+
+        // 3. Fleet scope
+        let mut fleet_rows: Vec<&CachedFeatureRow> = self
+            .rows
+            .iter()
+            .filter(|r| {
+                r.expires_at_ms > now_ms && r.kind == "fleet" && r.subject_id == "fleet"
+            })
+            .collect();
+        fleet_rows.sort_by(|a, b| a.name.cmp(&b.name));
+        for r in fleet_rows {
+            if vocabulary::lookup(&r.name).is_some_and(|(allowed, _)| allowed == FeatureScope::Fleet)
+            {
+                found.push(ContextFeature {
+                    scope: FeatureScope::Fleet,
+                    name: r.name.clone(),
+                    value: r.value,
+                    subject: r.subject_id.clone(),
+                    age_ms: (now_ms - r.generated_at_ms).max(0),
+                });
+            }
+        }
+
+        ContextFeatures::new(found)
+    }
+}
+
 pub(super) fn ensure_siem_feature_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS siem_features (
@@ -401,7 +552,12 @@ impl SqliteRiskStore {
             "DELETE FROM siem_feature_batches WHERE received_at_ms < ?1",
             params![now_ms.saturating_sub(BATCH_AUDIT_KEEP_MS)],
         )?;
+        let mut refreshed = SiemFeatureCache::default();
+        refreshed.reload_from_conn(&tx)?;
         tx.commit()?;
+        if let Ok(mut cache) = self.siem_cache.write() {
+            *cache = refreshed;
+        }
         Ok(result)
     }
 
@@ -497,7 +653,35 @@ impl SqliteRiskStore {
             .transpose()?
             .flatten()
             .map(|identity| identity.agent_id);
-        load_context(&conn, sandbox_id, agent_id.as_deref(), now_ms)
+        self.load_siem_context_cached(&conn, sandbox_id, agent_id.as_deref(), now_ms)
+    }
+
+    /// Resolve SIEM context features from the in-memory cache in nanoseconds, warming or refreshing if another connection ingested a newer batch.
+    pub(super) fn load_siem_context_cached(
+        &self,
+        conn: &Connection,
+        sandbox_id: &str,
+        agent_id: Option<&str>,
+        now_ms: i64,
+    ) -> Result<ContextFeatures> {
+        let latest_batch: i64 = conn
+            .prepare_cached(
+                "SELECT COALESCE(MAX(id), 0) FROM siem_feature_batches WHERE outcome = 'accepted'",
+            )?
+            .query_row([], |row| row.get(0))?;
+        if let Ok(cache) = self.siem_cache.read()
+            && cache.warmed
+            && cache.last_batch_id == latest_batch
+        {
+            return Ok(cache.lookup(sandbox_id, agent_id, now_ms));
+        }
+        if let Ok(mut cache) = self.siem_cache.write() {
+            if !cache.warmed || cache.last_batch_id != latest_batch {
+                cache.reload_from_conn(conn)?;
+            }
+            return Ok(cache.lookup(sandbox_id, agent_id, now_ms));
+        }
+        load_context(conn, sandbox_id, agent_id, now_ms)
     }
 }
 

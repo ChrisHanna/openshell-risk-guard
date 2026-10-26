@@ -10,6 +10,8 @@
 //! | R2 unlike the fleet | +3 | the workload's `refusal_ratio_15m_permille` is 300 or more while the fleet's is 100 or less |
 //! | R3 unusual routes | +3 | `new_routes_1h` is 3 or more and `routes_unique_to_workload_permille` is 500 or more |
 //! | R4 a campaign | +4 | `fleet_workloads_with_denials_5m` is 3 or more and this sandbox has at least one denial |
+//! | R5 SIEM ML anomaly grade | +3, or +6 | the workload's `anomaly_grade_15m_permille` (OpenSearch RCF model) is 400 or more, or 700 or more |
+//! | R6 probing × novel access | +6 | R1 or R5 (>=500) is active while the request accesses an unfamiliar credentialed/fan-out resource |
 //!
 //! The total is capped at the profile's maximum (default 15, never more than 30). A feature that is missing adds nothing.
 
@@ -23,6 +25,7 @@ pub const OPENSHELL_WOULD_BLOCK_5M: &str = "openshell_would_block_5m";
 pub const REFUSAL_RATIO_15M_PERMILLE: &str = "refusal_ratio_15m_permille";
 pub const NEW_ROUTES_1H: &str = "new_routes_1h";
 pub const ROUTES_UNIQUE_PERMILLE: &str = "routes_unique_to_workload_permille";
+pub const ANOMALY_GRADE_15M_PERMILLE: &str = "anomaly_grade_15m_permille";
 pub const FLEET_OPENSHELL_DENIALS_5M: &str = "fleet_openshell_denials_5m";
 pub const FLEET_WORKLOADS_WITH_DENIALS_5M: &str = "fleet_workloads_with_denials_5m";
 pub const FLEET_REFUSAL_RATIO_15M_PERMILLE: &str = "fleet_refusal_ratio_15m_permille";
@@ -48,7 +51,7 @@ impl Range {
 }
 
 /// The whole vocabulary: name, the scope it is published for (`sandbox` covers `sandbox` and `spiffe` subjects), and its range. Anything else is refused.
-pub const VOCABULARY: [(&str, FeatureScope, Range); 10] = [
+pub const VOCABULARY: [(&str, FeatureScope, Range); 11] = [
     (OPENSHELL_DENIALS_5M, FeatureScope::Sandbox, Range::Count),
     (OPENSHELL_DENIALS_1H, FeatureScope::Sandbox, Range::Count),
     (
@@ -64,6 +67,11 @@ pub const VOCABULARY: [(&str, FeatureScope, Range); 10] = [
     (NEW_ROUTES_1H, FeatureScope::Workload, Range::Count),
     (
         ROUTES_UNIQUE_PERMILLE,
+        FeatureScope::Workload,
+        Range::Permille,
+    ),
+    (
+        ANOMALY_GRADE_15M_PERMILLE,
         FeatureScope::Workload,
         Range::Permille,
     ),
@@ -126,11 +134,24 @@ pub fn effective_max(requested: Option<u32>) -> u32 {
         .min(SIEM_CONTEXT_HARD_CAP_POINTS)
 }
 
-/// Run R1 to R4 over `features`. `None` when nothing fires (so a decision with no useful features is exactly what it would be without them).
+/// Run R1 to R5 over `features` (without request-specific synergy). `None` when nothing fires.
 #[must_use]
 pub fn adjustment(features: &ContextFeatures, requested_max: Option<u32>) -> Option<Adjustment> {
+    adjustment_with_request(features, requested_max, false)
+}
+
+/// Run R1 to R6 over `features`, including the R6 kill-chain interaction when `unfamiliar_cred_or_fanout` is true
+/// (the request touches an unfamiliar resource on a credentialed endpoint or during elevated fan-out/velocity while
+/// the SIEM reports active OpenShell probing or a high ML anomaly grade).
+#[must_use]
+pub fn adjustment_with_request(
+    features: &ContextFeatures,
+    requested_max: Option<u32>,
+    unfamiliar_cred_or_fanout: bool,
+) -> Option<Adjustment> {
     let get = |scope, name| features.get(scope, name);
     let denials = get(FeatureScope::Sandbox, OPENSHELL_DENIALS_5M);
+    let anomaly_grade = get(FeatureScope::Workload, ANOMALY_GRADE_15M_PERMILLE);
     let mut hits = Vec::new();
 
     if let Some(n) = denials {
@@ -186,6 +207,35 @@ pub fn adjustment(features: &ContextFeatures, requested_max: Option<u32>) -> Opt
             points: 4,
             detail: format!(
                 "{FLEET_WORKLOADS_WITH_DENIALS_5M}={campaign}, {OPENSHELL_DENIALS_5M}={own}"
+            ),
+        });
+    }
+    if let Some(grade) = anomaly_grade {
+        let points = if grade >= 700 {
+            6
+        } else if grade >= 400 {
+            3
+        } else {
+            0
+        };
+        if points > 0 {
+            hits.push(Hit {
+                rule: "R5",
+                points,
+                detail: format!("{ANOMALY_GRADE_15M_PERMILLE}={grade}"),
+            });
+        }
+    }
+    let active_probing = denials.is_some_and(|n| n >= 3);
+    let high_siem_anomaly = anomaly_grade.is_some_and(|g| g >= 500);
+    if unfamiliar_cred_or_fanout && (active_probing || high_siem_anomaly) {
+        hits.push(Hit {
+            rule: "R6",
+            points: 6,
+            detail: format!(
+                "active_probing_x_unfamiliar_access({OPENSHELL_DENIALS_5M}={}, {ANOMALY_GRADE_15M_PERMILLE}={})",
+                denials.unwrap_or(0),
+                anomaly_grade.unwrap_or(0)
             ),
         });
     }

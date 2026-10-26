@@ -268,7 +268,7 @@ pub(super) fn query_view(conn: &Connection, agent_id: &str, _now_ms: i64) -> Res
 
 impl SqliteRiskStore {
     pub fn agent_guardrails(&self, agent_id: &str, now_ms: i64) -> Result<Option<Value>> {
-        let mut conn = self.lock_conn()?;
+        let mut conn = self.lock_read_conn()?;
         let tx = conn.transaction()?;
         let view = query_view(&tx, agent_id, now_ms)?;
         tx.commit()?;
@@ -282,8 +282,30 @@ impl SqliteRiskStore {
         actor: &str,
         now_ms: i64,
     ) -> Result<GuardrailsSaveResult> {
+        self.save_agent_guardrails_inner(agent_id, update, actor, now_ms, false)
+    }
+
+    pub(super) fn save_agent_guardrails_approved(
+        &self,
+        agent_id: &str,
+        update: &GuardrailsUpdate,
+        actor: &str,
+        now_ms: i64,
+    ) -> Result<GuardrailsSaveResult> {
+        self.save_agent_guardrails_inner(agent_id, update, actor, now_ms, true)
+    }
+
+    fn save_agent_guardrails_inner(
+        &self,
+        agent_id: &str,
+        update: &GuardrailsUpdate,
+        actor: &str,
+        now_ms: i64,
+        bypass_two_person: bool,
+    ) -> Result<GuardrailsSaveResult> {
         update.settings.validate()?;
-        if actor.is_empty() || actor.len() > 128 || actor.chars().any(char::is_control) {
+        let max_actor = if bypass_two_person { 300 } else { 128 };
+        if actor.is_empty() || actor.len() > max_actor || actor.chars().any(char::is_control) {
             return Err(RiskGuardError::InvalidArgument(
                 "invalid operator identity".into(),
             ));
@@ -300,7 +322,8 @@ impl SqliteRiskStore {
                 "agent does not exist".into(),
             ));
         }
-        let current = query_saved(&tx, agent_id)?.map_or(0, |record| record.revision);
+        let current_saved = query_saved(&tx, agent_id)?;
+        let current = current_saved.as_ref().map_or(0, |record| record.revision);
         if current != update.expected_revision {
             return Ok(GuardrailsSaveResult::Conflict {
                 current_revision: current,
@@ -332,6 +355,45 @@ impl SqliteRiskStore {
                 "task profile must be approved and compatible with normalizer v1".into(),
             ));
         }
+        let two_person_on: bool = !bypass_two_person
+            && tx
+                .query_row(
+                    "SELECT value FROM service_settings WHERE name = 'two_person_required'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .is_some_and(|v| v == "1");
+        if two_person_on {
+            let reference = match &current_saved {
+                Some(saved) => saved.settings.clone(),
+                None => {
+                    let seed_mode = tx
+                        .query_row(
+                            "SELECT mode FROM scoring_contexts WHERE agent_id = ?1 ORDER BY created_at_ms DESC, rowid DESC LIMIT 1",
+                            params![agent_id],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .optional()?
+                        .map_or(EnforcementMode::Enforce, |m| {
+                            if m == "observe" {
+                                EnforcementMode::Observe
+                            } else {
+                                EnforcementMode::Enforce
+                            }
+                        });
+                    let fs = latest_agent_policy(&tx, agent_id)?
+                        .and_then(|raw| parsed_policy(&raw).ok())
+                        .and_then(|doc| doc.filesystem_policy);
+                    AgentGuardrails::from_baseline(&profile, seed_mode, fs)
+                }
+            };
+            if let Some(what) = update.settings.loosens(&reference, &profile) {
+                return Err(RiskGuardError::PermissionDenied(format!(
+                    "{what} loosens protection, and two-person approval is on: propose it and have someone else approve it"
+                )));
+            }
+        }
         let profile_hash = crate::detector::compute_baseline_hash(&profile);
         let payload = serde_json::to_string(&update.settings)?;
         let hash = hex::encode(Sha256::digest(payload.as_bytes()));
@@ -346,6 +408,16 @@ impl SqliteRiskStore {
              ON CONFLICT(agent_id) DO UPDATE SET revision = excluded.revision",
             params![agent_id, revision],
         )?;
+        // Materialize the effective baseline artifact at save time so the hot evaluation path does not need to write to `artifacts` on every request.
+        let saved_record = SavedGuardrails {
+            revision: u64::try_from(revision).unwrap_or(0),
+            settings: update.settings.clone(),
+            settings_hash: hash,
+            profile_hash,
+            updated_by: actor.to_string(),
+            created_at_ms: now_ms,
+        };
+        let _ = materialize_effective_baseline(&tx, agent_id, &profile, &saved_record)?;
         let view = query_view(&tx, agent_id, now_ms)?
             .ok_or_else(|| RiskGuardError::Storage("saved agent disappeared".into()))?;
         tx.commit()?;
@@ -353,7 +425,7 @@ impl SqliteRiskStore {
     }
 
     pub fn export_agent_guardrails_policy(&self, agent_id: &str) -> Result<Option<String>> {
-        let conn = self.lock_conn()?;
+        let conn = self.lock_read_conn()?;
         let Some(saved) = query_saved(&conn, agent_id)? else {
             return Ok(None);
         };
@@ -397,7 +469,17 @@ impl SqliteRiskStore {
     }
 }
 
-pub(super) fn effective_baseline(
+type EffectiveBaselineKey = (String, u64, String, String);
+
+fn effective_baseline_cache()
+-> &'static std::sync::Mutex<std::collections::HashMap<EffectiveBaselineKey, BaselineProfile>> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<EffectiveBaselineKey, BaselineProfile>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn materialize_effective_baseline(
     conn: &Connection,
     agent_id: &str,
     base: &BaselineProfile,
@@ -421,7 +503,48 @@ pub(super) fn effective_baseline(
             saved.created_at_ms
         ],
     )?;
+    let key = (
+        agent_id.to_string(),
+        saved.revision,
+        saved.settings_hash.clone(),
+        saved.profile_hash.clone(),
+    );
+    if let Ok(mut cache) = effective_baseline_cache().lock() {
+        if cache.len() >= 256 {
+            cache.clear();
+        }
+        cache.insert(key, effective.clone());
+    }
     Ok(effective)
+}
+
+pub(super) fn effective_baseline(
+    conn: &Connection,
+    agent_id: &str,
+    base: &BaselineProfile,
+    saved: &SavedGuardrails,
+) -> Result<BaselineProfile> {
+    let key = (
+        agent_id.to_string(),
+        saved.revision,
+        saved.settings_hash.clone(),
+        saved.profile_hash.clone(),
+    );
+    if let Ok(cache) = effective_baseline_cache().lock()
+        && let Some(cached) = cache.get(&key)
+        && cached.training_sessions == base.training_sessions
+        && cached.training_requests == base.training_requests
+    {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM artifacts WHERE artifact_type = 'baseline_profile' AND name = ?1)",
+            params![format!("agent:{agent_id}:guardrails:{}", saved.revision)],
+            |row| row.get(0),
+        )?;
+        if exists {
+            return Ok(cached.clone());
+        }
+    }
+    materialize_effective_baseline(conn, agent_id, base, saved)
 }
 
 pub(super) fn annotate_revision(

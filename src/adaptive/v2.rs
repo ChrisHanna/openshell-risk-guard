@@ -496,6 +496,8 @@ pub struct ContextInputs {
     pub openshell_denials_1h: Option<u32>,
     pub openshell_would_block_5m: Option<u32>,
     pub refusal_ratio_15m_permille: Option<u32>,
+    #[serde(default)]
+    pub anomaly_grade_15m_permille: Option<u32>,
     pub fleet_openshell_denials_5m: Option<u32>,
     pub fleet_workloads_with_denials_5m: Option<u32>,
     pub fleet_refusal_ratio_15m_permille: Option<u32>,
@@ -541,6 +543,11 @@ impl ContextInputs {
         {
             points += 4;
             why.push(format!("fleet_campaign={campaign}:+4"));
+        }
+        if let Some(grade) = clamp(self.anomaly_grade_15m_permille, 1_000).filter(|g| *g >= 400) {
+            let add = if grade >= 700 { 6 } else { 3 };
+            points += add;
+            why.push(format!("anomaly_grade_15m_permille={grade}:+{add}"));
         }
         (points, why)
     }

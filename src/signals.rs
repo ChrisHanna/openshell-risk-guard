@@ -40,10 +40,11 @@ type Peer = TlsConnectInfo<TcpConnectInfo>;
 enum Auth {
     /// The HMAC of the shared token.
     Bearer([u8; 32]),
-    /// The sender's verified SPIFFE ID must be one of these exact IDs, in an accepted trust domain.
+    /// The sender's verified SPIFFE ID must be in `allowed_signals` (for `/v1/signals`) or `allowed_features` (for `/features`), in an accepted trust domain.
     Spiffe {
         policy: Arc<SvidPolicy>,
-        allowed: Arc<BTreeSet<String>>,
+        allowed_signals: Arc<BTreeSet<String>>,
+        allowed_features: Arc<BTreeSet<String>>,
     },
 }
 
@@ -99,15 +100,44 @@ impl SignalsState {
                 "name at least one SPIFFE ID that may send signals (--signals-allow-spiffe)".into(),
             ));
         }
+        let shared = Arc::new(ids);
         Ok(Self {
             store,
             auth: Auth::Spiffe {
                 policy: Arc::new(SvidPolicy::new(trust_domains)?),
-                allowed: Arc::new(ids),
+                allowed_signals: Arc::clone(&shared),
+                allowed_features: shared,
             },
             policy,
             ocsf: None,
         })
+    }
+
+    /// Restrict `/features` to a separate set of SPIFFE IDs (e.g. `spiffe://<domain>/ns/siem/sa/feature-publisher`) so the feature publisher
+    /// cannot call `/v1/signals` to quarantine workloads.
+    pub fn with_features_spiffe<I, S>(mut self, allowed_features: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut ids = BTreeSet::new();
+        for id in allowed_features {
+            ids.insert(crate::spiffe::SpiffeId::parse(id.as_ref().trim())?.uri());
+        }
+        if ids.is_empty() {
+            return Err(RiskGuardError::InvalidArgument(
+                "name at least one SPIFFE ID that may post features (--features-allow-spiffe)"
+                    .into(),
+            ));
+        }
+        if let Auth::Spiffe {
+            allowed_features: slot,
+            ..
+        } = &mut self.auth
+        {
+            *slot = Arc::new(ids);
+        }
+        Ok(self)
     }
 
     /// Send each signal and its outcome to the SIEM as an OCSF event (see `crate::ocsf`).
@@ -157,6 +187,7 @@ impl SignalsState {
         &self,
         headers: &HeaderMap,
         peer: Option<&Peer>,
+        for_features: bool,
     ) -> std::result::Result<Option<String>, Response> {
         match &self.auth {
             Auth::Bearer(digest) => {
@@ -183,7 +214,11 @@ impl SignalsState {
                     ))
                 }
             }
-            Auth::Spiffe { policy, allowed } => {
+            Auth::Spiffe {
+                policy,
+                allowed_signals,
+                allowed_features,
+            } => {
                 let id = peer
                     .and_then(|peer| peer.peer_certs())
                     .and_then(|certs| {
@@ -201,8 +236,13 @@ impl SignalsState {
                         json!({"error": "a client certificate (X.509-SVID) is required"}),
                     ));
                 };
+                let allowed = if for_features {
+                    allowed_features
+                } else {
+                    allowed_signals
+                };
                 if policy.authorize(&id).is_err() || !allowed.contains(&id.uri()) {
-                    tracing::warn!(sender = %id.uri(), "signal refused: this identity may not send signals");
+                    tracing::warn!(sender = %id.uri(), for_features, "signal refused: this identity may not call this endpoint");
                     return Err(reply(
                         StatusCode::FORBIDDEN,
                         json!({"error": "this identity may not send signals"}),
@@ -228,7 +268,7 @@ async fn post_signal(
     peer: Option<Extension<Peer>>,
     body: axum::body::Bytes,
 ) -> Response {
-    let sender = match state.authorize(&headers, peer.as_ref().map(|Extension(peer)| peer)) {
+    let sender = match state.authorize(&headers, peer.as_ref().map(|Extension(peer)| peer), false) {
         Ok(sender) => sender,
         Err(response) => return response,
     };
@@ -303,7 +343,7 @@ async fn post_features(
     peer: Option<Extension<Peer>>,
     body: axum::body::Bytes,
 ) -> Response {
-    let source = match state.authorize(&headers, peer.as_ref().map(|Extension(peer)| peer)) {
+    let source = match state.authorize(&headers, peer.as_ref().map(|Extension(peer)| peer), true) {
         Ok(sender) => sender.unwrap_or_else(|| "bearer-token".to_string()),
         Err(response) => return response,
     };
@@ -370,7 +410,8 @@ async fn list_signals(
     peer: Option<Extension<Peer>>,
     Query(params): Query<ListParams>,
 ) -> Response {
-    if let Err(response) = state.authorize(&headers, peer.as_ref().map(|Extension(peer)| peer)) {
+    if let Err(response) = state.authorize(&headers, peer.as_ref().map(|Extension(peer)| peer), false)
+    {
         return response;
     }
     let store = Arc::clone(&state.store);

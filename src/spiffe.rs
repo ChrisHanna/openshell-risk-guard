@@ -417,15 +417,17 @@ impl SvidEnroller {
     }
 
     fn enroll(&self, id: &SpiffeId, sandbox_id: &str, now_ms: i64) -> Result<()> {
-        if self
-            .enrolled
-            .lock()
-            .map_err(|_| RiskGuardError::Internal("enrollment lock poisoned".into()))?
-            .contains(sandbox_id)
+        let has_active_epoch = self.store.get_active_epoch(sandbox_id)?.is_some();
+        if has_active_epoch
+            && self
+                .enrolled
+                .lock()
+                .map_err(|_| RiskGuardError::Internal("enrollment lock poisoned".into()))?
+                .contains(sandbox_id)
         {
             return Ok(());
         }
-        if self.store.get_active_epoch(sandbox_id)?.is_none() {
+        if !has_active_epoch {
             let baseline: BaselineProfile = self
                 .store
                 .get_baseline(&self.default_task_profile)?
@@ -435,7 +437,7 @@ impl SvidEnroller {
                         self.default_task_profile
                     ))
                 })?;
-            self.store.upsert_epoch(&EpochRecord {
+            let mut epoch = EpochRecord {
                 epoch_id: format!("ep_{sandbox_id}_1"),
                 gateway_id: self.gateway_id.clone(),
                 sandbox_id: sandbox_id.to_string(),
@@ -447,7 +449,17 @@ impl SvidEnroller {
                 created_at_ms: now_ms,
                 credentialed_endpoints: Default::default(),
                 active_policy_hash: None,
-            })?;
+            };
+            if let Err(RiskGuardError::PermissionDenied(_)) = self.store.upsert_epoch(&epoch) {
+                for generation in 2..=10_000_u32 {
+                    epoch.epoch_id = format!("ep_{sandbox_id}_{generation}");
+                    match self.store.upsert_epoch(&epoch) {
+                        Ok(()) => break,
+                        Err(RiskGuardError::PermissionDenied(_)) => continue,
+                        Err(other) => return Err(other),
+                    }
+                }
+            }
         }
         let uri = id.uri();
         let derived = derive_workload(SPIFFE_WORKSPACE, "spiffe", "workload", &uri, false)?;

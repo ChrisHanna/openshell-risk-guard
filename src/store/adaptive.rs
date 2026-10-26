@@ -54,6 +54,7 @@ fn context_inputs(features: Option<&ContextFeatures>) -> Option<learner::Context
         openshell_denials_1h: features.get(Sandbox, "openshell_denials_1h"),
         openshell_would_block_5m: features.get(Sandbox, "openshell_would_block_5m"),
         refusal_ratio_15m_permille: features.get(Workload, "refusal_ratio_15m_permille"),
+        anomaly_grade_15m_permille: features.get(Workload, "anomaly_grade_15m_permille"),
         fleet_openshell_denials_5m: features.get(Fleet, "fleet_openshell_denials_5m"),
         fleet_workloads_with_denials_5m: features.get(Fleet, "fleet_workloads_with_denials_5m"),
         fleet_refusal_ratio_15m_permille: features.get(Fleet, "fleet_refusal_ratio_15m_permille"),
@@ -118,6 +119,16 @@ fn model_hash(context: &str, revision: u64, scope: &str, payload: &str) -> Resul
     ))?)))
 }
 
+type CachedModelKey = (String, String, u64, String, String);
+type CachedModelEntry = (String, LearnedProfile);
+
+fn model_cache() -> &'static Mutex<std::collections::HashMap<CachedModelKey, CachedModelEntry>> {
+    static CACHE: std::sync::OnceLock<
+        Mutex<std::collections::HashMap<CachedModelKey, CachedModelEntry>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
 fn model(conn: &Connection, id: &str) -> Result<Option<Model>> {
     let raw = conn
         .query_row(
@@ -142,6 +153,29 @@ fn model(conn: &Connection, id: &str) -> Result<Option<Model>> {
     let Some((agent, context, revision, scope, payload, hash, created, revoked)) = raw else {
         return Ok(None);
     };
+    let key = (
+        id.to_string(),
+        context.clone(),
+        revision,
+        scope.clone(),
+        hash.clone(),
+    );
+    if let Ok(cache) = model_cache().lock()
+        && let Some((cached_payload, cached_profile)) = cache.get(&key)
+        && *cached_payload == payload
+    {
+        return Ok(Some(Model {
+            id: id.into(),
+            agent,
+            context,
+            revision,
+            scope,
+            profile: cached_profile.clone(),
+            hash,
+            created,
+            revoked,
+        }));
+    }
     if model_hash(&context, revision, &scope, &payload)? != hash {
         return Err(RiskGuardError::Storage(
             "adaptive model hash mismatch".into(),
@@ -156,6 +190,12 @@ fn model(conn: &Connection, id: &str) -> Result<Option<Model>> {
         return Err(RiskGuardError::Storage(
             "unsupported adaptive model algorithm".into(),
         ));
+    }
+    if let Ok(mut cache) = model_cache().lock() {
+        if cache.len() >= 256 {
+            cache.clear();
+        }
+        cache.insert(key, (payload, profile.clone()));
     }
     Ok(Some(Model {
         id: id.into(),
@@ -414,11 +454,48 @@ fn audit(
 
 impl SqliteRiskStore {
     pub fn agent_adaptive(&self, agent: &str, now_ms: i64) -> Result<Option<Value>> {
-        let mut conn = self.lock_conn()?;
+        let mut conn = self.lock_read_conn()?;
         let tx = conn.transaction()?;
         let result = view(&tx, agent, now_ms)?;
         tx.commit()?;
         Ok(result)
+    }
+
+    pub(super) fn demote_adaptive_model_approved(
+        &self,
+        agent: &str,
+        model_id: &str,
+        mode_str: &str,
+        actor: &str,
+        now_ms: i64,
+    ) -> Result<String> {
+        let mode = match mode_str {
+            "shadow" => ModelMode::Shadow,
+            "off" => ModelMode::Off,
+            _ => {
+                return Err(invalid(
+                    "demote_adaptive_model mode must be 'shadow' or 'off'",
+                ));
+            }
+        };
+        let mut conn = self.lock_conn()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let selected = model(&tx, model_id)?.ok_or_else(|| invalid("model not found"))?;
+        if selected.agent != agent {
+            return Err(invalid("model does not belong to this workload"));
+        }
+        let revision = current_revision(&tx, agent)?;
+        set_model_inner(&tx, &selected, mode, false, revision, true)?;
+        audit(
+            &tx,
+            agent,
+            actor,
+            "set_model",
+            now_ms,
+            json!({"model_id": model_id, "mode": mode, "two_person_approved": true}),
+        )?;
+        tx.commit()?;
+        Ok(format!("model {model_id} set to {mode_str}"))
     }
 
     pub fn apply_adaptive_operation(
@@ -1124,10 +1201,40 @@ fn set_model(
     acknowledged: bool,
     revision: u64,
 ) -> Result<()> {
+    set_model_inner(conn, model, mode, acknowledged, revision, false)
+}
+
+fn set_model_inner(
+    conn: &Connection,
+    model: &Model,
+    mode: ModelMode,
+    acknowledged: bool,
+    revision: u64,
+    bypass_two_person: bool,
+) -> Result<()> {
     if mode != ModelMode::Off && (model.revoked || model.revision != revision) {
         return Err(invalid(
             "revoked or incompatible models cannot be activated",
         ));
+    }
+    let current_head = head(conn, &model.context, model.revision, &model.scope)?;
+    if !bypass_two_person
+        && mode != ModelMode::Enforce
+        && current_head.enforced.as_deref() == Some(model.id.as_str())
+    {
+        let two_person_on: bool = conn
+            .query_row(
+                "SELECT value FROM service_settings WHERE name = 'two_person_required'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .is_some_and(|v| v == "1");
+        if two_person_on {
+            return Err(RiskGuardError::PermissionDenied(
+                "demoting or disabling an enforced adaptive model loosens protection, and two-person approval is on: propose it and have someone else approve it".into(),
+            ));
+        }
     }
     if mode == ModelMode::Enforce {
         let mut reasons = promotion_blockers(conn, model, revision)?;
@@ -1143,11 +1250,7 @@ fn set_model(
                 "explicit operator acknowledgement of shadow review is required",
             ));
         }
-        if head(conn, &model.context, model.revision, &model.scope)?
-            .shadow
-            .as_deref()
-            != Some(&model.id)
-        {
+        if current_head.shadow.as_deref() != Some(&model.id) {
             return Err(invalid(
                 "select this candidate for shadow evaluation before promotion",
             ));
@@ -1214,9 +1317,8 @@ fn run_window(conn: &Connection, frame: &Frame<'_>, run: &str, scope: &str) -> R
            COUNT(DISTINCT COALESCE(NULLIF(json_extract(d.normalized_request_json,'$.resource_key'),''),
                                   json_extract(d.normalized_request_json,'$.resource_id')))
          FROM native_decision_provenance p JOIN decisions d USING(epoch_id,request_id)
-         WHERE p.run_id = ?1 AND p.auth_scope = ?2 AND p.observed_at_ms >= ?4 AND p.observed_at_ms <= ?5
-           AND d.sandbox_id = ?6",
-        params![run, scope, now.saturating_sub(60_000), now.saturating_sub(900_000), now, frame.request.sandbox_id],
+         WHERE p.run_id = ?1 AND p.auth_scope = ?2 AND p.observed_at_ms >= ?4 AND p.observed_at_ms <= ?5",
+        params![run, scope, now.saturating_sub(60_000), now.saturating_sub(900_000), now],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     )?;
     let snapshot = WindowSnapshot {
@@ -1226,8 +1328,8 @@ fn run_window(conn: &Connection, frame: &Frame<'_>, run: &str, scope: &str) -> R
         distinct_resources_15m: distinct_fifteen,
         warming: frame.window.warming,
     };
-    // The run's last hour of calls, newest first from the database and oldest first for the learner. Bounded; a version 1 model
-    // ignores it. The call being scored is not recorded yet, so this is the window before it.
+    // The run's last hour of calls across all sandboxes bound to this run, newest first from the database and oldest first for the learner.
+    // Bounded; a version 1 model ignores it. The call being scored is not recorded yet, so this is the window before it.
     let mut stmt = conn.prepare(
         "SELECT p.observed_at_ms,
                 COALESCE(json_extract(d.normalized_request_json,'$.action_class'), ''),
@@ -1235,8 +1337,7 @@ fn run_window(conn: &Connection, frame: &Frame<'_>, run: &str, scope: &str) -> R
                 COALESCE(json_extract(d.normalized_request_json,'$.method'), '')
          FROM native_decision_provenance p JOIN decisions d USING(epoch_id,request_id)
          WHERE p.run_id = ?1 AND p.auth_scope = ?2 AND p.observed_at_ms >= ?3 AND p.observed_at_ms <= ?4
-           AND d.sandbox_id = ?5
-         ORDER BY p.observed_at_ms DESC, p.rowid DESC LIMIT ?6",
+         ORDER BY p.observed_at_ms DESC, p.rowid DESC LIMIT ?5",
     )?;
     let mut activity = stmt
         .query_map(
@@ -1245,7 +1346,6 @@ fn run_window(conn: &Connection, frame: &Frame<'_>, run: &str, scope: &str) -> R
                 scope,
                 now.saturating_sub(learner::ACTIVITY_MS),
                 now,
-                frame.request.sandbox_id,
                 learner::MAX_ACTIVITY_EVENTS as i64
             ],
             |row| {

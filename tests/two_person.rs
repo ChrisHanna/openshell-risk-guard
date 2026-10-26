@@ -630,3 +630,106 @@ fn suggestions_come_from_the_services_own_history_and_only_for_steady_unrefused_
         "it is listed with the reason it was left out: {skipped:?}"
     );
 }
+
+#[test]
+fn with_two_person_on_guardrail_tightening_is_allowed_but_loosening_is_refused() {
+    use openshell_risk_guard::guardrails::{AgentGuardrails, GuardrailsUpdate};
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(&dir);
+    store.require_two_person(START).unwrap();
+
+    let view = store.agent_guardrails("agent-r", START).unwrap().unwrap();
+    let base_settings: AgentGuardrails = serde_json::from_value(view["settings"].clone()).unwrap();
+
+    // Tightening (lowering enforce_threshold from 70 to 60 and promoting a rule to Enforce) succeeds with one operator.
+    let mut tightened = base_settings.clone();
+    tightened.enforce_threshold = 60;
+    tightened
+        .rule_modes
+        .insert(RULE_UNAPPROVED_ACTION.into(), RuleMode::Enforce);
+    assert!(
+        store
+            .save_agent_guardrails(
+                "agent-r",
+                &GuardrailsUpdate {
+                    expected_revision: 0,
+                    settings: tightened.clone(),
+                },
+                "alice",
+                START + 10,
+            )
+            .is_ok()
+    );
+
+    // Loosening (switching Enforce -> Observe, raising threshold, raising rate limits, or adding allowed actions) is refused!
+    let mut loosen_mode = tightened.clone();
+    loosen_mode.mode = EnforcementMode::Observe;
+    let err = store
+        .save_agent_guardrails(
+            "agent-r",
+            &GuardrailsUpdate {
+                expected_revision: 1,
+                settings: loosen_mode,
+            },
+            "alice",
+            START + 20,
+        )
+        .unwrap_err();
+    assert!(denied(err));
+
+    let mut loosen_threshold = tightened;
+    loosen_threshold.enforce_threshold = 80;
+    let err = store
+        .save_agent_guardrails(
+            "agent-r",
+            &GuardrailsUpdate {
+                expected_revision: 1,
+                settings: loosen_threshold.clone(),
+            },
+            "alice",
+            START + 30,
+        )
+        .unwrap_err();
+    assert!(denied(err));
+
+    // Proposing the loosening change as primary Entra admin and approving as learningnemo-approver succeeds!
+    let proposer = "christopher.g.hanna_gmail.com#EXT#@christopherghannagmail.onmicrosoft.com [entra:e017ee85-b0f4-405a-9301-1dd83669dbd6]";
+    let second_approver = "learningnemo-approver@christopherghannagmail.onmicrosoft.com [entra:27dd6b51-06d3-4c68-ac2f-6d112ac034cc]";
+    let update_payload = serde_json::to_value(GuardrailsUpdate {
+        expected_revision: 1,
+        settings: loosen_threshold,
+    })
+    .unwrap();
+    let change_id = store
+        .propose_change(
+            "update_guardrails",
+            "agent-r",
+            &update_payload,
+            "Relax threshold after incident review",
+            proposer,
+            START + 40,
+        )
+        .unwrap();
+    assert!(denied(
+        store
+            .decide_change(&change_id, proposer, true, "self approve", START + 41)
+            .unwrap_err()
+    ));
+    let decided = store
+        .decide_change(
+            &change_id,
+            second_approver,
+            true,
+            "Verified by second approver",
+            START + 42,
+        )
+        .unwrap();
+    assert!(
+        decided["outcome"].as_str().unwrap().starts_with("executed"),
+        "{decided}"
+    );
+    let updated_view = store.agent_guardrails("agent-r", START + 43).unwrap().unwrap();
+    assert_eq!(updated_view["revision"], 2);
+    assert_eq!(updated_view["settings"]["enforce_threshold"], 80);
+}

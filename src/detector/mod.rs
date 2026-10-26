@@ -360,6 +360,17 @@ impl RiskDetector for InteractionRiskDetector {
             }
         };
 
+        // Low-and-slow credentialed enumeration interaction: when a caller paces requests below the 1-minute velocity threshold
+        // (v_tier == 0) while hitting severe 15-minute resource fan-out (f_tier == 2) across unfamiliar resources (n_r == 1) on a
+        // credentialed endpoint (c == 1), boost the fan-out contribution by +15 under FullContextual so 15(N_r) + 10(C) + 45(F) = 70.
+        let slow_cred_enum_bonus = u32::from(
+            matches!(self.variant, ScoringVariant::FullContextual)
+                && v_tier == 0
+                && f_tier == 2
+                && n_r == 1
+                && c == 1,
+        ) * 15;
+
         // Per-feature contributions under the active ScoringVariant
         let (
             contrib_nr,
@@ -379,7 +390,7 @@ impl RiskDetector for InteractionRiskDetector {
                 15 * j_nr_i,
                 10 * c,
                 15 * v_tier,
-                15 * f_tier,
+                15 * f_tier + slow_cred_enum_bonus,
             ),
             ScoringVariant::WithoutInteractionTerm => (
                 15 * n_r,
@@ -404,15 +415,22 @@ impl RiskDetector for InteractionRiskDetector {
             + contrib_v
             + contrib_f;
         let score_without_siem = raw_sum.min(100);
-        // SIEM risk features (rule `siem_context`): a pure function of the features in the context. Off, or no features, or no rule firing: nothing
-        // changes at all. Watching works out the points and records them. Enforcing adds them before the outcome is chosen. Points are never negative.
+        // SIEM risk features (rule `siem_context`): a pure function of the features in the context plus the request's unfamiliar/credentialed posture.
+        // Off, or no features, or no rule firing: nothing changes at all. Watching works out the points and records them. Enforcing adds them before
+        // the outcome is chosen. Points are never negative.
         let siem_mode = baseline.rule_mode(RULE_SIEM_CONTEXT);
+        let unfamiliar_cred_or_fanout =
+            n_r == 1 && (ctx.credentialed_endpoint || f_tier >= 1 || v_tier >= 1);
         let siem = if siem_mode != RuleMode::Off
             && matches!(
                 self.variant,
                 ScoringVariant::FullContextual | ScoringVariant::WithoutInteractionTerm
             ) {
-            siem::adjustment(&ctx.features, baseline.siem_context_max_points)
+            siem::adjustment_with_request(
+                &ctx.features,
+                baseline.siem_context_max_points,
+                unfamiliar_cred_or_fanout,
+            )
         } else {
             None
         };
@@ -1251,6 +1269,31 @@ mod tests {
         let eval_all = detector.evaluate(&req_all, &ctx_all).expect("cap 100");
         assert_eq!(eval_all.risk_score, 100);
         assert_eq!(eval_all.outcome, DecisionOutcome::Deny);
+
+        // Low-and-slow credentialed enumeration (v_tier == 0, f_tier == 2, N_r == 1, C == 1) reaches 70 and triggers Tier-2 cooldown
+        let window_slow_enum = crate::types::WindowSnapshot {
+            req_count_1m: 2,
+            req_count_15m: 20,
+            distinct_resources_1m: 2,
+            distinct_resources_15m: 15,
+            warming: false,
+        };
+        let ctx_slow_enum = DetectorContext {
+            epoch: &epoch_enforce,
+            baseline: &baseline_clean,
+            window: &window_slow_enum,
+            credentialed_endpoint: true,
+            features: Default::default(),
+        };
+        let eval_slow_enum = detector
+            .evaluate(&req_read, &ctx_slow_enum)
+            .expect("slow credentialed enumeration");
+        assert_eq!(eval_slow_enum.risk_score, 70);
+        assert_eq!(eval_slow_enum.outcome, DecisionOutcome::Deny);
+        assert!(matches!(
+            eval_slow_enum.ratchet_action,
+            RatchetAction::TriggerTier2Cooldown { .. }
+        ));
     }
 
     #[test]

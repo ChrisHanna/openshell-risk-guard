@@ -1290,5 +1290,25 @@ async fn a_sandbox_whose_supervisor_has_gone_quiet_is_flagged_and_a_healthy_one_
         carried.ok_response.is_some(),
         "a reporting sandbox is still carried: {carried:?}"
     );
+
+    // Even when `last_decision_ms` is recent (10s ago), opening more than 20 consecutive tunnels (1 above + 19 more = 20 allowed, 21st refused)
+    // without reporting a single new middleware decision in between is caught by the unreported-tunnel burst check.
+    for _ in 0..19 {
+        let carried = tunnel_check(channel.clone(), "10.1.0.5").await;
+        assert!(carried.ok_response.is_some());
+    }
+    let burst_refused = tunnel_check(channel.clone(), "10.1.0.5").await;
+    assert!(
+        burst_refused.denied_response.is_some(),
+        "a supervisor that trickles one request and opens >20 uninspected tunnels must be refused: {burst_refused:?}"
+    );
+
+    // Reporting a new middleware decision resets the consecutive tunnel counter and restores tunnel access.
+    report_request(&running.store, "sbx-healthy-enforced", "he2", now - 5_000);
+    let carried_again = tunnel_check(channel.clone(), "10.1.0.5").await;
+    assert!(
+        carried_again.ok_response.is_some(),
+        "reporting a new middleware request resets the unreported tunnel burst counter: {carried_again:?}"
+    );
     running.stop.notify_one();
 }

@@ -86,13 +86,30 @@ pub(crate) fn router_with_controls(
     controls: OperatorControls,
 ) -> Router {
     Router::new()
+        // Studio is now the default Operator Console at "/" and "/admin" (and "/studio", "/studio/admin").
         .route(
             "/",
-            get(|| async { Html(include_str!("operator_ui.html")) }),
+            get(|| async { Html(include_str!("operator_studio.html")) }),
         )
-        // The same page, where an administrator signs in. Everyone else uses "/" and never needs to sign in.
         .route(
             "/admin",
+            get(|| async { Html(include_str!("operator_studio.html")) }),
+        )
+        .route(
+            "/studio",
+            get(|| async { Html(include_str!("operator_studio.html")) }),
+        )
+        .route(
+            "/studio/admin",
+            get(|| async { Html(include_str!("operator_studio.html")) }),
+        )
+        // Classic console kept intact as a backup at "/classic" and "/classic/admin".
+        .route(
+            "/classic",
+            get(|| async { Html(include_str!("operator_ui.html")) }),
+        )
+        .route(
+            "/classic/admin",
             get(|| async { Html(include_str!("operator_ui.html")) }),
         )
         .route(

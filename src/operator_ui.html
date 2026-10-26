@@ -1474,8 +1474,10 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
 
         <a class="btn" id="admin-link" href="/admin" hidden>Administrator sign-in</a>
         <span class="status-Readout" id="whoami-chip" hidden><span id="whoami"></span></span>
+        <button type="button" id="switch-account" class="btn" hidden title="Switch Microsoft Entra account (for example to learningnemo-approver@christopherghannagmail.onmicrosoft.com for second-person approval)">Switch account</button>
         <a class="btn" id="public-link" href="/" hidden>Public view</a>
         <button type="button" id="signout" class="btn" hidden>Sign out</button>
+        <a class="btn" id="studio-link" href="/" title="Open the Default Studio Command Center &amp; Z3 Policy Prover">Studio ↗</a>
         <button type="button" id="refresh" class="btn">Refresh</button>
       </div>
     </header>
@@ -1600,6 +1602,7 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
           <p class="fleet-verdict">Anything that loosens protection needs two people: one proposes, a different one approves. Tightening never waits.</p>
           <p class="quiet-note" id="appr-mode" style="margin:4px 0 0"></p>
         </div>
+        <div class="page-actions" id="appr-mode-actions"></div>
       </div>
       <section class="appr-section" aria-labelledby="appr-pending-h">
         <h2 id="appr-pending-h">Waiting for a decision</h2>
@@ -1915,10 +1918,13 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
             <span class="badge badge-neutral" id="agent-mode-badge"></span>
           </div>
         </div>
-        <div class="page-actions">
+        <div class="page-actions" style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn" id="quarantine-workload-btn" hidden>Quarantine workload</button>
           <button type="button" class="btn" id="open-audit-modal-btn">Audit evidence</button>
         </div>
       </div>
+      <div class="setting-card" id="agent-quarantine-banner" hidden style="margin-bottom:14px;border-color:var(--crit-border);background:var(--crit-bg)"></div>
+      <div class="setting-card" id="agent-siem-strip" hidden style="margin-bottom:14px"></div>
       <div class="workspace-tabs" id="agent-tab-selector" role="tablist" aria-label="Agent workspace">
         <button type="button" class="workspace-tab" id="tab-map" data-agent-tab="map" role="tab" aria-selected="true" aria-controls="agent-tab-map">Activity</button>
         <button type="button" class="workspace-tab" id="tab-detections" data-agent-tab="detections" role="tab" aria-selected="false" aria-controls="agent-tab-detections" tabindex="-1">Detections</button>
@@ -2212,6 +2218,7 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
           <form id="cfg-form" novalidate aria-describedby="cfg-scope-help cfg-list-help">
             <div class="inline-actions">
               <button type="submit" id="cfg-save" class="btn btn-primary" disabled>Save &amp; apply</button>
+              <button type="button" id="cfg-propose" class="btn" hidden>Propose loosening (2-person)</button>
               <button type="button" id="cfg-reload" class="btn" disabled>Reload / discard edits</button>
               <button type="button" id="cfg-policy-download" class="btn" disabled>Download saved YAML for new sandbox</button>
             </div>
@@ -2266,6 +2273,10 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
               </div>
               <p id="cfg-routes-help" class="quiet-note">Use uppercase <code>METHOD /route</code>, one action class per line.</p>
               <div class="setting-row">
+                <label for="cfg-egress-hosts">Approved egress hosts (tunnel gate)</label>
+                <textarea id="cfg-egress-hosts" rows="2" spellcheck="false" placeholder="integrate.api.nvidia.com or *.example.com" disabled></textarea>
+              </div>
+              <div class="setting-row">
                 <label for="cfg-forbid-hi">Forbid unfamiliar high-impact actions</label>
                 <select id="cfg-forbid-hi" disabled>
                   <option value="" disabled selected>Not loaded</option>
@@ -2295,6 +2306,34 @@ table.why-table tr.total td { font-weight: 600; border-bottom: 0; }
                   <option value="shadow">shadow (record only)</option>
                   <option value="enforce">enforce (block)</option>
                 </select>
+              </div>
+              <div class="setting-row">
+                <label for="cfg-rule-egress">Approved-egress-host rule mode</label>
+                <select id="cfg-rule-egress" disabled>
+                  <option value="off">off</option>
+                  <option value="shadow">shadow (record only)</option>
+                  <option value="enforce">enforce (block)</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <label for="cfg-rule-silent">Silent-supervisor rule mode (tunnel gate)</label>
+                <select id="cfg-rule-silent" disabled>
+                  <option value="off">off</option>
+                  <option value="shadow">shadow (record only)</option>
+                  <option value="enforce">enforce (block)</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <label for="cfg-rule-siem">SIEM context &amp; ML anomaly rule mode</label>
+                <select id="cfg-rule-siem" disabled>
+                  <option value="off">off</option>
+                  <option value="shadow">shadow (record only)</option>
+                  <option value="enforce">enforce (add points to score)</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <label for="cfg-siem-cap">SIEM context max points (0–30; blank = 15)</label>
+                <input type="number" id="cfg-siem-cap" min="0" max="30" step="1" placeholder="15" disabled />
               </div>
               <p class="quiet-note">A shadow rule records what it would have blocked without blocking it. Promote a rule to enforce once its record looks right. A rule whose list is empty is skipped.</p>
               <div class="setting-row">
@@ -2752,11 +2791,13 @@ const guardrailNumberFields = {
   "cfg-fanout-p99": "max_distinct_resources_15m_p99"
 };
 const guardrailFieldIds = [
-  "cfg-profile", "cfg-mode", ...Object.keys(guardrailNumberFields), "cfg-repos", "cfg-routes",
-  "cfg-forbid-hi", "cfg-rule-hi", "cfg-rule-action", "cfg-rule-resource", "cfg-manage-filesystem", "cfg-workdir", "cfg-ro-paths", "cfg-rw-paths"
+  "cfg-profile", "cfg-mode", ...Object.keys(guardrailNumberFields), "cfg-repos", "cfg-routes", "cfg-egress-hosts",
+  "cfg-forbid-hi", "cfg-rule-hi", "cfg-rule-action", "cfg-rule-resource", "cfg-rule-egress", "cfg-rule-silent", "cfg-rule-siem", "cfg-siem-cap",
+  "cfg-manage-filesystem", "cfg-workdir", "cfg-ro-paths", "cfg-rw-paths"
 ];
 const filesystemFieldIds = ["cfg-workdir", "cfg-ro-paths", "cfg-rw-paths"];
 let operatorToken = "";
+let operatorTwoPerson = false;
 let operatorCapability = "checking";
 let operatorStatusError = "";
 let operatorAuthError = "";
@@ -2964,12 +3005,19 @@ async function authBoot() {
   AUTH.cfg = status.sign_in;
   $("signin-btn").addEventListener("click", () => void authStart(false));
   $("signin-other").addEventListener("click", () => void authStart(true));
+  $("switch-account").addEventListener("click", () => void authStart(true));
   $("signout").addEventListener("click", authSignOut);
   const params = new URLSearchParams(location.search);
   try {
     if (params.has("code") || params.has("error")) {
       history.replaceState(null, "", location.pathname);
       await authFinish(params);
+      const returnTo = authStore.getItem("rg_return_to");
+      if (returnTo && returnTo.startsWith("/studio")) {
+        authStore.removeItem("rg_return_to");
+        location.assign(returnTo);
+        return false;
+      }
     } else {
       const saved = JSON.parse(authStore.getItem("rg_auth") || "null");
       if (saved?.token) Object.assign(AUTH, { token: saved.token, expiresAt: saved.expiresAt, refreshToken: saved.refreshToken || "" });
@@ -2992,6 +3040,7 @@ async function authBoot() {
   if (AUTH.role === "admin") operatorToken = AUTH.token;
   $("whoami").textContent = `${AUTH.name} · ${AUTH.role === "admin" ? "administrator" : "read-only"}`;
   $("whoami-chip").hidden = false;
+  $("switch-account").hidden = false;
   $("signout").hidden = false;
   $("public-link").hidden = false;
   document.body.classList.remove("signed-out");
@@ -3150,10 +3199,15 @@ function guardrailForm(settings) {
     "cfg-profile": settings.task_profile, "cfg-mode": settings.mode,
     "cfg-repos": settings.approved_resources.join("\n"),
     "cfg-routes": settings.allowed_action_classes.join("\n"),
+    "cfg-egress-hosts": (settings.approved_egress_hosts || []).join("\n"),
     "cfg-forbid-hi": String(settings.forbid_unfamiliar_high_impact),
     "cfg-rule-hi": ruleModeOf(settings, "unfamiliar_high_impact") === "shadow" ? "shadow" : "enforce",
     "cfg-rule-action": ruleModeOf(settings, "unapproved_action"),
     "cfg-rule-resource": ruleModeOf(settings, "unapproved_resource"),
+    "cfg-rule-egress": ruleModeOf(settings, "egress_destination"),
+    "cfg-rule-silent": ruleModeOf(settings, "supervisor_silent"),
+    "cfg-rule-siem": ruleModeOf(settings, "siem_context"),
+    "cfg-siem-cap": settings.siem_context_max_points != null ? String(settings.siem_context_max_points) : "",
     "cfg-manage-filesystem": settings.filesystem !== null,
     "cfg-workdir": settings.filesystem === null ? "" : String(settings.filesystem.include_workdir),
     "cfg-ro-paths": settings.filesystem?.read_only.join("\n") || "",
@@ -3178,6 +3232,9 @@ function validateGuardrailView(view, agentId) {
       || (settings !== null && (!settings || typeof settings.task_profile !== "string"
         || !["observe", "enforce"].includes(settings.mode)
         || !strings(settings.approved_resources) || !strings(settings.allowed_action_classes)
+        || (settings.approved_egress_hosts !== undefined && !strings(settings.approved_egress_hosts))
+        || (settings.siem_context_max_points !== undefined && settings.siem_context_max_points !== null
+          && (!Number.isSafeInteger(settings.siem_context_max_points) || settings.siem_context_max_points < 0 || settings.siem_context_max_points > 30))
         || typeof settings.forbid_unfamiliar_high_impact !== "boolean"
         || !validRuleModes(settings.rule_modes)
         || Object.values(guardrailNumberFields).some(key => !Number.isSafeInteger(settings[key]))
@@ -3216,18 +3273,19 @@ function receiveGuardrailView(state, view, discardEditVersion = null) {
 
 function guardrailHttpError(status, payload, token = "") {
   let message;
-  if (status === 401) message = "Operator authorization is missing or invalid (HTTP 401). Unlock again.";
-  else if (status === 403) message = "Origin rejected (HTTP 403). Open this dashboard directly from the same service origin.";
+  let detail = typeof payload?.error === "string" ? payload.error.trim() : "";
+  if (token && detail) detail = detail.replace(new RegExp(token, "gi"), "[redacted]");
+  if (status === 401) message = detail || "Operator authorization is missing or invalid (HTTP 401). Unlock again.";
+  else if (status === 403) message = detail ? `${detail} (HTTP 403)` : "Origin or permission rejected (HTTP 403). Open this dashboard directly from the same service origin.";
   else if (status === 404) message = "Enforcement controls are unavailable or this workload is unknown (HTTP 404). The service may have controls disabled or an older backend. Read-only until a successful reload.";
   else if (status === 409) message = `Revision conflict (HTTP 409)${Number.isSafeInteger(payload?.current_revision) ? `; server revision ${payload.current_revision}` : ""}. Draft preserved; reload/discard before saving.`;
   else if (status === 413) message = "The settings payload exceeds the service's 64 KiB request limit (HTTP 413). Shorten lists or paths before retrying.";
   else if (status === 400 || status === 422) {
-    let detail = typeof payload?.error === "string" ? payload.error : "Check the field constraints and imported approved profile name.";
-    if (token) detail = detail.replace(new RegExp(token, "gi"), "[redacted]");
-    message = `Validation rejected (HTTP ${status}): ${detail}`;
+    message = `Validation rejected (HTTP ${status}): ${detail || "Check the field constraints and imported approved profile name."}`;
   } else message = `Enforcement service unavailable (HTTP ${status}).`;
   const error = new Error(message);
   error.status = status;
+  error.rawError = detail;
   error.currentRevision = Number.isSafeInteger(payload?.current_revision) ? payload.current_revision : null;
   return error;
 }
@@ -3277,6 +3335,7 @@ async function refreshOperatorStatus() {
     if (typeof status?.enabled !== "boolean") throw new Error("Operator capability is not reported by this service. Dashboard remains read-only.");
     // On the public page there is nothing to unlock: administrators sign in at /admin.
     operatorCapability = status.enabled && !(AUTH.offered && !AUTH.cfg) ? "enabled" : "disabled";
+    operatorTwoPerson = Boolean(status.two_person_required);
     operatorStatusError = "";
     if (!status.enabled) lockOperator();
   } catch (error) {
@@ -3373,6 +3432,7 @@ function renderGuardrails() {
   const state = currentGuardrailState();
   const view = state?.view;
   const editable = canEditGuardrails(state);
+  const viewOnly = operatorCapability === "disabled";
   const managed = Boolean(state?.raw?.["cfg-manage-filesystem"]);
   for (const id of guardrailFieldIds) {
     const input = $(id);
@@ -3387,13 +3447,14 @@ function renderGuardrails() {
   $("cfg-lock").hidden = !operatorToken && !operatorVerifying;
   $("cfg-save").disabled = !editable || state.saving || state.loading || state.conflict || (!state.dirty && view.has_saved_settings);
   $("cfg-save").textContent = state?.saving ? "Saving… awaiting confirmation" : "Save & apply";
+  $("cfg-propose").hidden = viewOnly || !editable || (!operatorTwoPerson && !state?.needsTwoPersonProposal);
+  $("cfg-propose").disabled = !editable || state.saving || state.loading || state.conflict || (!state.dirty && view.has_saved_settings);
   $("cfg-reload").disabled = !state || state.loading || state.saving;
   $("cfg-policy-download").disabled = !state?.available || !view?.has_saved_settings || state.downloading;
   $("cfg-access-badge").textContent = !state?.available || !view?.settings || operatorCapability !== "enabled"
     ? "Read-only" : operatorVerifying ? "Verifying…" : operatorToken ? "Unlocked" : "Locked · read-only";
   $("cfg-access-badge").className = `badge ${editable ? "badge-green" : "badge-neutral"}`;
   // With writes disabled there is nothing to unlock or save, so hide the controls rather than show dead buttons.
-  const viewOnly = operatorCapability === "disabled";
   if (editable && !settingsFoldAutoOpened) { $("settings-fold").open = true; settingsFoldAutoOpened = true; }
   for (const id of ["cfg-token-help", "cfg-unlock-form"]) $(id).hidden = viewOnly || Boolean(AUTH.cfg);
   if (AUTH.cfg) $("cfg-lock").hidden = true;
@@ -3472,6 +3533,23 @@ function activeAgentRestrictions(data = currentAgentData) {
   return rows;
 }
 
+async function proposeClearRestriction(agentId, restriction, reason) {
+  const res = await guardrailJson("/api/changes", {
+    method: "POST",
+    headers: apprHeaders(),
+    body: JSON.stringify({
+      kind: "clear_restriction",
+      agent_id: agentId,
+      scope: restriction.scope,
+      context_id: restriction.context_id || null,
+      reason
+    })
+  });
+  restrictionClearNotice = `Proposed lock clearance (${res.id.slice(0, 8)}…) for two-person approval. Switch to a second administrator account (for example learningnemo-approver@christopherghannagmail.onmicrosoft.com) in Approvals to approve it.`;
+  restrictionClearReason = "";
+  void loadApprovals();
+}
+
 async function clearAgentRestriction(restriction, reasonInput) {
   const agentId = currentAgentData?.agent?.agent_id;
   if (!agentId || !operatorToken || restrictionClearingKey) return;
@@ -3489,6 +3567,10 @@ async function clearAgentRestriction(restriction, reasonInput) {
   restrictionClearingKey = `${restriction.context_id}:${restriction.scope}`;
   renderRestrictionRecovery();
   try {
+    if (operatorTwoPerson) {
+      await proposeClearRestriction(agentId, restriction, reason);
+      return;
+    }
     await guardrailJson(`/api/agents/${encodeURIComponent(agentId)}/restrictions/clear`, {
       method: "POST",
       headers: {
@@ -3505,7 +3587,16 @@ async function clearAgentRestriction(restriction, reasonInput) {
     restrictionClearReason = "";
     await refresh();
   } catch (error) {
-    restrictionClearError = error.message;
+    if (error.status === 403 && /two-person approval is on/i.test(error.rawError || error.message)) {
+      operatorTwoPerson = true;
+      try {
+        await proposeClearRestriction(agentId, restriction, reason);
+      } catch (propErr) {
+        restrictionClearError = propErr.message;
+      }
+    } else {
+      restrictionClearError = error.message;
+    }
   } finally {
     restrictionClearingKey = "";
     renderRestrictionRecovery();
@@ -3524,7 +3615,10 @@ function renderRestrictionRecovery() {
     badge.className = `badge ${rows.length ? "badge-red" : "badge-neutral"}`;
     const statusMsg = restrictionClearError || restrictionClearNotice
       || (!rows.length ? "No active context-scoped restrictions recorded for this workload."
-        : unlocked ? "Operator unlocked. Enter an audit reason to clear an active lock."
+        : unlocked
+          ? (operatorTwoPerson
+              ? "Two-person approval is on. Enter an audit reason to propose clearing an active lock; a second administrator approves it in Approvals."
+              : "Operator unlocked. Enter an audit reason to clear an active lock.")
           : "Read-only: unlock operator controls in Enforcement to clear an active restriction.");
     status.textContent = statusMsg;
     status.className = restrictionClearError ? "cfg-error" : "muted";
@@ -3563,7 +3657,9 @@ function renderRestrictionRecovery() {
       clearBtn.type = "button";
       clearBtn.className = "btn";
       const isClearing = restrictionClearingKey === `${item.context_id}:${item.scope}`;
-      clearBtn.textContent = isClearing ? "Clearing…" : "Clear lock";
+      clearBtn.textContent = isClearing
+        ? (operatorTwoPerson ? "Proposing…" : "Clearing…")
+        : (operatorTwoPerson ? "Propose clearance (2-person)" : "Clear lock");
       clearBtn.disabled = !unlocked || Boolean(restrictionClearingKey);
       clearBtn.addEventListener("click", () => {
         void clearAgentRestriction(item, reasonInput);
@@ -3675,9 +3771,15 @@ function settingsFromGuardrailDraft(raw) {
   if (!["observe", "enforce"].includes(raw["cfg-mode"])) invalid("cfg-mode", "Choose an operating mode.");
   if (!["true", "false"].includes(raw["cfg-forbid-hi"])) invalid("cfg-forbid-hi", "Choose whether unfamiliar high-impact actions are forbidden.");
   if (!["enforce", "shadow"].includes(raw["cfg-rule-hi"])) invalid("cfg-rule-hi", "Choose whether the high-impact rule blocks or only records.");
-  for (const id of ["cfg-rule-action", "cfg-rule-resource"]) {
+  for (const id of ["cfg-rule-action", "cfg-rule-resource", "cfg-rule-egress", "cfg-rule-silent", "cfg-rule-siem"]) {
     if (!["off", "shadow", "enforce"].includes(raw[id])) invalid(id, "Choose off, shadow or enforce.");
   }
+  const egressHosts = list("cfg-egress-hosts", 256, 253);
+  if (egressHosts.some(h => !/^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(h) || /^\d+(\.\d+){3}$/.test(h))) {
+    invalid("cfg-egress-hosts", "Approved egress hosts must be lowercase hostnames or *.example.com wildcards, not IP addresses.");
+  }
+  const siemCapRaw = (raw["cfg-siem-cap"] ?? "").trim();
+  const siemCap = siemCapRaw === "" ? null : integer("cfg-siem-cap", 0, 30);
   const settings = {
     task_profile: profile, mode: raw["cfg-mode"],
     observe_threshold: integer("cfg-obs-thresh", 0, 99),
@@ -3685,8 +3787,10 @@ function settingsFromGuardrailDraft(raw) {
     cooldown_seconds: integer("cfg-cooldown", 1, 86400),
     approved_resources: list("cfg-repos", 256, 512),
     allowed_action_classes: list("cfg-routes", 256, 512),
+    ...(egressHosts.length ? { approved_egress_hosts: egressHosts } : {}),
     forbid_unfamiliar_high_impact: raw["cfg-forbid-hi"] === "true",
     ...ruleModesPayload(raw),
+    ...(siemCap !== null ? { siem_context_max_points: siemCap } : {}),
     max_req_1m_p95: integer("cfg-rate-p95", 1, 1000000),
     max_req_1m_p99: integer("cfg-rate-p99", 1, 1000000),
     max_distinct_resources_15m_p95: integer("cfg-fanout-p95", 1, 4096),
@@ -3767,7 +3871,13 @@ async function saveGuardrails(event) {
     state.notice = state.conflict ? `Revision ${view.revision} was saved, but a newer server revision is already recorded.`
       : `Confirmed saved revision ${view.revision}.${state.dirty ? " Edits made during save remain unsaved." : ""}`;
   } catch (error) {
-    state.error = `${error.message} Draft preserved; no applied success is assumed.`;
+    if (error.status === 403 && /two-person approval is on/i.test(error.rawError || error.message)) {
+      operatorTwoPerson = true;
+      state.needsTwoPersonProposal = true;
+      state.error = `${error.message} Click "Propose loosening (2-person)" above to submit this change for approval by a second administrator (such as learningnemo-approver@christopherghannagmail.onmicrosoft.com).`;
+    } else {
+      state.error = `${error.message} Draft preserved; no applied success is assumed.`;
+    }
     if (error.status === 409) {
       state.conflict = true;
       state.currentRevision = error.currentRevision;
@@ -3780,6 +3890,44 @@ async function saveGuardrails(event) {
       state.conflict = true;
       state.currentRevision = state.view.revision;
     }
+    renderGuardrailsIfCurrent(state);
+  }
+}
+
+async function proposeGuardrails() {
+  const state = currentGuardrailState();
+  if (!canEditGuardrails(state) || state.saving || state.loading || state.conflict) return;
+  let settings;
+  try { settings = settingsFromGuardrailDraft(state.raw); }
+  catch (error) {
+    state.error = error.message;
+    renderGuardrails();
+    return;
+  }
+  const reason = (window.prompt("Enter an audit reason for this two-person enforcement settings proposal:") || "").trim();
+  if (!reason) return;
+  state.saving = true;
+  state.error = "";
+  state.notice = "";
+  renderGuardrails();
+  try {
+    const res = await guardrailJson("/api/changes", {
+      method: "POST",
+      headers: apprHeaders(),
+      body: JSON.stringify({
+        kind: "update_guardrails",
+        agent_id: state.agentId,
+        params: { expected_revision: state.baseRevision, settings },
+        reason
+      })
+    });
+    state.needsTwoPersonProposal = false;
+    state.notice = `Proposed enforcement change (${res.id.slice(0, 8)}…) for two-person approval. Switch to a second administrator account (for example learningnemo-approver@christopherghannagmail.onmicrosoft.com) in Approvals to approve it.`;
+    void loadApprovals();
+  } catch (error) {
+    state.error = error.message;
+  } finally {
+    state.saving = false;
     renderGuardrailsIfCurrent(state);
   }
 }
@@ -4686,6 +4834,28 @@ async function adaptiveCommand(command, pendingLabel) {
     }
   } catch (error) {
     if (state !== currentAdaptiveState() || sequence !== state.sequence || error.name === "AbortError") return;
+    if (command.operation === "set_model" && command.mode !== "enforce" && error.status === 403 && /two-person approval is on/i.test(error.message)) {
+      operatorTwoPerson = true;
+      const reason = (window.prompt(`Two-person approval is on. Enter a reason to propose setting model ${command.model_id} to ${command.mode}:`) || "").trim();
+      if (reason) {
+        try {
+          const res = await guardrailJson("/api/changes", {
+            method: "POST", headers: apprHeaders(),
+            body: JSON.stringify({
+              kind: "demote_adaptive_model",
+              agent_id: state.agentId,
+              params: { model_id: command.model_id, mode: command.mode },
+              reason
+            })
+          });
+          state.notice = `Proposed adaptive model demotion (${res.id.slice(0, 8)}…) for two-person approval. Switch to a second administrator account (for example learningnemo-approver@christopherghannagmail.onmicrosoft.com) in Approvals to approve it.`;
+          void loadApprovals();
+          return;
+        } catch (propErr) {
+          state.error = propErr.message;
+        }
+      }
+    }
     state.available = false;
     state.error = `${adaptiveRedact(error.message, authorization)} No applied success is assumed; refresh evidence before retrying.`;
     adaptiveClearAcknowledgments(state);
@@ -4907,8 +5077,10 @@ function renderServiceMapGraph(data, periodDecisions, periodRuns, fsSummary) {
   svg.replaceChildren();
   const NS = "http://www.w3.org/2000/svg";
   const networkGroups = selectedDomain === "filesystem" ? [] : Array.from(groupNetworkTargets(periodDecisions).values());
+  const silenceEvents = selectedDomain === "filesystem" ? [] : (Array.isArray(data.supervisor_silence) ? data.supervisor_silence : []);
+  const showsSilence = silenceEvents.length > 0;
   const showsFilesystem = selectedDomain !== "network" && fsSummary.available;
-  const rowCount = networkGroups.length + (showsFilesystem ? 2 : 0);
+  const rowCount = networkGroups.length + (showsSilence ? 1 : 0) + (showsFilesystem ? 2 : 0);
   const holder = svg.parentElement;
   holder.classList.toggle("manual", !mapAutoFit);
   const W = Math.max(880, holder.clientWidth);
@@ -5083,12 +5255,53 @@ function renderServiceMapGraph(data, periodDecisions, periodRuns, fsSummary) {
       ]
     });
   });
+  if (showsSilence) {
+    const silenceRow = networkGroups.length;
+    const latest = silenceEvents[0];
+    const dest = latest?.destination || "unreported tunnel";
+    const enforced = latest?.rule_mode === "enforce";
+    actionNodes.push({
+      id: "act:tunnel-silent",
+      filterQuery: "supervisor_silent",
+      x: columns[2],
+      y: rowY(silenceRow),
+      metric: `${silenceEvents.length} silent`,
+      label: "Tunnel gate (silent)",
+      color: enforced ? "var(--graph-blocked)" : "var(--graph-warning)",
+      isSilence: true,
+      silenceEvents,
+      enforced,
+      tooltipTitle: "Tunnel Gate: Silent Supervisor",
+      tooltipLines: [
+        `${silenceEvents.length} tunnel(s) opened after L7 proxy went silent`,
+        `Latest destination: ${dest} (${Math.round(Number(latest?.silent_for_ms || 0) / 1000)}s gap)`,
+        `Mode: ${latest?.rule_mode || "shadow"}`
+      ]
+    });
+    targetNodes.push({
+      id: "tgt:tunnel-silent",
+      filterQuery: "supervisor_silent",
+      x: columns[3],
+      y: rowY(silenceRow),
+      metric: enforced ? "Cut" : "Watched",
+      label: shortId(dest, 24),
+      color: enforced ? "var(--graph-blocked)" : "var(--graph-warning)",
+      isSilence: true,
+      fromAction: "act:tunnel-silent",
+      tooltipTitle: `Tunnel Destination: ${dest}`,
+      tooltipLines: [
+        `Bypassed L7 proxy telemetry (${silenceEvents.length} event(s))`,
+        enforced ? "Refused at Envoy ext_authz tunnel gate" : "Recorded in shadow mode at Envoy ext_authz tunnel gate"
+      ]
+    });
+  }
+  const fsBaseRow = networkGroups.length + (showsSilence ? 1 : 0);
   if (showsFilesystem) {
     actionNodes.push({
       id: "act:fs-rw",
       filterQuery: "filesystem_policy",
       x: columns[2],
-      y: rowY(networkGroups.length),
+      y: rowY(fsBaseRow),
       metric: "RW",
       label: "Read/write policy",
       color: fsSummary.includeWorkdir ? "var(--graph-warning)" : "var(--graph-node)",
@@ -5103,7 +5316,7 @@ function renderServiceMapGraph(data, periodDecisions, periodRuns, fsSummary) {
       id: "act:fs-ro",
       filterQuery: "Landlock",
       x: columns[2],
-      y: rowY(networkGroups.length + 1),
+      y: rowY(fsBaseRow + 1),
       metric: "RO",
       label: "Read-only policy",
       color: "var(--graph-node)",
@@ -5122,7 +5335,7 @@ function renderServiceMapGraph(data, periodDecisions, periodRuns, fsSummary) {
       id: "tgt:vol-rw",
       filterQuery: "filesystem_policy",
       x: columns[3],
-      y: rowY(networkGroups.length),
+      y: rowY(fsBaseRow),
       metric: "Policy",
       label: "Writable paths",
       color: fsSummary.includeWorkdir ? "var(--graph-warning)" : "var(--graph-node)",
@@ -5139,7 +5352,7 @@ function renderServiceMapGraph(data, periodDecisions, periodRuns, fsSummary) {
       id: "tgt:vol-ro",
       filterQuery: "filesystem_policy",
       x: columns[3],
-      y: rowY(networkGroups.length + 1),
+      y: rowY(fsBaseRow + 1),
       metric: "Policy",
       label: `${fsSummary.readOnly.length} read-only paths`,
       color: "var(--graph-node)",
@@ -5173,6 +5386,14 @@ function renderServiceMapGraph(data, periodDecisions, periodRuns, fsSummary) {
           requests: sb.raw.requests.filter(d => networkTargetKey(d.request || {}) === act.group.key),
           dur: 1.8
         });
+      } else if (act.isSilence && act.silenceEvents.some(ev => ev.sandbox_id === sb.sandboxId)) {
+        edges.push({
+          from: sb,
+          to: act,
+          kind: "blocked-severed",
+          dur: 0,
+          blockedLabel: `${act.silenceEvents.filter(ev => ev.sandbox_id === sb.sandboxId).length} silent tunnel`
+        });
       } else if (act.isFs) {
         edges.push({
           from: sb,
@@ -5191,6 +5412,11 @@ function renderServiceMapGraph(data, periodDecisions, periodRuns, fsSummary) {
     if (act) {
       if (act.isFs) {
         edges.push({ from: act, to: tgt, kind: "fs-mount", dur: 0 });
+      } else if (act.isSilence) {
+        edges.push({
+          from: act, to: tgt, kind: "blocked-severed", dur: 0,
+          blockedLabel: act.enforced ? `${act.silenceEvents.length} cut` : `${act.silenceEvents.length} watched`
+        });
       } else {
         if (act.group.allowed) edges.push({
           from: act, to: tgt, kind: "allowed-pass", dur: 1.8,
@@ -5485,6 +5711,26 @@ function detectionSettingsMetadata(item) {
   ].join(" · ");
 }
 
+const SIEM_RULE_LABELS = {
+  "R1": "R1 · OpenShell refusal burst in last 15m",
+  "R2": "R2 · High refusal ratio across recent calls",
+  "R3": "R3 · Repeated Risk Guard blocks in last 15m",
+  "R4": "R4 · Upstream HTTP 429 rate-limit burst",
+  "R5": "R5 · OpenSearch RCF ML anomaly detector grade",
+  "R6": "R6 · Kill-chain probing × novel access synergy",
+  "novel_route_7d": "7d Route Novelty · Route unseen in 7-day SIEM history"
+};
+
+function formatSiemSupport(support, observed, baseline) {
+  const rulesMatch = /rules=([^\s;]+)/.exec(String(observed || "")) || /siem_rules=([^\s;]+)/.exec(String(support || ""));
+  if (!rulesMatch) return `Observed: ${observed || "none"} · Baseline: ${baseline || "none"}`;
+  const parts = rulesMatch[1].split(",").filter(Boolean).map(r => {
+    const code = r.split(":")[0];
+    return SIEM_RULE_LABELS[code] || SIEM_RULE_LABELS[r] || r;
+  });
+  return `${parts.join(" · ")} (${observed})`;
+}
+
 function detectionScoreTone(item) {
   if (item.kind === "filesystem") return item.riskScore >= 70 ? "crit" : item.riskScore >= 20 ? "warn" : "ok";
   if (item.enforceThreshold !== null && item.riskScore >= item.enforceThreshold) return "crit";
@@ -5583,14 +5829,22 @@ function buildRiskyItems(data, periodDecisions, fsSummary) {
             "T": "Binary Lineage (T)",
             "C": "Credentialed Endpoint (C)",
             "V": "1m Request Velocity (V)",
-            "F": "15m Resource Fan-Out (F)"
+            "F": "15m Resource Fan-Out (F)",
+            "siem_context": "Correlated SIEM & ML Anomaly Context (R1–R6)",
+            "quarantine": "Workload / SPIFFE Identity Quarantine",
+            "restriction:cooldown": "Active Tier-2 Cooldown Restriction",
+            "maturity_credit": "Learned Behavioral Maturity Credit",
+            "guardrails_revision": "Workload Enforcement Settings Revision"
           };
+          const desc = s.feature === "siem_context"
+            ? formatSiemSupport(s.support, s.observed_summary, s.baseline_summary)
+            : `Observed: ${s.observed_summary} · Baseline: ${s.baseline_summary}`;
           return {
-            triggered: c > 0,
+            triggered: c !== 0,
             ptsNum: c,
             title: labelMap[s.feature] || s.feature,
-            pts: c > 0 ? `+${c} pts` : "0 pts",
-            desc: `Observed: ${s.observed_summary} · Baseline: ${s.baseline_summary}`
+            pts: c > 0 ? `+${c} pts` : c < 0 ? `${c} pts` : "0 pts",
+            desc
           };
         });
         factors.sort((a, b) => Number(b.triggered) - Number(a.triggered) || b.ptsNum - a.ptsNum);
@@ -5646,6 +5900,50 @@ function buildRiskyItems(data, periodDecisions, fsSummary) {
     }
   }
 
+  if (selectedDomain !== "filesystem" && Array.isArray(data.supervisor_silence) && data.supervisor_silence.length > 0) {
+    const silence = data.supervisor_silence;
+    const latest = silence[0];
+    const enforced = latest.rule_mode === "enforce";
+    groups.set("network:supervisor-silent", {
+      kind: "network",
+      isRisky: true,
+      outcome: enforced ? "deny" : "observe",
+      severity: enforced ? "deny" : "warn",
+      riskScore: enforced ? 100 : 85,
+      threshold: 70,
+      observeThreshold: 20,
+      enforceThreshold: 70,
+      guardrailRevision: data.guardrails?.revision ?? null,
+      settingsHash: data.guardrails?.settings_hash || null,
+      baselineHash: null,
+      mode: latest.rule_mode || "shadow",
+      badgeText: enforced ? "Blocked silent tunnel" : "Silent supervisor alert",
+      badgeClass: enforced ? "badge-red" : "badge-amber",
+      title: `CONNECT ${latest.destination || "tunnel"} → supervisor_silent`,
+      subtitle: `Envoy ext_authz tunnel gate · ${Math.round(Number(latest.silent_for_ms || 0) / 1000)}s without L7 proxy report`,
+      why: `Sandbox opened an outbound encrypted tunnel while its in-sandbox L7 supervisor had been silent for ${Math.round(Number(latest.silent_for_ms || 0) / 1000)}s (${silence.length} occurrence(s)).`,
+      factors: [
+        {
+          triggered: true,
+          ptsNum: enforced ? 100 : 85,
+          title: "Silent Supervisor / Unreported Tunnel (supervisor_silent)",
+          pts: enforced ? "+100 pts" : "+85 pts (shadow)",
+          desc: `Destination: ${latest.destination || "unknown"} · L7 silence gap: ${latest.silent_for_ms || 0} ms · Mode: ${latest.rule_mode || "shadow"}`
+        }
+      ],
+      learned: null,
+      occurrences: silence.map(s => ({
+        sandboxId: s.sandbox_id,
+        runId: `tunnel → ${s.destination}`,
+        score: s.rule_mode === "enforce" ? 100 : 85,
+        learnedScore: null,
+        ts: s.at_ms
+      })),
+      sandboxes: new Set(silence.map(s => s.sandbox_id).filter(Boolean)),
+      latestTs: Number(latest.at_ms || 0)
+    });
+  }
+
   if (selectedDomain !== "network" && fsSummary.includeWorkdir) {
     groups.set("filesystem:workdir-rw", {
       kind: "filesystem",
@@ -5699,6 +5997,11 @@ const SIGNAL_TEXT = {
   task_constraint: "Outside the approved task rules",
   shadow_rule: "A shadow rule would have blocked this",
   "restriction:strict_epoch": "A lock from an earlier block applies",
+  "restriction:cooldown": "A temporary cooldown pause from an earlier block applies",
+  quarantine: "Workload or SPIFFE identity is quarantined",
+  siem_context: "Correlated SIEM & ML anomaly signals raised the risk score",
+  maturity_credit: "Learned behavioral maturity credit lowered the risk score",
+  guardrails_revision: "Evaluated under saved workload enforcement settings",
   N_r: "A resource this workload has not touched before",
   N_a: "An action this workload has not done before",
   J_Nr_I: "Unfamiliar resource combined with a high-impact action",
@@ -6298,7 +6601,8 @@ function renderRiskyInspector(item) {
     top.className = "factor-top";
     const tSpan = document.createElement("span");
     tSpan.textContent = f.title;
-    top.append(tSpan, makeBadge(f.pts, f.triggered ? item.badgeClass : "badge-neutral", false));
+    const badgeCls = !f.triggered ? "badge-neutral" : f.ptsNum < 0 ? "badge-green" : item.badgeClass;
+    top.append(tSpan, makeBadge(f.pts, badgeCls, false));
     const sub = document.createElement("div");
     sub.className = "factor-sub";
     sub.textContent = f.desc;
@@ -6466,7 +6770,15 @@ function renderAllForCurrentAgent() {
   const data = currentAgentData;
   const allDecisions = Array.isArray(data.decisions) ? data.decisions : [];
   const latestDecisionTs = allDecisions.reduce((m, d) => Math.max(m, Number(d?.evaluation?.decision_timestamp_ms || 0)), Date.now());
-  const periodDecisions = filterByPeriod(allDecisions, d => d?.evaluation?.decision_timestamp_ms, latestDecisionTs);
+  let periodDecisions = filterByPeriod(allDecisions, d => d?.evaluation?.decision_timestamp_ms, latestDecisionTs);
+  if (selectedPeriodMs === 86400000 && !periodDecisions.some(d => d?.evaluation?.outcome === "deny") && allDecisions.some(d => d?.evaluation?.outcome === "deny")) {
+    const seenIds = new Set(periodDecisions.map(d => d?.evaluation?.request_id || d?.request?.request_id));
+    for (const d of allDecisions) {
+      if (d?.evaluation?.outcome === "deny" && !seenIds.has(d?.evaluation?.request_id || d?.request?.request_id)) {
+        periodDecisions.push(d);
+      }
+    }
+  }
 
   const scores = periodDecisions.map(d => Number(d?.evaluation?.risk_score || 0));
   const maxScore = scores.length ? Math.max(...scores) : 0;
@@ -6507,9 +6819,12 @@ function renderAllForCurrentAgent() {
   $("hub-blocked").textContent = String(blockedCount);
 
   $("agent-posture-score").textContent = `${blockedCount} blocked / ${periodDecisions.length} network decisions`;
-  $("agent-posture-tier").replaceChildren(document.createTextNode(activeRestrictions > 0 ? `${activeRestrictions} active context locks` : blockedCount > 0 ? "Blocked activity" : "No active context locks"));
-  $("agent-posture-tier").className = `badge ${activeRestrictions > 0 || blockedCount > 0 ? "badge-red" : "badge-neutral"}`;
+  $("agent-posture-tier").replaceChildren(document.createTextNode(
+    data.quarantine ? "Quarantined" : activeRestrictions > 0 ? `${activeRestrictions} active context locks` : blockedCount > 0 ? "Blocked activity" : "No active context locks"
+  ));
+  $("agent-posture-tier").className = `badge ${data.quarantine || activeRestrictions > 0 || blockedCount > 0 ? "badge-red" : "badge-neutral"}`;
   renderEffectiveMode();
+  renderQuarantineAndSiemBanner(data);
 
   $("summary-tier").textContent = activeRestrictions > 0 ? "Contained" : "Nominal";
   $("summary-max").textContent = `${maxScore}/100`;
@@ -6534,7 +6849,117 @@ function renderAllForCurrentAgent() {
   renderGuardrails();
 }
 
-// ---- Fleet overview: a verdict, four numbers, who needs attention, and the sortable workload directory --------------
+let quarantineNotice = "";
+let quarantineError = "";
+let quarantineBusy = false;
+
+function renderQuarantineAndSiemBanner(data) {
+  const qBanner = $("agent-quarantine-banner");
+  const sBanner = $("agent-siem-strip");
+  const qBtn = $("quarantine-workload-btn");
+  const unlocked = Boolean(operatorCapability === "enabled" && operatorToken);
+  const agentId = data?.agent?.agent_id;
+  if (qBtn) {
+    qBtn.hidden = !unlocked || Boolean(data?.quarantine);
+    qBtn.disabled = quarantineBusy;
+  }
+  if (qBanner) {
+    if (!data?.quarantine && !quarantineNotice && !quarantineError) {
+      qBanner.hidden = true;
+      qBanner.replaceChildren();
+    } else {
+      qBanner.hidden = false;
+      const q = data.quarantine;
+      const head = apprEl("h3", { style: "display:flex;justify-content:space-between;align-items:center;margin:0 0 6px" },
+        apprEl("span", { text: q ? "Workload quarantined — all outbound HTTP and tunnel requests are blocked" : "Quarantine status" }),
+        makeBadge(q ? "Quarantined" : "Released", q ? "badge-red" : "badge-green"));
+      const detail = apprEl("p", { class: "muted", style: "margin:0 0 8px", text: q
+        ? `Reason: ${q.reason} · by ${q.operator} · ${time(q.quarantined_at_ms)}${q.expires_at_ms ? ` · expires ${time(q.expires_at_ms)}` : " · no automatic expiry"}`
+        : quarantineNotice });
+      const children = [head, detail];
+      if (quarantineError) children.push(apprEl("p", { class: "cfg-error", style: "margin:4px 0", text: quarantineError }));
+      if (q && unlocked) {
+        const reasonInput = apprEl("input", { type: "text", maxlength: "240", placeholder: "Audit reason to release quarantine (required)", "aria-label": "Reason to release quarantine" });
+        const releaseBtn = apprEl("button", { type: "button", class: "btn", text: operatorTwoPerson ? "Propose quarantine release (2-person)" : "Release quarantine", onclick: async () => {
+          const reason = reasonInput.value.trim();
+          if (!reason) { quarantineError = "Enter an audit reason before releasing quarantine."; renderQuarantineAndSiemBanner(currentAgentData); reasonInput.focus(); return; }
+          quarantineBusy = true; quarantineError = ""; quarantineNotice = "";
+          renderQuarantineAndSiemBanner(currentAgentData);
+          try {
+            if (operatorTwoPerson) {
+              const res = await guardrailJson("/api/changes", {
+                method: "POST", headers: apprHeaders(),
+                body: JSON.stringify({ kind: "release_quarantine", agent_id: agentId, reason })
+              });
+              quarantineNotice = `Proposed quarantine release (${res.id.slice(0, 8)}…) for two-person approval. Switch to a second administrator account (for example learningnemo-approver@christopherghannagmail.onmicrosoft.com) in Approvals to approve it.`;
+              void loadApprovals();
+            } else {
+              await guardrailJson(`/api/agents/${encodeURIComponent(agentId)}/quarantine/release`, {
+                method: "POST", headers: apprHeaders(), body: JSON.stringify({ reason })
+              });
+              quarantineNotice = "Quarantine released.";
+              await refresh();
+            }
+          } catch (err) {
+            if (err.status === 403 && /two-person approval is on/i.test(err.rawError || err.message)) {
+              operatorTwoPerson = true;
+              try {
+                const res = await guardrailJson("/api/changes", {
+                  method: "POST", headers: apprHeaders(),
+                  body: JSON.stringify({ kind: "release_quarantine", agent_id: agentId, reason })
+                });
+                quarantineNotice = `Proposed quarantine release (${res.id.slice(0, 8)}…) for two-person approval. Switch to a second administrator account in Approvals to approve it.`;
+                void loadApprovals();
+              } catch (propErr) { quarantineError = propErr.message; }
+            } else { quarantineError = err.message; }
+          } finally {
+            quarantineBusy = false;
+            renderQuarantineAndSiemBanner(currentAgentData);
+          }
+        } });
+        children.push(apprEl("div", { class: "inline-actions" }, reasonInput, releaseBtn));
+      }
+      qBanner.replaceChildren(...children);
+    }
+  }
+  if (sBanner) {
+    const siem = data?.siem_features?.features;
+    const silence = Array.isArray(data?.supervisor_silence) ? data.supervisor_silence : [];
+    if (!siem && !silence.length) {
+      sBanner.hidden = true;
+      sBanner.replaceChildren();
+    } else {
+      sBanner.hidden = false;
+      const items = [];
+      if (siem) {
+        const grade = Number(siem.anomaly_grade_15m_permille || 0) / 1000;
+        const refusals = Number(siem.refusal_count_15m ?? siem.openshell_denials_15m ?? siem.openshell_denials_5m ?? 0);
+        const blocks = Number(siem.block_count_15m ?? siem.rg_blocks_15m ?? 0);
+        const rate429 = Number(siem.rate_limit_429_15m ?? siem.upstream_429_15m ?? 0);
+        const novel7d = Number(siem.novel_route_7d ?? (siem.novel_routes_7d || []).length ?? 0);
+        const ageText = relativeAge(Number(data.siem_features.age_ms || 0));
+        items.push(
+          apprEl("div", { style: "display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px" },
+            apprEl("strong", { text: "Live OpenStream / OpenSearch SIEM telemetry" }),
+            makeBadge(`Batch age: ${ageText}`, grade >= 0.4 || refusals >= 3 || blocks >= 2 ? "badge-amber" : "badge-green", false)
+          ),
+          apprEl("p", { class: "quiet-note", style: "margin:6px 0 0", text:
+            `15m OpenShell refusals: ${refusals} · 15m Risk Guard blocks: ${blocks} · 15m HTTP 429s: ${rate429} · OpenSearch RCF ML anomaly grade: ${grade.toFixed(2)} (${siem.anomaly_grade_15m_permille || 0}‰) · 7d novel route flag: ${novel7d}`
+          })
+        );
+      }
+      if (silence.length) {
+        const latest = silence[0];
+        items.push(
+          apprEl("p", { class: "cfg-error", style: "margin:6px 0 0", text:
+            `Tunnel gate alert: ${silence.length} silent-supervisor event(s) recorded (latest on sandbox ${latest.sandbox_id} to ${latest.destination || "unknown"}, ${Math.round(Number(latest.silent_for_ms ?? latest.gap_ms ?? 0) / 1000)}s without L7 telemetry, mode: ${latest.rule_mode || latest.action || "shadow"}).`
+          })
+        );
+      }
+      sBanner.replaceChildren(...items);
+    }
+  }
+}
 // Counts are recorded decisions that are still retained (30 days by default), not "right now" figures; the wording says
 // so. A lock stays in force after the score falls back to 0, so "risk now" can read 0 next to a lock and that is correct.
 const NOT_SEEN_MS = 6 * 3600000;
@@ -6557,7 +6982,7 @@ function riskNowPeak(item) {
 }
 
 function attentionRank(item) {
-  return [Number(item.active_restriction_count || 0), Number(item.max_risk_score || 0), Number(item.denied_count || 0)];
+  return [item.quarantined ? 1 : 0, Number(item.active_restriction_count || 0), Number(item.max_risk_score || 0), Number(item.denied_count || 0)];
 }
 
 function compareAgents(a, b) {
@@ -6779,7 +7204,12 @@ function renderFleetDirectory() {
     c2.append(riskText, bar);
 
     const c3 = document.createElement("td");
-    c3.append(makeBadge(locks > 0 ? `${locks} in force` : "None", locks > 0 ? "badge-red" : "badge-neutral"));
+    if (item.quarantined) {
+      c3.append(makeBadge("Quarantined", "badge-red"));
+      if (locks > 0) c3.append(document.createTextNode(" "), makeBadge(`${locks} lock${locks === 1 ? "" : "s"}`, "badge-red"));
+    } else {
+      c3.append(makeBadge(locks > 0 ? `${locks} in force` : "None", locks > 0 ? "badge-red" : "badge-neutral"));
+    }
 
     const c4 = document.createElement("td");
     c4.textContent = `${denied} / ${item.decision_count}`;
@@ -6911,6 +7341,7 @@ async function agentDetail(id, version) {
     : [];
   lastSeenDecisionIds = new Set(decisions.map(d => d.evaluation?.request_id || d.request?.request_id));
   currentAgentData = data;
+  if (typeof data.two_person_required === "boolean") operatorTwoPerson = data.two_person_required;
   adaptiveStateForAgent(id);
   const guardrails = guardrailState(id);
   if (data.guardrails) {
@@ -7156,6 +7587,27 @@ for (const btn of document.querySelectorAll("#agent-tab-selector [role=tab]")) {
   });
 }
 
+$("quarantine-workload-btn").addEventListener("click", async () => {
+  const agentId = currentAgentData?.agent?.agent_id;
+  if (!agentId || !operatorToken || quarantineBusy) return;
+  const reason = (window.prompt(`Enter an audit reason to quarantine workload ${agentId}:`) || "").trim();
+  if (!reason) return;
+  quarantineBusy = true; quarantineError = ""; quarantineNotice = "";
+  renderQuarantineAndSiemBanner(currentAgentData);
+  try {
+    await guardrailJson(`/api/agents/${encodeURIComponent(agentId)}/quarantine`, {
+      method: "POST", headers: apprHeaders(), body: JSON.stringify({ reason })
+    });
+    quarantineNotice = "Workload quarantined.";
+    await refresh();
+  } catch (err) {
+    quarantineError = err.message;
+  } finally {
+    quarantineBusy = false;
+    renderQuarantineAndSiemBanner(currentAgentData);
+  }
+});
+$("cfg-propose").addEventListener("click", () => { void proposeGuardrails(); });
 $("open-audit-modal-btn").addEventListener("click", () => {
   $("detail").hidden = true;
   renderAuditSummary(currentAgentData);
@@ -7578,7 +8030,8 @@ buildHow();
 // ---- Approvals: two-person changes and suggested baseline changes ---------------------------------------------------------------------------------------------
 const APPR_KINDS = {
   release_quarantine: "Release a quarantine", clear_restriction: "Clear a restriction",
-  disable_two_person: "Turn off two-person approval", baseline_update: "Change a baseline", policy_update: "Update an OpenShell policy"
+  disable_two_person: "Turn off two-person approval", baseline_update: "Change a baseline", policy_update: "Update an OpenShell policy",
+  update_guardrails: "Loosen workload enforcement settings", demote_adaptive_model: "Demote or stop an enforced learned model"
 };
 let apprError = {};
 let apprBusy = false;
@@ -7621,6 +8074,13 @@ function apprChange(change) {
   if (change.kind === "release_quarantine") lines.push(apprEl("li", { text: `Let ${change.target} make calls again.` }));
   if (change.kind === "clear_restriction") lines.push(apprEl("li", {}, "Clear the lock ", apprEl("code", { text: p.scope || "" }), ` on ${change.target}.`));
   if (change.kind === "disable_two_person") lines.push(apprEl("li", { text: "Anyone could then release or clear without a second person." }));
+  if (change.kind === "update_guardrails") {
+    const s = p.settings || {};
+    lines.push(apprEl("li", { text: `Apply enforcement settings on ${change.target} (based on revision ${p.expected_revision ?? 0}): mode=${s.mode || "enforce"}, thresholds=${s.observe_threshold ?? 20}/${s.enforce_threshold ?? 70}, profile=${s.task_profile || "default"}.` }));
+  }
+  if (change.kind === "demote_adaptive_model") {
+    lines.push(apprEl("li", {}, "Set adaptive model ", apprEl("code", { text: p.model_id || "" }), ` on ${change.target} to ${p.mode || "shadow"}.`));
+  }
   if (change.kind === "policy_update") return apprPolicyChange(change);
   return apprEl("ul", { class: "appr-change" }, lines);
 }
@@ -7708,11 +8168,21 @@ function apprCard(change, canAct) {
     apprEl("span", { class: "appr-meta", text: `proposed by ${change.proposer}, ${apprAge(change.proposed_at_ms)}` + (pending ? `, expires in ${Math.max(0, Math.round((change.expires_at_ms - Date.now()) / 3600000))} h` : "") }));
   const card = apprEl("div", { class: "appr-card" }, head, apprEl("div", { class: "appr-meta", text: `Reason: ${change.reason}` }), apprChange(change));
   if (pending) {
+    const isSelfProposed = Boolean(
+      (AUTH.name && String(change.proposer || "").toLowerCase().includes(AUTH.name.toLowerCase()))
+      || (!AUTH.cfg && change.proposer === "local-operator")
+    );
     const approve = apprEl("button", { type: "button", class: "btn btn-primary", text: "Approve", onclick: () => decide(true) });
     const reject = apprEl("button", { type: "button", class: "btn", text: "Reject", onclick: () => decide(false) });
-    if (!canAct) { approve.disabled = true; reject.disabled = true; }
+    if (!canAct || isSelfProposed) approve.disabled = true;
+    if (!canAct) reject.disabled = true;
     card.append(apprEl("div", { class: "appr-actions" }, reason, approve, reject));
-    if (!canAct) card.append(apprEl("div", { class: "appr-meta", text: "Sign in as an administrator (Administrator sign-in) to decide. You cannot approve your own proposal." }));
+    if (isSelfProposed && AUTH.cfg) {
+      const switchBtn = apprEl("button", { type: "button", class: "btn", text: "Switch account (e.g. learningnemo-approver@christopherghannagmail.onmicrosoft.com)", onclick: () => void authStart(true) });
+      card.append(apprEl("div", { class: "appr-meta", style: "margin-top:6px" }, "You proposed this change, so a second administrator must approve it. ", switchBtn));
+    } else if (!canAct) {
+      card.append(apprEl("div", { class: "appr-meta", text: "Sign in as an administrator (Administrator sign-in) to decide. You cannot approve your own proposal." }));
+    }
   } else {
     const done = apprEl("div", { class: "appr-meta" }, apprEl("span", { class: "appr-status", text: change.status }),
       ` ${change.decided_by ? "decided by " + change.decided_by : ""}${change.outcome ? " — " + change.outcome : ""}${change.decision_reason ? " (" + change.decision_reason + ")" : ""}`);
@@ -7785,9 +8255,42 @@ async function loadApprovals() {
     const list = changes.changes || [];
     const pending = list.filter(c => c.status === "pending");
     $("side-approvals-count").textContent = String(pending.length);
+    operatorTwoPerson = Boolean(changes.two_person_required);
     $("appr-mode").textContent = changes.two_person_required
-      ? "Two-person approval is on: releasing a quarantine or clearing a lock needs a proposal and a different approver."
+      ? "Two-person approval is on: releasing a quarantine, clearing a lock, loosening enforcement settings, or demoting an enforced learned model needs a proposal and a different approver (for example learningnemo-approver@christopherghannagmail.onmicrosoft.com)."
       : "Two-person approval is off for quarantines and locks. Baseline changes and OpenShell policy updates always need a second person.";
+    const modeActions = $("appr-mode-actions");
+    if (modeActions) {
+      modeActions.replaceChildren();
+      if (canAct) {
+        if (!changes.two_person_required) {
+          modeActions.append(apprEl("button", { type: "button", class: "btn btn-primary", text: "Enable two-person approval", onclick: async () => {
+            if (apprBusy) return;
+            apprBusy = true;
+            try {
+              await guardrailJson("/api/changes/two-person/enable", { method: "POST", headers: apprHeaders() });
+              operatorTwoPerson = true;
+              apprNotice = "Two-person approval is now enabled.";
+            } catch (err) { apprNotice = err.message; }
+            apprBusy = false;
+            await loadApprovals();
+          } }));
+        } else {
+          modeActions.append(apprEl("button", { type: "button", class: "btn", text: "Propose turning off two-person approval (2-person)", onclick: async () => {
+            if (apprBusy) return;
+            const reason = (window.prompt("Enter a reason to propose turning off two-person approval:") || "").trim();
+            if (!reason) return;
+            apprBusy = true;
+            try {
+              await guardrailJson("/api/changes", { method: "POST", headers: apprHeaders(), body: JSON.stringify({ kind: "disable_two_person", reason }) });
+              apprNotice = "Proposed turning off two-person approval. Switch to a second administrator account (for example learningnemo-approver@christopherghannagmail.onmicrosoft.com) to approve it.";
+            } catch (err) { apprNotice = err.message; }
+            apprBusy = false;
+            await loadApprovals();
+          } }));
+        }
+      }
+    }
     const pendingBox = $("appr-pending");
     pendingBox.replaceChildren(...(pending.length ? pending.map(c => apprCard(c, canAct)) : [apprEl("div", { class: "appr-meta", text: apprNotice || "Nothing is waiting." })]));
     if (pending.length && apprNotice) pendingBox.prepend(apprEl("div", { class: "appr-meta", text: apprNotice }));
@@ -7818,7 +8321,8 @@ function ctlEvidence(e) {
   const add = (key, label) => { if (e[key] !== undefined) parts.push(`${label} ${e[key]}`); };
   add("refused_24h", "refused"); add("would_refuse_24h", "would have refused"); add("scored_but_not_enforceable_24h", "scored but too early to enforce");
   add("seen_24h", "seen"); add("received_24h", "received"); add("applied_24h", "applied"); add("dry_run_24h", "recorded only");
-  add("quarantined_now", "quarantined now");
+  add("quarantined_now", "quarantined now"); add("fresh_features", "fresh SIEM features");
+  add("changed_24h", "changed outcome"); add("would_have_changed_24h", "would have changed outcome");
   if (e.calls_24h !== undefined) parts.push(`of ${e.calls_24h} calls`);
   let text = parts.join(", ");
   if (e.note) text = text ? `${text}. ${e.note}` : e.note;
@@ -7876,6 +8380,10 @@ const REASON_TEXT = {
   behavioral_risk_denied: "Behavioral risk over the block line",
   behavioral_risk_restricted: "Stopped by a lock from an earlier block",
   task_constraint_denied: "Outside the approved task rules",
+  workload_quarantined: "Workload is quarantined by SIEM or an operator",
+  closed_sandbox_epoch: "Sandbox epoch was already closed",
+  adaptive_anomaly_denied: "Blocked by promoted learned behavioral model",
+  supervisor_silent: "Tunnel refused because the sandbox supervisor went silent",
   risk_state_unavailable: "Risk Guard could not answer in time, so it failed closed",
   baseline_insufficient: "Allowed: no behavioral history to compare with yet",
 };
@@ -8017,6 +8525,13 @@ const TASK_RULES = [
   { id: "unapproved_resource", name: "Resource outside the approved list", select: "cfg-rule-resource",
     list: s => s.approved_resources,
     checks: s => { const n = (s.approved_resources || []).length; return `A resource that is not among the ${n} approved resource${n === 1 ? "" : "s"}.`; } },
+  { id: "egress_destination", name: "Egress host outside the approved list (tunnel gate)", select: "cfg-rule-egress",
+    list: s => s.approved_egress_hosts,
+    checks: s => { const n = (s.approved_egress_hosts || []).length; return `An encrypted tunnel to a hostname not among the ${n} approved egress host${n === 1 ? "" : "s"}.`; } },
+  { id: "supervisor_silent", name: "Silent supervisor at the tunnel gate", select: "cfg-rule-silent",
+    checks: () => "A sandbox opening outbound tunnels while its L7 supervisor proxy has stopped reporting requests." },
+  { id: "siem_context", name: "Correlated SIEM & ML anomaly score adjustment", select: "cfg-rule-siem",
+    checks: s => `OpenSearch 15m refusals, blocks, 429s, RCF anomaly grade, and 7d route novelty (capped at ${s.siem_context_max_points ?? 15} pts).` },
 ];
 
 function ruleModeOf(settings, rule) {
@@ -8030,8 +8545,11 @@ function ruleModeOf(settings, rule) {
 function ruleModesPayload(raw) {
   const modes = {};
   if (raw["cfg-rule-hi"] === "shadow") modes.unfamiliar_high_impact = "shadow";
-  if (raw["cfg-rule-action"] !== "shadow") modes.unapproved_action = raw["cfg-rule-action"];
-  if (raw["cfg-rule-resource"] !== "shadow") modes.unapproved_resource = raw["cfg-rule-resource"];
+  if (raw["cfg-rule-action"] && raw["cfg-rule-action"] !== "shadow") modes.unapproved_action = raw["cfg-rule-action"];
+  if (raw["cfg-rule-resource"] && raw["cfg-rule-resource"] !== "shadow") modes.unapproved_resource = raw["cfg-rule-resource"];
+  if (raw["cfg-rule-egress"] && raw["cfg-rule-egress"] !== "shadow") modes.egress_destination = raw["cfg-rule-egress"];
+  if (raw["cfg-rule-silent"] && raw["cfg-rule-silent"] !== "shadow") modes.supervisor_silent = raw["cfg-rule-silent"];
+  if (raw["cfg-rule-siem"] && raw["cfg-rule-siem"] !== "shadow") modes.siem_context = raw["cfg-rule-siem"];
   return Object.keys(modes).length ? { rule_modes: modes } : {};
 }
 

@@ -49,6 +49,9 @@ const SERVICE_ACCOUNT_DIR: &str = "/var/run/secrets/kubernetes.io/serviceaccount
 struct Cache {
     by_ip: HashMap<IpAddr, String>,
     fetched_at: Option<Instant>,
+    /// Per-IP timestamp of the last refresh that still did not find that IP, so one unknown IP cannot hammer the API server
+    /// while a newly created sandbox pod on a different IP can still trigger an immediate refresh.
+    missed_at: HashMap<IpAddr, Instant>,
 }
 
 pub type ListFuture<'a> =
@@ -87,6 +90,7 @@ impl<L: PodLister> CachingResolver<L> {
             cache: tokio::sync::Mutex::new(Cache {
                 by_ip: HashMap::new(),
                 fetched_at: None,
+                missed_at: HashMap::new(),
             }),
         }
     }
@@ -205,16 +209,31 @@ impl<L: PodLister> PodResolver for CachingResolver<L> {
             if fresh && let Some(sandbox) = cache.by_ip.get(&ip) {
                 return Ok(Some(sandbox.clone()));
             }
-            if age.is_none_or(|age| age >= self.min_refresh_gap) {
+            let ip_throttled = cache
+                .missed_at
+                .get(&ip)
+                .is_some_and(|at| at.elapsed() < self.min_refresh_gap);
+            if !fresh || !ip_throttled {
                 match self.lister.list().await {
                     Ok(table) => {
+                        let now = Instant::now();
+                        for mapped_ip in table.keys() {
+                            cache.missed_at.remove(mapped_ip);
+                        }
+                        if !table.contains_key(&ip) {
+                            if cache.missed_at.len() >= 1_024 {
+                                cache.missed_at.clear();
+                            }
+                            cache.missed_at.insert(ip, now);
+                        }
                         cache.by_ip = table;
-                        cache.fetched_at = Some(Instant::now());
+                        cache.fetched_at = Some(now);
                     }
                     Err(error) => {
                         // Nothing old is kept to be served by mistake later.
                         cache.by_ip.clear();
                         cache.fetched_at = None;
+                        cache.missed_at.clear();
                         return Err(error);
                     }
                 }
@@ -337,6 +356,27 @@ mod tests {
             table(&[("10.0.0.5", "sbx-a")]),
         ]);
         assert_eq!(lookup(&r, "10.0.0.6").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_new_sandbox_ip_refreshes_immediately_even_after_another_unknown_ip_was_throttled() {
+        let r = CachingResolver::with_timings(
+            Script(std::sync::Mutex::new(vec![
+                table(&[("10.0.0.5", "sbx-a")]),
+                table(&[("10.0.0.5", "sbx-a"), ("10.0.0.7", "sbx-new")]),
+            ])),
+            Duration::from_secs(5),
+            Duration::from_secs(2),
+        );
+        // Unknown IP 10.0.0.6 triggers the first refresh and is recorded in `missed_at`.
+        assert_eq!(lookup(&r, "10.0.0.6").await.unwrap(), None);
+        // Repeating 10.0.0.6 inside the 2s gap is throttled (does not consume the second scripted refresh).
+        assert_eq!(lookup(&r, "10.0.0.6").await.unwrap(), None);
+        // A different IP (10.0.0.7, a newly created sandbox pod) is not throttled and resolves immediately!
+        assert_eq!(
+            lookup(&r, "10.0.0.7").await.unwrap().as_deref(),
+            Some("sbx-new")
+        );
     }
 
     #[test]

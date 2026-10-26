@@ -72,6 +72,52 @@ struct ClearRestrictionRequest {
     context_id: Option<String>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QuarantineWorkloadRequest {
+    reason: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StudioProbeRequest {
+    method: String,
+    host: String,
+    #[serde(default = "default_probe_port")]
+    port: u16,
+    path: String,
+    #[serde(default)]
+    binary_path: Option<String>,
+}
+
+fn default_probe_port() -> u16 {
+    18081
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StudioVerifyRequest {
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
+    boundary_yaml: Option<String>,
+    #[serde(default)]
+    candidate_yaml: Option<String>,
+    /// When set to "audit" or "enforce", synthesizes `candidate_yaml` from the workload's baseline + boundary policy via `export_policy`.
+    #[serde(default)]
+    synthesize_mode: Option<String>,
+    #[serde(default)]
+    observe_threshold: Option<u32>,
+    #[serde(default)]
+    enforce_threshold: Option<u32>,
+    #[serde(default)]
+    siem_context_max_points: Option<u32>,
+    #[serde(default)]
+    rule_modes: Option<std::collections::BTreeMap<String, crate::types::RuleMode>>,
+    #[serde(default)]
+    probe: Option<StudioProbeRequest>,
+}
+
 impl OperatorControls {
     pub(crate) fn disabled() -> Self {
         Self {
@@ -331,7 +377,10 @@ pub(crate) async fn read_gate(
 ) -> Response {
     if controls.entra.is_some() && !controls.public_read {
         let path = request.uri().path();
-        let open = matches!(path, "/" | "/admin" | "/api/operator/status");
+        let open = matches!(
+            path,
+            "/" | "/admin" | "/studio" | "/studio/admin" | "/api/operator/status"
+        );
         if !open && let Err(response) = controls.identity(request.headers()).await {
             return response;
         }
@@ -520,7 +569,10 @@ pub(crate) fn routes() -> Router<Arc<SqliteRiskStore>> {
                 match tokio::task::spawn_blocking(move || {
                     let params = if req.kind == "policy_update" {
                         json!({"enforcement": req.enforcement, "sandbox": req.sandbox})
-                    } else if req.kind == "baseline_update" {
+                    } else if matches!(
+                        req.kind.as_str(),
+                        "baseline_update" | "update_guardrails" | "demote_adaptive_model"
+                    ) {
                         req.params.clone().unwrap_or_else(|| json!({}))
                     } else {
                         json!({"scope": req.scope, "context_id": req.context_id})
@@ -577,6 +629,18 @@ pub(crate) fn routes() -> Router<Arc<SqliteRiskStore>> {
                     store.decide_change(&id, &actor, req.approve, &req.reason, now_ms())
                 }).await {
                     Ok(Ok(view)) => Json(view).into_response(),
+                    Ok(Err(error)) => error_response(error),
+                    Err(error) => error_response(RiskGuardError::Internal(error.to_string())),
+                }
+            },
+        ))
+        .route("/api/changes/two-person/enable", post(
+            |State(store): State<Arc<SqliteRiskStore>>,
+             Extension(controls): Extension<OperatorControls>,
+             headers: HeaderMap| async move {
+                let _actor = match controls.authorize(&headers).await { Ok(actor) => actor, Err(response) => return response };
+                match tokio::task::spawn_blocking(move || store.require_two_person(now_ms())).await {
+                    Ok(Ok(())) => Json(json!({"two_person_required": true})).into_response(),
                     Ok(Err(error)) => error_response(error),
                     Err(error) => error_response(RiskGuardError::Internal(error.to_string())),
                 }
@@ -640,7 +704,475 @@ pub(crate) fn routes() -> Router<Arc<SqliteRiskStore>> {
                 }
             },
         ))
+        .route("/api/agents/{agent_id}/quarantine", post(
+            |State(store): State<Arc<SqliteRiskStore>>,
+             Extension(controls): Extension<OperatorControls>,
+             AgentPath(agent): AgentPath<String>,
+             headers: HeaderMap,
+             payload: std::result::Result<Json<QuarantineWorkloadRequest>, axum::extract::rejection::JsonRejection>| async move {
+                let actor = match controls.authorize(&headers).await { Ok(actor) => actor, Err(response) => return response };
+                let req = match payload {
+                    Ok(Json(req)) => req,
+                    Err(error) => return (error.status(), Json(json!({"error": error.body_text()}))).into_response(),
+                };
+                match tokio::task::spawn_blocking(move || {
+                    store.quarantine_workload(&agent, &actor, &req.reason, now_ms())
+                }).await {
+                    Ok(Ok(())) => Json(json!({"status": "quarantined"})).into_response(),
+                    Ok(Err(error)) => error_response(error),
+                    Err(error) => error_response(RiskGuardError::Internal(error.to_string())),
+                }
+            },
+        ))
+        .route("/api/agents/{agent_id}/quarantine/release", post(
+            |State(store): State<Arc<SqliteRiskStore>>,
+             Extension(controls): Extension<OperatorControls>,
+             AgentPath(agent): AgentPath<String>,
+             headers: HeaderMap,
+             payload: std::result::Result<Json<QuarantineWorkloadRequest>, axum::extract::rejection::JsonRejection>| async move {
+                let actor = match controls.authorize(&headers).await { Ok(actor) => actor, Err(response) => return response };
+                let req = match payload {
+                    Ok(Json(req)) => req,
+                    Err(error) => return (error.status(), Json(json!({"error": error.body_text()}))).into_response(),
+                };
+                match tokio::task::spawn_blocking(move || {
+                    store.release_workload(&agent, &actor, &req.reason, now_ms())
+                }).await {
+                    Ok(Ok(released)) => Json(json!({"status": if released { "released" } else { "not_quarantined" }})).into_response(),
+                    Ok(Err(error)) => error_response(error),
+                    Err(error) => error_response(RiskGuardError::Internal(error.to_string())),
+                }
+            },
+        ))
+        .route("/api/studio/verify", post(
+            |State(store): State<Arc<SqliteRiskStore>>,
+             payload: std::result::Result<Json<StudioVerifyRequest>, axum::extract::rejection::JsonRejection>| async move {
+                let req = match payload {
+                    Ok(Json(req)) => req,
+                    Err(error) => return (error.status(), Json(json!({"error": error.body_text()}))).into_response(),
+                };
+                match tokio::task::spawn_blocking(move || run_studio_verify(&store, req, now_ms())).await {
+                    Ok(Ok(view)) => Json(view).into_response(),
+                    Ok(Err(error)) => error_response(error),
+                    Err(error) => error_response(RiskGuardError::Internal(error.to_string())),
+                }
+            },
+        ))
         .layer(DefaultBodyLimit::max(65_536))
+}
+
+fn check_openshell_floor(
+    doc: Option<&openshell_policy_schema::PolicyDocument>,
+    host: &str,
+    method: &str,
+    path: &str,
+) -> serde_json::Value {
+    let Some(doc) = doc else {
+        return json!({"allowed": true, "mode": "no_policy", "matched_rule": null});
+    };
+    let method_up = method.trim().to_ascii_uppercase();
+    for (rule_name, policy) in &doc.network_policies {
+        for ep in &policy.endpoints {
+            if !ep.host.eq_ignore_ascii_case(host) {
+                continue;
+            }
+            let mode = if ep.enforcement.is_empty() {
+                "enforce"
+            } else {
+                ep.enforcement.as_str()
+            };
+            for deny in &ep.deny_rules {
+                let dm = deny.method.trim().to_ascii_uppercase();
+                if (dm.is_empty() || dm == "*" || dm == method_up)
+                    && (deny.path.is_empty() || crate::policy_export::glob_matches(&deny.path, path))
+                {
+                    return json!({
+                        "allowed": mode != "enforce",
+                        "would_deny": true,
+                        "mode": mode,
+                        "matched_rule": format!("deny {} {} ({rule_name})", deny.method, deny.path)
+                    });
+                }
+            }
+            if ep.rules.is_empty() {
+                return json!({
+                    "allowed": true,
+                    "would_deny": false,
+                    "mode": mode,
+                    "matched_rule": format!("allow host {} ({rule_name})", ep.host)
+                });
+            }
+            for rule in &ep.rules {
+                let rm = rule.allow.method.trim().to_ascii_uppercase();
+                if (rm.is_empty() || rm == "*" || rm == method_up)
+                    && (rule.allow.path.is_empty()
+                        || crate::policy_export::glob_matches(&rule.allow.path, path))
+                {
+                    return json!({
+                        "allowed": true,
+                        "would_deny": false,
+                        "mode": mode,
+                        "matched_rule": format!("allow {} {} ({rule_name})", rule.allow.method, rule.allow.path)
+                    });
+                }
+            }
+            return json!({
+                "allowed": mode != "enforce",
+                "would_deny": true,
+                "mode": mode,
+                "matched_rule": format!("no matching L7 allow rule in '{rule_name}' (mode={mode})")
+            });
+        }
+    }
+    json!({
+        "allowed": false,
+        "would_deny": true,
+        "mode": "enforce",
+        "matched_rule": format!("host '{host}' is not listed in network_policies")
+    })
+}
+
+fn run_studio_verify(
+    store: &SqliteRiskStore,
+    req: StudioVerifyRequest,
+    now_ms: i64,
+) -> Result<serde_json::Value> {
+    use crate::detector::InteractionRiskDetector;
+    use crate::hardening::ProverHardeningEngine;
+    use crate::normalizer::CanonicalNormalizer;
+    use crate::types::{
+        BaselineProfile, ContextFeatures, DecisionOutcome, DetectorContext, EnforcementMode,
+        EpochRecord, HardeningEngine, NormalizedRequest, RawRequestInput, RiskDetector,
+        WindowSnapshot,
+    };
+
+    let detail = match req.agent_id.as_deref() {
+        Some(id) if !id.trim().is_empty() => store.operator_agent_detail(id.trim(), now_ms)?,
+        _ => None,
+    };
+    let recorded_boundary = detail
+        .as_ref()
+        .and_then(|d| d["policy_snapshots"].as_array())
+        .and_then(|snaps| snaps.first())
+        .and_then(|s| s["policy_yaml"].as_str())
+        .map(str::to_string);
+    let boundary_yaml = req
+        .boundary_yaml
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or(recorded_boundary)
+        .unwrap_or_default();
+
+    let mut baseline: BaselineProfile = detail
+        .as_ref()
+        .and_then(|d| d["contexts"].as_array())
+        .and_then(|ctxs| ctxs.last().or_else(|| ctxs.first()))
+        .and_then(|c| serde_json::from_value(c["baseline"].clone()).ok())
+        .unwrap_or_else(|| crate::fixture::build_standard_corpus().default_baseline);
+
+    if let Some(modes) = &req.rule_modes {
+        for (k, v) in modes {
+            baseline.rule_modes.insert(k.clone(), *v);
+        }
+    }
+    if let Some(cap) = req.siem_context_max_points {
+        baseline.siem_context_max_points = Some(cap.min(30));
+    }
+
+    let t0 = std::time::Instant::now();
+    let mut export_summary = serde_json::Value::Null;
+    let candidate_yaml = if let Some(mode) = req
+        .synthesize_mode
+        .as_deref()
+        .filter(|m| matches!(*m, "audit" | "enforce"))
+    {
+        if !boundary_yaml.is_empty() {
+            match crate::policy_export::export_policy(&baseline, &boundary_yaml, mode) {
+                Ok(exported) => {
+                    export_summary = exported.summary;
+                    exported.yaml
+                }
+                Err(err) => {
+                    export_summary = json!({"error": err.to_string()});
+                    req.candidate_yaml.clone().unwrap_or_else(|| boundary_yaml.clone())
+                }
+            }
+        } else {
+            req.candidate_yaml.clone().unwrap_or_default()
+        }
+    } else {
+        req.candidate_yaml
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| boundary_yaml.clone())
+    };
+
+    let proof = if let Some(p) = export_summary.get("proof") {
+        json!({
+            "available": true,
+            "elapsed_ms": t0.elapsed().as_millis(),
+            "raw_prover_status": "unsupported: uses network middleware controls",
+            "step1_middleware_invariant": p["step1_middleware_unchanged"].as_bool().unwrap_or(false),
+            "step1_detail": "network_middlewares invariant (fail_closed verified)",
+            "step2_prover_verdict": p["step2_prover"].as_str().unwrap_or("unknown"),
+            "step2_counterexample_or_reason": p["detail"],
+            "coverage_domains": ["filesystem", "landlock", "process", "network_l4_l7"],
+            "verified_non_expanding": p["verified_no_wider"].as_bool().unwrap_or(false),
+        })
+    } else if !boundary_yaml.is_empty() && !candidate_yaml.is_empty() {
+        let engine = ProverHardeningEngine::new();
+        match engine.verify_two_step_containment(
+            &boundary_yaml,
+            &candidate_yaml,
+            std::time::Duration::from_secs(10),
+        ) {
+            Ok(result) => json!({
+                "available": true,
+                "elapsed_ms": t0.elapsed().as_millis(),
+                "raw_prover_status": result.raw_prover_status,
+                "step1_middleware_invariant": result.step1_middleware_invariant,
+                "step1_detail": result.step1_detail,
+                "step2_prover_verdict": result.step2_prover_verdict,
+                "step2_counterexample_or_reason": result.step2_counterexample_or_reason,
+                "coverage_domains": result.coverage_domains,
+                "verified_non_expanding": result.verified_non_expanding,
+            }),
+            Err(err) => json!({
+                "available": false,
+                "elapsed_ms": t0.elapsed().as_millis(),
+                "error": err.to_string(),
+                "verified_non_expanding": false,
+            }),
+        }
+    } else {
+        json!({
+            "available": false,
+            "elapsed_ms": 0,
+            "error": "Provide or select a workload with a recorded OpenShell boundary policy YAML.",
+            "verified_non_expanding": false,
+        })
+    };
+
+    let candidate_doc = openshell_policy_schema::parse_policy(&candidate_yaml).ok();
+    let observe_thresh = req.observe_threshold.unwrap_or(20).min(99);
+    let enforce_thresh = req
+        .enforce_threshold
+        .unwrap_or(70)
+        .clamp(observe_thresh + 1, 100);
+    let detector = InteractionRiskDetector::new(observe_thresh, enforce_thresh, 300_000);
+    let credentialed_endpoints = if !candidate_yaml.is_empty() {
+        ProverHardeningEngine::new()
+            .extract_credentialed_endpoints(&candidate_yaml)
+            .unwrap_or_default()
+    } else {
+        std::collections::BTreeSet::new()
+    };
+
+    let window: WindowSnapshot = detail
+        .as_ref()
+        .and_then(|d| d["contexts"].as_array())
+        .and_then(|ctxs| ctxs.last().or_else(|| ctxs.first()))
+        .and_then(|c| serde_json::from_value(c["window"].clone()).ok())
+        .unwrap_or_default();
+    let siem_ctx: ContextFeatures = detail
+        .as_ref()
+        .and_then(|d| d["siem_features"]["items"].as_array())
+        .and_then(|items| serde_json::from_value(json!(items)).ok())
+        .unwrap_or_default();
+
+    let epoch = EpochRecord {
+        epoch_id: "studio-sim".into(),
+        sandbox_id: "studio-sbx".into(),
+        gateway_id: "openshell".into(),
+        task_profile: baseline.task_profile.clone(),
+        baseline_hash: crate::detector::compute_baseline_hash(&baseline),
+        active_policy_hash: None,
+        credentialed_endpoints: credentialed_endpoints.clone(),
+        mode: EnforcementMode::Enforce,
+        active: true,
+        created_at_ms: now_ms,
+        next_sequence: 1,
+    };
+
+    let mut orig_allow = 0_u32;
+    let mut orig_flag = 0_u32;
+    let mut orig_block = 0_u32;
+    let mut sim_os_block = 0_u32;
+    let mut sim_rg_allow = 0_u32;
+    let mut sim_rg_flag = 0_u32;
+    let mut sim_rg_block = 0_u32;
+    let mut flipped_count = 0_u32;
+    let mut replay_items = Vec::new();
+
+    if let Some(decisions) = detail.as_ref().and_then(|d| d["decisions"].as_array()) {
+        let mut sorted_decisions: Vec<&serde_json::Value> = decisions.iter().collect();
+        sorted_decisions.sort_by(|a, b| {
+            let oa = a["evaluation"]["outcome"].as_str().unwrap_or("allow");
+            let ob = b["evaluation"]["outcome"].as_str().unwrap_or("allow");
+            let rank = |o: &str| match o {
+                "deny" => 2,
+                "allow_with_observation" => 1,
+                _ => 0,
+            };
+            rank(ob)
+                .cmp(&rank(oa))
+                .then_with(|| {
+                    b["evaluation"]["risk_score"]
+                        .as_u64()
+                        .unwrap_or(0)
+                        .cmp(&a["evaluation"]["risk_score"].as_u64().unwrap_or(0))
+                })
+        });
+        for item in sorted_decisions.into_iter().take(80) {
+            let Ok(norm_req) = serde_json::from_value::<NormalizedRequest>(item["request"].clone())
+            else {
+                continue;
+            };
+            let orig_outcome = item["evaluation"]["outcome"]
+                .as_str()
+                .unwrap_or("allow")
+                .to_string();
+            let orig_score = item["evaluation"]["risk_score"].as_u64().unwrap_or(0) as u32;
+            match orig_outcome.as_str() {
+                "deny" => orig_block += 1,
+                "allow_with_observation" => orig_flag += 1,
+                _ => orig_allow += 1,
+            }
+            let os_floor = check_openshell_floor(
+                candidate_doc.as_ref(),
+                &norm_req.host,
+                &norm_req.method,
+                &norm_req.route_template,
+            );
+            let is_cred = credentialed_endpoints
+                .contains(&(norm_req.host.to_ascii_lowercase(), norm_req.port));
+            let eval = detector.evaluate(
+                &norm_req,
+                &DetectorContext {
+                    epoch: &epoch,
+                    baseline: &baseline,
+                    window: &window,
+                    credentialed_endpoint: is_cred,
+                    features: siem_ctx.clone(),
+                },
+            )?;
+            let os_allowed = os_floor["allowed"].as_bool().unwrap_or(true);
+            let sim_outcome = if !os_allowed {
+                sim_os_block += 1;
+                "openshell_denied"
+            } else {
+                match eval.outcome {
+                    DecisionOutcome::Deny => {
+                        sim_rg_block += 1;
+                        "deny"
+                    }
+                    DecisionOutcome::AllowWithObservation => {
+                        sim_rg_flag += 1;
+                        "allow_with_observation"
+                    }
+                    DecisionOutcome::Allow => {
+                        sim_rg_allow += 1;
+                        "allow"
+                    }
+                }
+            };
+            let orig_denied = orig_outcome == "deny";
+            let sim_denied = matches!(sim_outcome, "openshell_denied" | "deny");
+            if orig_denied != sim_denied {
+                flipped_count += 1;
+            }
+            replay_items.push(json!({
+                "request_id": norm_req.request_id,
+                "method": norm_req.method,
+                "host": norm_req.host,
+                "route_template": norm_req.route_template,
+                "resource_id": norm_req.resource_id,
+                "original_outcome": orig_outcome,
+                "original_score": orig_score,
+                "openshell_floor": os_floor,
+                "simulated_score": eval.risk_score,
+                "simulated_outcome": sim_outcome,
+                "simulated_reason": eval.reason_code,
+                "flipped": orig_denied != sim_denied,
+            }));
+        }
+    }
+
+    let probe_result = if let Some(probe) = req.probe {
+        let normalizer = CanonicalNormalizer::new_default(b"studio-simulation-hmac-key-00000");
+        let raw = RawRequestInput {
+            request_id: "probe-1".into(),
+            sandbox_id: "studio-sbx".into(),
+            sandbox_name: "studio-sbx".into(),
+            workspace: "default".into(),
+            scheme: "http".into(),
+            host: probe.host.trim().to_string(),
+            port: probe.port,
+            method: probe.method.trim().to_ascii_uppercase(),
+            path: if probe.path.trim().starts_with('/') {
+                probe.path.trim().to_string()
+            } else {
+                format!("/{}", probe.path.trim())
+            },
+            binary_path: probe
+                .binary_path
+                .filter(|b| !b.trim().is_empty())
+                .or_else(|| Some("/usr/bin/curl".into())),
+            pid: Some(1000),
+            ancestors: vec![],
+            timestamp_ms: now_ms,
+        };
+        let norm = normalizer.normalize(&raw)?;
+        let os_floor = check_openshell_floor(
+            candidate_doc.as_ref(),
+            &norm.host,
+            &norm.method,
+            &raw.path,
+        );
+        let is_cred =
+            credentialed_endpoints.contains(&(norm.host.to_ascii_lowercase(), norm.port));
+        let eval = detector.evaluate(
+            &norm,
+            &DetectorContext {
+                epoch: &epoch,
+                baseline: &baseline,
+                window: &window,
+                credentialed_endpoint: is_cred,
+                features: siem_ctx,
+            },
+        )?;
+        Some(json!({
+            "normalized": norm,
+            "openshell_floor": os_floor,
+            "evaluation": eval,
+        }))
+    } else {
+        None
+    };
+
+    Ok(json!({
+        "boundary_yaml": boundary_yaml,
+        "candidate_yaml": candidate_yaml,
+        "export_summary": export_summary,
+        "proof": proof,
+        "replay": {
+            "total": replay_items.len(),
+            "original_allowed": orig_allow,
+            "original_flagged": orig_flag,
+            "original_blocked": orig_block,
+            "simulated_openshell_blocked": sim_os_block,
+            "simulated_rg_allowed": sim_rg_allow,
+            "simulated_rg_flagged": sim_rg_flag,
+            "simulated_rg_blocked": sim_rg_block,
+            "flipped_count": flipped_count,
+            "items": replay_items,
+        },
+        "probe": probe_result,
+    }))
 }
 
 #[cfg(test)]

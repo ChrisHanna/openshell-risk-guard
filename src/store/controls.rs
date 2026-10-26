@@ -404,7 +404,7 @@ impl SqliteRiskStore {
             };
             controls.push(json!({
                 "id": RULE_SIEM_CONTEXT, "source": "siem", "name": "SIEM context (risk features)", "mode": if profiles.is_empty() { "watching" } else { mode },
-                "what": "The SIEM publishes how often OpenShell's policy refused each sandbox, how a workload's refusals compare with the fleet's, and whether several workloads are being refused at once. These can add a bounded number of points (15 by default, 30 at most) to a call's risk score and never subtract. Watching records the points it would have added; enforcing adds them. Missing or old features add nothing, and a call never waits on the SIEM.",
+                "what": "The SIEM publishes 15m OpenShell refusals, Risk Guard blocks, HTTP 429 bursts, OpenSearch Random Cut Forest (RCF) ML anomaly grades, and 7-day route novelty. These rules (R1–R6, including kill-chain probing × novel access synergy) can add a bounded number of points (15 by default, 30 at most) to a call's risk score and never subtract. Watching records the points it would have added; enforcing adds them. Missing or old features add nothing, and a call never waits on the SIEM.",
                 "profiles": profiles.iter().map(|p| json!({"task_profile": p.task_profile, "state": match p.rule_mode(RULE_SIEM_CONTEXT) { RuleMode::Enforce => "enforcing", RuleMode::Shadow => "watching", RuleMode::Off => "off" }, "max_points": crate::detector::siem::effective_max(p.siem_context_max_points)})).collect::<Vec<_>>(),
                 "evidence": {
                     "fresh_features": fresh_features, "newest_batch_age_seconds": newest_age_ms.map(|ms| ms / 1000),

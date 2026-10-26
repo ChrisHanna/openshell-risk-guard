@@ -189,6 +189,7 @@ __SVID_POD_SPEC__
             # Bind each sandbox to a workload derived from the workspace and the principal the
             # gateway authenticated. OpenShell's unauthenticated local-dev user is never accepted.
             - --workload-from-principal
+            - --auto-register-agents
             # Every 30 minutes, train a SHADOW adaptive model on approved windows no model has seen yet. Never approves, promotes or grants maturity.
             - --adaptive-schedule-minutes=30
 __SVID_ARGS__
@@ -285,7 +286,7 @@ __CONSOLE_ENV__
               cpu: 50m
               memory: 64Mi
             limits:
-              cpu: 250m
+              cpu: 1000m
               memory: 256Mi
           volumeMounts:
             - name: data

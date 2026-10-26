@@ -50,6 +50,15 @@ pub struct ApiRouteRule {
     pub high_impact: bool,
     #[serde(default, alias = "resource")]
     pub resource_template: Option<String>,
+    /// Optional allowlisted query parameter names (e.g. `["org_id", "tool"]`) that may be extracted from `?key=value`
+    /// and interpolated into `resource_template` (for RPC-over-HTTP or query-scoped REST APIs). Unlisted query parameters
+    /// and unsafe values are ignored.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        alias = "query_resource_params"
+    )]
+    pub query_params: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +78,7 @@ struct CompiledRouteRule {
     semantic_category: String,
     high_impact: bool,
     resource_template: Option<String>,
+    query_params: Vec<String>,
 }
 
 impl CompiledRouteRule {
@@ -83,6 +93,18 @@ impl CompiledRouteRule {
                 "semantic_category must not be empty".to_string(),
             ));
         }
+        for key in &rule.query_params {
+            if key.trim().is_empty()
+                || key.len() > 64
+                || !key
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+            {
+                return Err(RiskGuardError::InvalidArgument(format!(
+                    "invalid query_params key '{key}'"
+                )));
+            }
+        }
 
         Ok(Self {
             host,
@@ -92,6 +114,7 @@ impl CompiledRouteRule {
             semantic_category: rule.semantic_category,
             high_impact: rule.high_impact,
             resource_template: rule.resource_template,
+            query_params: rule.query_params,
         })
     }
 
@@ -207,11 +230,29 @@ impl CanonicalNormalizer {
         let path_segments = split_canonical_path(&path);
 
         let (route_template, resource_id, high_impact, semantic_category) =
-            if let Some((rule, captures)) = self
+            if let Some((rule, mut captures)) = self
                 .rules
                 .iter()
                 .find_map(|r| r.matches(&host, &method, &path_segments).map(|c| (r, c)))
             {
+                if !rule.query_params.is_empty()
+                    && let Some((_, raw_query)) =
+                        input.path.split('#').next().unwrap_or(&input.path).split_once('?')
+                {
+                    for pair in raw_query.split('&') {
+                        let Some((k, v)) = pair.split_once('=') else {
+                            continue;
+                        };
+                        if rule.query_params.iter().any(|allowed| allowed == k)
+                            && !v.is_empty()
+                            && v.len() <= 128
+                            && v.bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':' | b'/'))
+                        {
+                            captures.entry(k.to_string()).or_insert(v);
+                        }
+                    }
+                }
                 let resource_id = rule.extract_resource_id(&path, &captures);
                 (
                     rule.route_template.clone(),
@@ -1024,5 +1065,30 @@ routes:
             call("other.example", "GET", "/exports/customers").semantic_category,
             "unknown"
         );
+    }
+
+    #[test]
+    fn allowlisted_query_params_interpolate_into_resource_template_without_retaining_unlisted_params()
+     {
+        let yaml = r#"
+version: v1
+routes:
+  - host: mcp.internal
+    method: POST
+    route_template: /mcp
+    semantic_category: read_only_query
+    high_impact: false
+    resource_template: "{org_id}/{tool}"
+    query_params: ["org_id", "tool"]
+"#;
+        let normalizer = CanonicalNormalizer::from_yaml_str(yaml, TEST_KEY).unwrap();
+        let mut req = sample_input(
+            "POST",
+            "/mcp?org_id=payments-prod&tool=list_invoices&secret_token=ignore_me!",
+        );
+        req.host = "mcp.internal".into();
+        let norm = normalizer.normalize(&req).unwrap();
+        assert_eq!(norm.route_template, "/mcp");
+        assert_eq!(norm.resource_id, "payments-prod/list_invoices");
     }
 }

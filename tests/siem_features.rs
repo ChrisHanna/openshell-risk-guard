@@ -363,7 +363,7 @@ async fn only_the_allowed_spiffe_identity_may_post_features_and_the_body_cannot_
 #[test]
 fn only_the_closed_vocabulary_within_its_ranges_is_stored_and_every_refusal_is_counted() {
     let store = store_with(None, None);
-    assert_eq!(VOCABULARY.len(), 10);
+    assert_eq!(VOCABULARY.len(), 11);
     let result = ingest(
         &store,
         START,
@@ -697,6 +697,43 @@ fn each_rule_adds_its_documented_points_when_enforcing_and_only_when_its_conditi
         "{}",
         signal.baseline_summary
     );
+
+    // R5: SIEM ML anomaly detector grade (anomaly_grade_15m_permille): 400..699 adds +3, 700..1000 adds +6.
+    let anomaly_subjects = |grade: u32| {
+        json!([{"kind": "workload", "id": AGENT, "features": {"anomaly_grade_15m_permille": grade}}])
+    };
+    assert_eq!(added(anomaly_subjects(399)), 0);
+    assert_eq!(added(anomaly_subjects(400)), 3);
+    assert_eq!(added(anomaly_subjects(699)), 3);
+    assert_eq!(added(anomaly_subjects(700)), 6);
+
+    // R6: Kill-chain probing × novel credentialed access synergy (+6 when R1 or R5>=500 is active AND the request accesses an unfamiliar resource on a credentialed endpoint).
+    let store_synergy = store_with(Some(RuleMode::Enforce), Some(30));
+    let mut ep = store_synergy.get_active_epoch(SANDBOX).unwrap().unwrap();
+    ep.credentialed_endpoints
+        .insert(("api.github.local".into(), 18443));
+    store_synergy.upsert_epoch(&ep).unwrap();
+    ingest(
+        &store_synergy,
+        START,
+        json!([
+            {"kind": "sandbox", "id": SANDBOX, "features": {"openshell_denials_5m": 4}},
+            {"kind": "workload", "id": AGENT, "features": {"anomaly_grade_15m_permille": 750}}
+        ]),
+    );
+    let novel_cred = store_synergy
+        .evaluate_authenticated(
+            &request("req-synergy", "GET", "unfamiliar-secret-repo", START + 1_000),
+            &InteractionRiskDetector::new_default(),
+            "gateway",
+            true,
+        )
+        .unwrap();
+    let synergy_sig = siem_signal(&novel_cred).expect("siem_context with R1 + R5 + R6");
+    // R1 (+4) + R5 (+6) + R6 (+6) = +16 points on top of base 25 (15 N_r + 10 C) = 41
+    assert_eq!(synergy_sig.contribution, 16, "{synergy_sig:?}");
+    assert!(synergy_sig.observed_summary.contains("R5(+6)"));
+    assert!(synergy_sig.observed_summary.contains("R6(+6)"));
 }
 
 #[test]

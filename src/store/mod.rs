@@ -15,9 +15,9 @@ use crate::error::{Result, RiskGuardError};
 use crate::types::{
     BaselineProfile, BindingAudit, ContextFeatures, DecisionOutcome, DetectorContext,
     EnforcementMode, EpochRecord, HardeningCandidate, NativeObservationSource, NetworkState,
-    NormalizedRequest, REASON_BEHAVIORAL_RISK_RESTRICTED, REASON_WORKLOAD_QUARANTINED,
-    RULE_SIEM_CONTEXT, RatchetAction, RiskDetector, RiskEvaluation, RiskStore, RuleMode,
-    SandboxBinding, SignalContribution, WindowSnapshot,
+    NormalizedRequest, REASON_BEHAVIORAL_RISK_RESTRICTED, REASON_TASK_CONSTRAINT_DENIED,
+    REASON_WORKLOAD_QUARANTINED, RULE_SIEM_CONTEXT, RatchetAction, RiskDetector, RiskEvaluation,
+    RiskStore, RuleMode, SandboxBinding, SignalContribution, WindowSnapshot,
 };
 
 mod adaptive;
@@ -58,6 +58,8 @@ pub const MAX_RETAINED_DECISIONS_PER_EPOCH: usize = 10_000;
 pub struct SqliteRiskStore {
     conn: Arc<Mutex<Connection>>,
     read_conn: Option<Arc<Mutex<Connection>>>,
+    /// In-memory snapshot of `siem_features` so inline request evaluation reads SIEM context in nanoseconds without SQLite queries.
+    siem_cache: Arc<std::sync::RwLock<siem_features::SiemFeatureCache>>,
     /// When set, each sandbox's SPIFFE ID (`spiffe://<domain>/openshell/sandbox/<id>`, the name SPIRE registers it under, see
     /// deploy/aks/sandbox-spiffe.yaml) is shown beside it. It is the name SPIRE assigned; Risk Guard does not receive the certificate.
     sandbox_spiffe_trust_domain: Option<String>,
@@ -152,6 +154,9 @@ impl SqliteRiskStore {
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             read_conn: Some(Arc::new(Mutex::new(read_conn))),
+            siem_cache: Arc::new(std::sync::RwLock::new(
+                siem_features::SiemFeatureCache::default(),
+            )),
             sandbox_spiffe_trust_domain: sandbox_spiffe_trust_domain_from_env(),
             sandbox_spiffe_since_ms: std::env::var("RISK_GUARD_SANDBOX_SPIFFE_SINCE_MS")
                 .ok()
@@ -186,6 +191,9 @@ impl SqliteRiskStore {
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             read_conn: None,
+            siem_cache: Arc::new(std::sync::RwLock::new(
+                siem_features::SiemFeatureCache::new_empty_warmed(),
+            )),
             sandbox_spiffe_trust_domain: None,
             sandbox_spiffe_since_ms: 0,
         })
@@ -241,10 +249,25 @@ impl SqliteRiskStore {
             }
         }
         let agents = identity::agent_inventory(&tx, now_ms)?;
-        let total_agents: i64 =
-            tx.query_row("SELECT COUNT(*) FROM agents", [], |row| row.get(0))?;
+        let total_agents: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM agents WHERE agent_id NOT LIKE 'epprobe-%' AND agent_id NOT LIKE 'auditprobe-%'",
+            [],
+            |row| row.get(0),
+        )?;
         let (lifecycle, connectivity) = lifecycle_overview(&tx, now_ms)?;
         let latency = operations::latency_summary(&tx, now_ms, operations::LATENCY_WINDOW_MS)?;
+        let (fleet_os_denials_1h, fleet_os_denials_5m): (i64, i64) = tx.query_row(
+            "SELECT
+               COALESCE((SELECT SUM(v) FROM (
+                 SELECT MAX(sf.value) AS v FROM siem_features sf
+                 WHERE sf.name = 'openshell_denials_1h' AND sf.expires_at_ms > ?1
+                 GROUP BY COALESCE(sf.sandbox_id, sf.subject_id)
+               )), 0),
+               COALESCE((SELECT MAX(sf.value) FROM siem_features sf
+                 WHERE sf.name = 'fleet_openshell_denials_5m' AND sf.expires_at_ms > ?1), 0)",
+            params![now_ms],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
         tx.commit()?;
         Ok(serde_json::json!({
             "source": "persisted_risk_guard_evidence",
@@ -252,6 +275,10 @@ impl SqliteRiskStore {
             "gateway_connectivity": connectivity,
             "sandbox_lifecycle": lifecycle,
             "decision_latency": latency,
+            "openshell_floor_summary": {
+                "denials_1h": fleet_os_denials_1h,
+                "denials_5m": fleet_os_denials_5m
+            },
             "sandbox_spiffe_trust_domain": self.sandbox_spiffe_trust_domain,
             "sandbox_spiffe_since_ms": self.sandbox_spiffe_since_ms,
             "coverage": "selected_inspected_http_requests_only",
@@ -1692,13 +1719,13 @@ impl SqliteRiskStore {
                 .any(|(h, p)| *p == req.port && h.eq_ignore_ascii_case(&req.host));
 
         // 7. Call detector.evaluate(...).
-        // SIEM risk features: a replay supplies the ones the original decision used; otherwise read the fresh ones from the local table.
+        // SIEM risk features: a replay supplies the ones the original decision used; otherwise read the fresh ones from the in-memory cache (backed by the local table).
         let features = match recorded_features {
             Some(recorded) => recorded.clone(),
             None if baseline.rule_mode(RULE_SIEM_CONTEXT) == RuleMode::Off => {
                 ContextFeatures::default()
             }
-            None => siem_features::load_context(
+            None => self.load_siem_context_cached(
                 &tx,
                 &req.sandbox_id,
                 identity.as_ref().map(|identity| identity.agent_id.as_str()),
@@ -1738,14 +1765,21 @@ impl SqliteRiskStore {
         )?;
 
         // 9. Update window_buckets (1m and 15m buckets anchored at req.timestamp_ms / 60_000 * 60_000).
-        let bucket_start_ms = (req.timestamp_ms / 60_000) * 60_000;
-        let resource_token = if !req.resource_key.is_empty() {
-            req.resource_key.as_str()
-        } else {
-            req.resource_id.as_str()
-        };
-        update_window_bucket(&tx, owner, "1m", bucket_start_ms, resource_token)?;
-        update_window_bucket(&tx, owner, "15m", bucket_start_ms, resource_token)?;
+        // Low-impact unapproved-list denials (REASON_TASK_CONSTRAINT_DENIED with RatchetAction::None) must deny only
+        // that request without inflating velocity/fan-out windows and triggering a route cooldown on approved calls.
+        let unratcheted_task_deny = eval.outcome == DecisionOutcome::Deny
+            && eval.reason_code == REASON_TASK_CONSTRAINT_DENIED
+            && eval.ratchet_action == RatchetAction::None;
+        if !unratcheted_task_deny {
+            let bucket_start_ms = (req.timestamp_ms / 60_000) * 60_000;
+            let resource_token = if !req.resource_key.is_empty() {
+                req.resource_key.as_str()
+            } else {
+                req.resource_id.as_str()
+            };
+            update_window_bucket(&tx, owner, "1m", bucket_start_ms, resource_token)?;
+            update_window_bucket(&tx, owner, "15m", bucket_start_ms, resource_token)?;
+        }
         prune_expired_window_buckets(&tx, owner, req.timestamp_ms)?;
 
         // 10. Apply eval.ratchet_action.
@@ -2032,13 +2066,21 @@ fn query_active_epoch(conn: &Connection, sandbox_id: &str) -> Result<Option<Epoc
     }))
 }
 
+fn baseline_hash_cache()
+-> &'static std::sync::Mutex<std::collections::HashMap<String, (String, BaselineProfile)>> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, (String, BaselineProfile)>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
 fn query_baseline_by_name_or_hash(
     conn: &Connection,
     task_profile: &str,
     baseline_hash: &str,
 ) -> Result<Option<BaselineProfile>> {
     let payload_json: Option<String> = conn
-        .query_row(
+        .prepare_cached(
             "SELECT payload_json
              FROM artifacts
              WHERE artifact_type = 'baseline_profile'
@@ -2047,16 +2089,29 @@ fn query_baseline_by_name_or_hash(
                       created_at_ms DESC,
                       rowid DESC
              LIMIT 1",
-            params![task_profile, baseline_hash],
-            |row| row.get(0),
-        )
+        )?
+        .query_row(params![task_profile, baseline_hash], |row| row.get(0))
         .optional()?;
 
     match payload_json {
         Some(raw) => {
+            if !baseline_hash.is_empty()
+                && let Ok(cache) = baseline_hash_cache().lock()
+                && let Some((cached_raw, cached_profile)) = cache.get(baseline_hash)
+                && *cached_raw == raw
+            {
+                return Ok(Some(cached_profile.clone()));
+            }
             let profile: BaselineProfile = serde_json::from_str(&raw).map_err(|e| {
                 RiskGuardError::Storage(format!("corrupt baseline payload_json: {e}"))
             })?;
+            let actual_hash = crate::detector::compute_baseline_hash(&profile);
+            if let Ok(mut cache) = baseline_hash_cache().lock() {
+                if cache.len() >= 256 {
+                    cache.clear();
+                }
+                cache.insert(actual_hash, (raw, profile.clone()));
+            }
             Ok(Some(profile))
         }
         None => Ok(None),
@@ -2101,7 +2156,7 @@ fn find_active_restriction(
     host_scope: &str,
     timestamp_ms: i64,
 ) -> Result<Option<MatchedRestriction>> {
-    let mut stmt = conn.prepare(&format!(
+    let mut stmt = conn.prepare_cached(&format!(
         "SELECT scope, tier, cooldown_until_ms, strike_count, trigger_request_id
          FROM {}
          WHERE epoch_id = ?1 AND scope IN (?2, ?3, ?4, ?5)
@@ -2175,7 +2230,7 @@ fn query_window_range(
     min_bucket_start_ms: i64,
     max_bucket_start_ms: i64,
 ) -> Result<(u32, u32)> {
-    let mut stmt = conn.prepare(&format!(
+    let mut stmt = conn.prepare_cached(&format!(
         "SELECT req_count, resources_json
          FROM {}
          WHERE epoch_id = ?1
@@ -3524,5 +3579,69 @@ mod tests {
             .map(|d| d.request_id)
             .collect();
         assert_eq!(remaining, vec!["req-1", "req-2", "req-5", "req-6"]);
+    }
+
+    #[test]
+    fn low_impact_unapproved_list_denials_do_not_poison_velocity_or_fanout_windows() {
+        let store = SqliteRiskStore::open_in_memory().expect("open_in_memory");
+        let mut baseline = sample_baseline();
+        baseline.rule_modes.insert(
+            crate::types::RULE_UNAPPROVED_RESOURCE.to_string(),
+            RuleMode::Enforce,
+        );
+        let baseline_hash = store.store_baseline(&baseline).expect("store_baseline");
+        let epoch = EpochRecord {
+            epoch_id: "ep-unapproved-no-poison".to_string(),
+            gateway_id: "gw-test".to_string(),
+            sandbox_id: "sbx-unapproved-no-poison".to_string(),
+            task_profile: baseline.task_profile.clone(),
+            baseline_hash,
+            mode: EnforcementMode::Enforce,
+            active: true,
+            next_sequence: 1,
+            created_at_ms: 1_700_000_000_000,
+            credentialed_endpoints: BTreeSet::new(),
+            active_policy_hash: None,
+        };
+        store.upsert_epoch(&epoch).expect("upsert_epoch");
+        let detector = crate::detector::InteractionRiskDetector::new_default();
+
+        // Issue 30 low-impact unapproved-resource GET requests in the same minute.
+        // Each is denied by RULE_UNAPPROVED_RESOURCE with RatchetAction::None and must not inflate the 1m/15m window buckets.
+        for i in 1..=30 {
+            let mut req = sample_request(
+                &format!("denied-unapproved-{i}"),
+                "sbx-unapproved-no-poison",
+                "GET",
+                "/repos/{owner}/{repo}",
+                &format!("org/unapproved-{i}"),
+                1_700_000_010_000 + i,
+                &format!("fp-denied-{i}"),
+            );
+            req.binary_path = Some("/usr/bin/curl".to_string());
+            let eval = store
+                .evaluate_and_commit_atomic(&req, &detector)
+                .expect("eval denied");
+            assert_eq!(eval.outcome, DecisionOutcome::Deny);
+            assert_eq!(eval.reason_code, REASON_TASK_CONSTRAINT_DENIED);
+            assert_eq!(eval.ratchet_action, RatchetAction::None);
+        }
+
+        // The very next approved GET request must see clean velocity/fan-out windows and be allowed.
+        let mut approved = sample_request(
+            "approved-after-denials",
+            "sbx-unapproved-no-poison",
+            "GET",
+            "/repos/{owner}/{repo}",
+            "org/docs-site",
+            1_700_000_010_100,
+            "fp-approved",
+        );
+        approved.binary_path = Some("/usr/bin/curl".to_string());
+        let eval = store
+            .evaluate_and_commit_atomic(&approved, &detector)
+            .expect("eval approved");
+        assert_eq!(eval.outcome, DecisionOutcome::Allow);
+        assert_eq!(eval.risk_score, 0);
     }
 }

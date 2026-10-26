@@ -234,7 +234,7 @@ pub fn replay(bundle: &ReplayBundle, allow_incomplete: bool) -> Result<ReplayRep
         .find_map(|event| match event {
             ReplayEvent::Decision {
                 guardrail_revision, ..
-            } => *guardrail_revision,
+            } => Some(guardrail_revision.unwrap_or(0)),
             ReplayEvent::Clearance { .. } => None,
         })
         .unwrap_or(0);

@@ -25,6 +25,12 @@ pub struct AgentGuardrails {
     /// serialized, so settings saved before rule modes existed keep their hash.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub rule_modes: BTreeMap<String, RuleMode>,
+    /// Optional cap on points contributed by the `siem_context` rule (0..=30; default 15).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub siem_context_max_points: Option<u32>,
+    /// Hostnames or `*.example.com` wildcards approved at the outer tunnel gate and control-plane policy check.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub approved_egress_hosts: BTreeSet<String>,
     pub max_req_1m_p95: u32,
     pub max_req_1m_p99: u32,
     pub max_distinct_resources_15m_p95: u32,
@@ -84,6 +90,8 @@ impl AgentGuardrails {
             allowed_action_classes: baseline.allowed_action_classes.clone(),
             forbid_unfamiliar_high_impact: baseline.forbid_unfamiliar_high_impact,
             rule_modes: baseline.rule_modes.clone(),
+            siem_context_max_points: baseline.siem_context_max_points,
+            approved_egress_hosts: baseline.approved_egress_hosts.clone(),
             max_req_1m_p95: baseline.max_req_1m_p95,
             max_req_1m_p99: baseline.max_req_1m_p99,
             max_distinct_resources_15m_p95: baseline.max_distinct_resources_15m_p95,
@@ -115,6 +123,39 @@ impl AgentGuardrails {
                 return Err(RiskGuardError::InvalidArgument(
                     "turn the high-impact rule off with forbid_unfamiliar_high_impact, not with a rule mode".into(),
                 ));
+            }
+        }
+        if let Some(points) = self.siem_context_max_points
+            && points > 30
+        {
+            return Err(RiskGuardError::InvalidArgument(
+                "siem_context_max_points may be at most 30".into(),
+            ));
+        }
+        if self.approved_egress_hosts.len() > 256 {
+            return Err(RiskGuardError::InvalidArgument(
+                "approved_egress_hosts is limited to 256 entries".into(),
+            ));
+        }
+        for host in &self.approved_egress_hosts {
+            let name = host.strip_prefix("*.").unwrap_or(host);
+            let valid = !name.is_empty()
+                && name.len() <= 253
+                && name.contains('.')
+                && name.parse::<std::net::IpAddr>().is_err()
+                && name.split('.').all(|label| {
+                    !label.is_empty()
+                        && label.len() <= 63
+                        && !label.starts_with('-')
+                        && !label.ends_with('-')
+                        && label
+                            .bytes()
+                            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                });
+            if !valid {
+                return Err(RiskGuardError::InvalidArgument(format!(
+                    "approved_egress_hosts entry '{host}' must be a lowercase hostname or '*.example.com' wildcard, not an IP address"
+                )));
             }
         }
         envelope(
@@ -208,11 +249,105 @@ impl AgentGuardrails {
         effective.allowed_action_classes = self.allowed_action_classes.clone();
         effective.forbid_unfamiliar_high_impact = self.forbid_unfamiliar_high_impact;
         effective.rule_modes = self.rule_modes.clone();
+        if self.siem_context_max_points.is_some() {
+            effective.siem_context_max_points = self.siem_context_max_points;
+        }
+        if !self.approved_egress_hosts.is_empty() || baseline.approved_egress_hosts.is_empty() {
+            effective.approved_egress_hosts = self.approved_egress_hosts.clone();
+        }
         effective.max_req_1m_p95 = self.max_req_1m_p95;
         effective.max_req_1m_p99 = self.max_req_1m_p99;
         effective.max_distinct_resources_15m_p95 = self.max_distinct_resources_15m_p95;
         effective.max_distinct_resources_15m_p99 = self.max_distinct_resources_15m_p99;
         effective
+    }
+
+    /// Whether `self` loosens protection compared to `previous` (given the underlying `base` profile for default rule modes).
+    /// Returns `Some(reason)` when any control is weakened, or `None` when the update only tightens or keeps protection equal.
+    #[must_use]
+    pub fn loosens(&self, previous: &Self, base: &BaselineProfile) -> Option<&'static str> {
+        if previous.mode == EnforcementMode::Enforce && self.mode == EnforcementMode::Observe {
+            return Some("switching guardrail mode from enforce to observe");
+        }
+        if self.enforce_threshold > previous.enforce_threshold
+            || self.observe_threshold > previous.observe_threshold
+        {
+            return Some("raising a risk score threshold");
+        }
+        if self.cooldown_seconds < previous.cooldown_seconds {
+            return Some("shortening the cooldown window");
+        }
+        if previous.forbid_unfamiliar_high_impact && !self.forbid_unfamiliar_high_impact {
+            return Some("disabling forbid_unfamiliar_high_impact");
+        }
+        if self.max_req_1m_p95 > previous.max_req_1m_p95
+            || self.max_req_1m_p99 > previous.max_req_1m_p99
+            || self.max_distinct_resources_15m_p95 > previous.max_distinct_resources_15m_p95
+            || self.max_distinct_resources_15m_p99 > previous.max_distinct_resources_15m_p99
+        {
+            return Some("raising rate or fan-out limits");
+        }
+        // An empty approved list means "not specified" (matches everything), so emptying a non-empty list or adding new entries loosens it.
+        if (!previous.approved_resources.is_empty() && self.approved_resources.is_empty())
+            || (!previous.approved_resources.is_empty()
+                && !self.approved_resources.is_subset(&previous.approved_resources))
+        {
+            return Some("broadening approved resources");
+        }
+        if (!previous.allowed_action_classes.is_empty() && self.allowed_action_classes.is_empty())
+            || (!previous.allowed_action_classes.is_empty()
+                && !self
+                    .allowed_action_classes
+                    .is_subset(&previous.allowed_action_classes))
+        {
+            return Some("broadening allowed action classes");
+        }
+        if (!previous.approved_egress_hosts.is_empty() && self.approved_egress_hosts.is_empty())
+            || (!previous.approved_egress_hosts.is_empty()
+                && !self
+                    .approved_egress_hosts
+                    .is_subset(&previous.approved_egress_hosts))
+        {
+            return Some("broadening approved egress hosts");
+        }
+        let prev_siem_cap = previous
+            .siem_context_max_points
+            .or(base.siem_context_max_points)
+            .unwrap_or(15);
+        let next_siem_cap = self
+            .siem_context_max_points
+            .or(base.siem_context_max_points)
+            .unwrap_or(15);
+        if next_siem_cap < prev_siem_cap {
+            return Some("lowering the SIEM context score cap");
+        }
+        let rank = |mode: RuleMode| match mode {
+            RuleMode::Off => 0_u8,
+            RuleMode::Shadow => 1_u8,
+            RuleMode::Enforce => 2_u8,
+        };
+        let prev_live = previous.apply_live_baseline(base);
+        let next_live = self.apply_live_baseline(base);
+        for rule in CONFIGURABLE_RULES {
+            if rank(next_live.rule_mode(rule)) < rank(prev_live.rule_mode(rule)) {
+                return Some("weakening a guardrail rule mode");
+            }
+        }
+        if let (Some(prev_fs), Some(next_fs)) = (&previous.filesystem, &self.filesystem) {
+            let prev_ro: BTreeSet<_> = prev_fs.read_only.iter().collect();
+            let next_ro: BTreeSet<_> = next_fs.read_only.iter().collect();
+            let prev_rw: BTreeSet<_> = prev_fs.read_write.iter().collect();
+            let next_rw: BTreeSet<_> = next_fs.read_write.iter().collect();
+            if (!prev_fs.include_workdir && next_fs.include_workdir)
+                || !next_rw.is_subset(&prev_rw)
+                || !next_ro.is_subset(&prev_ro.union(&prev_rw).copied().collect())
+            {
+                return Some("broadening filesystem guardrails");
+            }
+        } else if previous.filesystem.is_some() && self.filesystem.is_none() {
+            return Some("removing filesystem guardrails");
+        }
+        None
     }
 }
 

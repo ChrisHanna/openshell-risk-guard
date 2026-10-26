@@ -46,14 +46,44 @@ function Invoke-Graph([string]$Method, [string]$Uri, $Body) {
     } finally { Remove-Item -Force $file -ErrorAction SilentlyContinue }
 }
 
+function Resolve-EntraObjectId([string]$Identity) {
+    $trimmed = $Identity.Trim()
+    if ($trimmed -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') {
+        return $trimmed.ToLowerInvariant()
+    }
+    $candidates = @($trimmed)
+    if ($trimmed -match '^([^@]+)\.christopherghannagmailcom@onmicrosoft\.com$') {
+        $candidates += "$($Matches[1])@christopherghannagmail.onmicrosoft.com"
+    }
+    foreach ($candidate in $candidates) {
+        $resolved = Invoke-Native az @('ad', 'user', 'show', '--id', $candidate, '--query', 'id', '-o', 'tsv') -AllowFailure
+        if ($resolved) {
+            $guid = ($resolved | Select-Object -First 1).Trim()
+            if ($guid -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') {
+                Write-Note "resolved '$Identity' -> object ID $($guid.ToLowerInvariant())"
+                return $guid.ToLowerInvariant()
+            }
+        }
+    }
+    throw "Not an object ID (a GUID) and could not resolve Entra user: $Identity"
+}
+
 $tenant = (Invoke-Native az @('account', 'show', '--query', 'tenantId', '-o', 'tsv') | Select-Object -First 1).Trim()
 if (-not $AdminObjectId) {
-    $AdminObjectId = @((Invoke-Native az @('ad', 'signed-in-user', 'show', '--query', 'id', '-o', 'tsv') | Select-Object -First 1).Trim())
+    $signedIn = (Invoke-Native az @('ad', 'signed-in-user', 'show', '--query', 'id', '-o', 'tsv') | Select-Object -First 1).Trim()
+    $AdminObjectId = @($signedIn)
     Write-Note "administrator: the account you are signed in with (object ID $($AdminObjectId[0]))"
+    $secondApprover = Invoke-Native az @('ad', 'user', 'show', '--id', 'learningnemo-approver@christopherghannagmail.onmicrosoft.com', '--query', 'id', '-o', 'tsv') -AllowFailure
+    if ($secondApprover) {
+        $secondGuid = ($secondApprover | Select-Object -First 1).Trim()
+        if ($secondGuid -and ($AdminObjectId -notcontains $secondGuid)) {
+            $AdminObjectId += $secondGuid
+            Write-Note "second approver administrator: learningnemo-approver@christopherghannagmail.onmicrosoft.com (object ID $secondGuid)"
+        }
+    }
 }
-foreach ($oid in @($AdminObjectId) + @($ViewerObjectId)) {
-    if ($oid -and $oid -notmatch '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') { throw "Not an object ID (a GUID): $oid" }
-}
+$AdminObjectId = @($AdminObjectId | Where-Object { $_ } | ForEach-Object { Resolve-EntraObjectId $_ } | Select-Object -Unique)
+$ViewerObjectId = @($ViewerObjectId | Where-Object { $_ } | ForEach-Object { Resolve-EntraObjectId $_ } | Select-Object -Unique)
 $consoleHost = Get-StateValue 'consoleHost'
 if (-not $consoleHost) { throw 'The console address is not recorded yet. Run 09-expose-console.ps1 once first, then re-run this script.' }
 

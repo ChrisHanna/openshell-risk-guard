@@ -86,8 +86,21 @@ fn authorized(headers: &HeaderMap, digest: &[u8; 32]) -> bool {
         })
 }
 
-/// A client that presents the current SVID. Built per request so a rotated certificate is used at once.
+type ClientCacheKey = (PathBuf, PathBuf, PathBuf);
+type ClientCacheEntry = ([u8; 32], reqwest::Client);
+
+fn client_cache() -> &'static std::sync::Mutex<std::collections::HashMap<ClientCacheKey, ClientCacheEntry>> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<ClientCacheKey, ClientCacheEntry>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// A client that presents the current SVID. Reuses the cached TLS client and connection pool while the SVID and CA bytes are unchanged,
+/// and rebuilds at once when `spiffe-helper` rotates the certificate on disk.
 pub(crate) fn mtls_client(config: &ForwarderConfig) -> Result<reqwest::Client> {
+    use sha2::Digest;
+
     let read = |path: &PathBuf, what: &str| {
         std::fs::read(path).map_err(|error| {
             RiskGuardError::Internal(format!(
@@ -102,9 +115,29 @@ pub(crate) fn mtls_client(config: &ForwarderConfig) -> Result<reqwest::Client> {
         identity.push(10); // a newline
     }
     identity.extend_from_slice(&read(&config.svid_key, "SVID key")?);
-    let ca = reqwest::Certificate::from_pem(&read(&config.server_ca, "server CA")?)
+    let ca_pem = read(&config.server_ca, "server CA")?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(&identity);
+    hasher.update(b"\0");
+    hasher.update(&ca_pem);
+    let fingerprint: [u8; 32] = hasher.finalize().into();
+    let cache_key = (
+        config.svid_cert.clone(),
+        config.svid_key.clone(),
+        config.server_ca.clone(),
+    );
+
+    if let Ok(cache) = client_cache().lock()
+        && let Some((cached_fp, cached_client)) = cache.get(&cache_key)
+        && *cached_fp == fingerprint
+    {
+        return Ok(cached_client.clone());
+    }
+
+    let ca = reqwest::Certificate::from_pem(&ca_pem)
         .map_err(|error| RiskGuardError::Internal(format!("server CA: {}", chain(&error))))?;
-    reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .https_only(true)
         .tls_built_in_root_certs(false)
         .add_root_certificate(ca)
@@ -114,7 +147,15 @@ pub(crate) fn mtls_client(config: &ForwarderConfig) -> Result<reqwest::Client> {
         )
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .map_err(|error| RiskGuardError::Internal(format!("client: {}", chain(&error))))
+        .map_err(|error| RiskGuardError::Internal(format!("client: {}", chain(&error))))?;
+
+    if let Ok(mut cache) = client_cache().lock() {
+        if cache.len() >= 64 {
+            cache.clear();
+        }
+        cache.insert(cache_key, (fingerprint, client.clone()));
+    }
+    Ok(client)
 }
 
 async fn webhook(State(state): State<State_>, headers: HeaderMap, body: Bytes) -> Response {
@@ -142,10 +183,18 @@ async fn webhook(State(state): State<State_>, headers: HeaderMap, body: Bytes) -
             json!({"error": "only the action \"quarantine\" is forwarded"}),
         );
     }
-    let client = match mtls_client(&state.config) {
-        Ok(client) => client,
-        Err(error) => {
+    let cfg = Arc::clone(&state.config);
+    let client = match tokio::task::spawn_blocking(move || mtls_client(&cfg)).await {
+        Ok(Ok(client)) => client,
+        Ok(Err(error)) => {
             tracing::error!(%error, "forwarder: no usable identity");
+            return reply(
+                StatusCode::BAD_GATEWAY,
+                json!({"error": "the forwarder has no usable SVID yet"}),
+            );
+        }
+        Err(error) => {
+            tracing::error!(%error, "forwarder: SVID loader task failed");
             return reply(
                 StatusCode::BAD_GATEWAY,
                 json!({"error": "the forwarder has no usable SVID yet"}),

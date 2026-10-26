@@ -348,6 +348,8 @@ impl SqliteRiskStore {
         identifier(agent_id, "agent_id")?;
         identifier(agent_revision, "agent_revision")?;
         identifier(run_id, "run_id")?;
+        let default_run_prefix = format!("run-{sandbox_id}");
+        let mut effective_run_id = run_id.to_string();
         let (epoch, run_exists) = {
             let mut conn = self.lock_conn()?;
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -388,12 +390,42 @@ impl SqliteRiskStore {
                     "workload '{agent_id}' belongs to workspace '{owner_workspace}', not '{workspace}'"
                 )));
             }
+            // If the run_id is the default `run-{sandbox_id}` and a previous run with that ID already ended (or froze its
+            // capture session when the earlier sandbox was deleted), advance to the next unused generation `run-{sandbox_id}-{n}`.
+            if effective_run_id == default_run_prefix {
+                for generation in 1..=10_000_u32 {
+                    let candidate = if generation == 1 {
+                        default_run_prefix.clone()
+                    } else {
+                        format!("{default_run_prefix}-{generation}")
+                    };
+                    let state: Option<(Option<i64>, bool)> = tx
+                        .query_row(
+                            "SELECT r.ended_at_ms, EXISTS(SELECT 1 FROM adaptive_sessions s WHERE s.run_id = r.run_id)
+                             FROM agent_runs r WHERE r.run_id = ?1",
+                            params![candidate],
+                            |row| Ok((row.get(0)?, row.get(1)?)),
+                        )
+                        .optional()?;
+                    match state {
+                        None => {
+                            effective_run_id = candidate;
+                            break;
+                        }
+                        Some((None, false)) => {
+                            effective_run_id = candidate;
+                            break;
+                        }
+                        Some(_) => continue,
+                    }
+                }
+            }
             let run_owner: Option<(String, String)> = tx
                 .query_row(
                     "SELECT c.agent_id, c.agent_revision FROM agent_runs r
                      JOIN scoring_contexts c ON c.context_id = r.context_id
                      WHERE r.run_id = ?1",
-                    params![run_id],
+                    params![effective_run_id],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .optional()?;
@@ -429,13 +461,13 @@ impl SqliteRiskStore {
         if !run_exists {
             self.create_agent_run(
                 agent_id,
-                run_id,
+                &effective_run_id,
                 agent_revision,
                 &epoch.task_profile,
                 epoch.mode,
             )?;
         }
-        self.bind_agent_run(run_id, sandbox_id, gateway_id)?;
+        self.bind_agent_run(&effective_run_id, sandbox_id, gateway_id)?;
         Ok(())
     }
 
@@ -477,7 +509,7 @@ impl SqliteRiskStore {
     }
 
     pub fn operator_agent_detail(&self, agent_id: &str, now_ms: i64) -> Result<Option<Value>> {
-        let mut conn = self.lock_conn()?;
+        let mut conn = self.lock_read_conn()?;
         let tx = conn.transaction()?;
         let agent = tx.query_row(
             "SELECT agent_id, display_name, created_at_ms FROM agents WHERE agent_id = ?1",
@@ -578,16 +610,39 @@ impl SqliteRiskStore {
         }
         let decisions = {
             let mut stmt = tx.prepare(
-                "SELECT d.normalized_request_json, d.evaluation_json, i.run_id, c.context_id, c.agent_revision,
+                "WITH recent_ids AS (
+                     SELECT d.rowid AS rid
+                     FROM decision_identity i JOIN decisions d USING(epoch_id, request_id)
+                     JOIN agent_runs r ON r.run_id = i.run_id
+                     JOIN scoring_contexts c ON c.context_id = r.context_id
+                     WHERE c.agent_id = ?1
+                     ORDER BY d.created_at_ms DESC, d.rowid DESC LIMIT 100
+                 ),
+                 risky_ids AS (
+                     SELECT d.rowid AS rid
+                     FROM decision_identity i JOIN decisions d USING(epoch_id, request_id)
+                     JOIN agent_runs r ON r.run_id = i.run_id
+                     JOIN scoring_contexts c ON c.context_id = r.context_id
+                     WHERE c.agent_id = ?1 AND (d.outcome != 'allow' OR d.risk_score >= 20)
+                     ORDER BY d.created_at_ms DESC, d.rowid DESC LIMIT 40
+                 ),
+                 chosen AS (
+                     SELECT rid FROM recent_ids
+                     UNION
+                     SELECT rid FROM risky_ids
+                 )
+                 SELECT d.normalized_request_json, d.evaluation_json, i.run_id, c.context_id, c.agent_revision,
                         g.revision, s.settings_json, s.settings_hash
-                 FROM decision_identity i JOIN decisions d USING(epoch_id, request_id)
+                 FROM chosen ch
+                 JOIN decisions d ON d.rowid = ch.rid
+                 JOIN decision_identity i USING(epoch_id, request_id)
                  JOIN agent_runs r ON r.run_id = i.run_id
                  JOIN scoring_contexts c ON c.context_id = r.context_id
                  LEFT JOIN decision_guardrail_revisions g
                    ON g.epoch_id = d.epoch_id AND g.request_id = d.request_id
                  LEFT JOIN agent_guardrail_revisions s
                    ON s.agent_id = g.agent_id AND s.revision = g.revision
-                 WHERE c.agent_id = ?1 ORDER BY d.created_at_ms DESC, d.rowid DESC LIMIT 100",
+                 ORDER BY d.created_at_ms DESC, d.rowid DESC",
             )?;
             let rows = stmt.query_map(params![agent_id], |row| {
                 Ok((
@@ -744,9 +799,7 @@ impl SqliteRiskStore {
             for row in rows {
                 let (id, sandbox_id, policy_hash, policy_yaml, source, captured_at_ms, run_id) =
                     row?;
-                let parsed = openshell_policy_schema::parse_policy(&policy_yaml)
-                    .ok()
-                    .and_then(|doc| serde_json::to_value(doc).ok());
+                let parsed = parsed_policy_cached(&policy_hash, &policy_yaml);
                 snaps.push(json!({
                     "id": id,
                     "sandbox_id": sandbox_id,
@@ -761,16 +814,185 @@ impl SqliteRiskStore {
             snaps
         };
         let guardrails = super::guardrails::query_view(&tx, agent_id, now_ms)?;
+        let mut sandbox_ids = Vec::new();
+        for run in &runs {
+            if let Some(sbs) = run["sandboxes"].as_array() {
+                for sb in sbs {
+                    if let Some(sb_id) = sb["sandbox_id"].as_str()
+                        && !sandbox_ids.iter().any(|s| s == sb_id)
+                    {
+                        sandbox_ids.push(sb_id.to_string());
+                    }
+                }
+            }
+        }
+        let quarantine = tx
+            .query_row(
+                "SELECT agent_id, reason, operator, quarantined_at_ms, expires_at_ms
+                 FROM workload_quarantine
+                 WHERE agent_id = ?1 AND (expires_at_ms IS NULL OR expires_at_ms > ?2)
+                 ORDER BY quarantined_at_ms DESC LIMIT 1",
+                params![agent_id, now_ms],
+                |row| {
+                    Ok(json!({
+                        "agent_id": row.get::<_, String>(0)?,
+                        "reason": row.get::<_, String>(1)?,
+                        "operator": row.get::<_, String>(2)?,
+                        "quarantined_at_ms": row.get::<_, i64>(3)?,
+                        "expires_at_ms": row.get::<_, Option<i64>>(4)?,
+                    }))
+                },
+            )
+            .optional()?;
+        let primary_sandbox = sandbox_ids.first().map_or("", String::as_str);
+        let ctx_features =
+            self.load_siem_context_cached(&tx, primary_sandbox, Some(agent_id), now_ms)?;
+        let mut sandbox_denials = Vec::new();
+        let mut total_os_1h = 0_u32;
+        let mut total_os_5m = 0_u32;
+        let mut total_os_wb = 0_u32;
+        {
+            let mut stmt = tx.prepare(
+                "SELECT COALESCE(sf.sandbox_id, sf.subject_id) AS sbx,
+                        MAX(CASE WHEN sf.name = 'openshell_denials_1h' THEN sf.value ELSE 0 END) AS d1h,
+                        MAX(CASE WHEN sf.name = 'openshell_denials_5m' THEN sf.value ELSE 0 END) AS d5m,
+                        MAX(CASE WHEN sf.name = 'openshell_would_block_5m' THEN sf.value ELSE 0 END) AS wb5m,
+                        MAX(sf.generated_at_ms) AS gen_ms
+                 FROM siem_features sf
+                 WHERE sf.agent_id = ?1 AND sf.expires_at_ms > ?2
+                   AND sf.name IN ('openshell_denials_1h', 'openshell_denials_5m', 'openshell_would_block_5m')
+                 GROUP BY COALESCE(sf.sandbox_id, sf.subject_id)
+                 ORDER BY d1h DESC, d5m DESC",
+            )?;
+            let rows = stmt.query_map(params![agent_id, now_ms], |row| {
+                let sbx: String = row.get(0)?;
+                let d1h = u32::try_from(row.get::<_, i64>(1)?).unwrap_or(0);
+                let d5m = u32::try_from(row.get::<_, i64>(2)?).unwrap_or(0);
+                let wb5m = u32::try_from(row.get::<_, i64>(3)?).unwrap_or(0);
+                let gen_ms: i64 = row.get(4)?;
+                Ok((sbx, d1h, d5m, wb5m, gen_ms))
+            })?;
+            for r in rows {
+                let (sbx, d1h, d5m, wb5m, gen_ms) = r?;
+                total_os_1h = total_os_1h.saturating_add(d1h);
+                total_os_5m = total_os_5m.saturating_add(d5m);
+                total_os_wb = total_os_wb.saturating_add(wb5m);
+                if d1h > 0 || d5m > 0 || wb5m > 0 {
+                    sandbox_denials.push(json!({
+                        "sandbox_id": sbx,
+                        "openshell_denials_1h": d1h,
+                        "openshell_denials_5m": d5m,
+                        "openshell_would_block_5m": wb5m,
+                        "generated_at_ms": gen_ms
+                    }));
+                }
+            }
+        }
+        let siem_features = if ctx_features.is_empty() && sandbox_denials.is_empty() {
+            None
+        } else {
+            let mut map = std::collections::BTreeMap::new();
+            let mut age_ms = 0_i64;
+            for item in ctx_features.as_slice() {
+                let current = map.entry(item.name.clone()).or_insert(0_u32);
+                *current = (*current).max(item.value);
+                age_ms = age_ms.max(item.age_ms);
+            }
+            if total_os_1h > 0 {
+                let e = map.entry("openshell_denials_1h".to_string()).or_insert(0);
+                *e = (*e).max(total_os_1h);
+            }
+            if total_os_5m > 0 {
+                let e = map.entry("openshell_denials_5m".to_string()).or_insert(0);
+                *e = (*e).max(total_os_5m);
+            }
+            if total_os_wb > 0 {
+                let e = map.entry("openshell_would_block_5m".to_string()).or_insert(0);
+                *e = (*e).max(total_os_wb);
+            }
+            Some(json!({
+                "features": map,
+                "items": ctx_features.as_slice(),
+                "sandbox_denials": sandbox_denials,
+                "age_ms": age_ms,
+                "stale": false
+            }))
+        };
+        let supervisor_silence = {
+            let mut events = Vec::new();
+            let mut stmt = tx.prepare(
+                "SELECT s.sandbox_id, s.destination, s.silent_ms, s.mode, s.at_ms
+                 FROM supervisor_silence_events s
+                 WHERE EXISTS (
+                     SELECT 1 FROM epochs e
+                     JOIN epoch_bindings b ON b.epoch_id = e.epoch_id
+                     JOIN agent_runs r ON r.run_id = b.run_id
+                     JOIN scoring_contexts c ON c.context_id = r.context_id
+                     WHERE c.agent_id = ?1 AND e.sandbox_id = s.sandbox_id
+                 )
+                 ORDER BY s.at_ms DESC LIMIT 20",
+            )?;
+            let rows = stmt.query_map(params![agent_id], |row| {
+                Ok(json!({
+                    "sandbox_id": row.get::<_, String>(0)?,
+                    "destination": row.get::<_, String>(1)?,
+                    "silent_for_ms": row.get::<_, i64>(2)?,
+                    "rule_mode": row.get::<_, String>(3)?,
+                    "at_ms": row.get::<_, i64>(4)?,
+                }))
+            })?;
+            for row in rows {
+                events.push(row?);
+            }
+            events
+        };
+        let two_person_required: bool = tx
+            .query_row(
+                "SELECT value FROM service_settings WHERE name = 'two_person_required'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .is_some_and(|v| v == "1");
         tx.commit()?;
         Ok(Some(json!({
             "agent": agent, "contexts": contexts, "runs": runs, "decisions": decisions,
             "recommendations": recommendations, "recorded_coverage_gaps": recorded_coverage_gaps,
             "policy_snapshots": policy_snapshots,
             "guardrails": guardrails,
+            "quarantine": quarantine,
+            "siem_features": siem_features,
+            "supervisor_silence": supervisor_silence,
+            "two_person_required": two_person_required,
             "limits": {"contexts": 100, "runs": 100, "sandboxes_per_run": 100, "decisions": 100,
                 "recommendations": 20, "coverage_gaps": 100, "policy_snapshots": 50}
         })))
     }
+}
+
+fn parsed_policy_cached(policy_hash: &str, policy_yaml: &str) -> Option<Value> {
+    use std::collections::HashMap;
+    use std::sync::{OnceLock, RwLock};
+    static CACHE: OnceLock<RwLock<HashMap<String, Option<Value>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| RwLock::new(HashMap::new()));
+    if !policy_hash.is_empty()
+        && let Ok(guard) = cache.read()
+        && let Some(cached) = guard.get(policy_hash)
+    {
+        return cached.clone();
+    }
+    let parsed = openshell_policy_schema::parse_policy(policy_yaml)
+        .ok()
+        .and_then(|doc| serde_json::to_value(doc).ok());
+    if !policy_hash.is_empty()
+        && let Ok(mut guard) = cache.write()
+    {
+        if guard.len() >= 256 {
+            guard.clear();
+        }
+        guard.insert(policy_hash.to_string(), parsed.clone());
+    }
+    parsed
 }
 
 pub(super) fn resolve_identity(
@@ -835,8 +1057,26 @@ pub(super) fn agent_inventory(conn: &Connection, now_ms: i64) -> Result<Vec<Valu
            JOIN agent_runs r USING(run_id) JOIN scoring_contexts c USING(context_id)
            WHERE c.agent_id = a.agent_id AND e.active != 0
              AND MAX(e.created_at_ms, COALESCE((SELECT MAX(d.created_at_ms) FROM decisions d WHERE d.epoch_id = e.epoch_id), 0))
-                 > ?1 - {not_seen_ms})
-         FROM agents a ORDER BY a.agent_id LIMIT 200",
+                 > ?1 - {not_seen_ms}),
+          EXISTS(SELECT 1 FROM workload_quarantine q WHERE q.agent_id = a.agent_id AND (q.expires_at_ms IS NULL OR q.expires_at_ms > ?1)),
+          COALESCE((SELECT SUM(v) FROM (
+            SELECT MAX(sf.value) AS v FROM siem_features sf
+            WHERE sf.agent_id = a.agent_id AND sf.name = 'openshell_denials_1h' AND sf.expires_at_ms > ?1
+            GROUP BY COALESCE(sf.sandbox_id, sf.subject_id)
+          )), 0),
+          COALESCE((SELECT SUM(v) FROM (
+            SELECT MAX(sf.value) AS v FROM siem_features sf
+            WHERE sf.agent_id = a.agent_id AND sf.name = 'openshell_denials_5m' AND sf.expires_at_ms > ?1
+            GROUP BY COALESCE(sf.sandbox_id, sf.subject_id)
+          )), 0),
+          COALESCE((SELECT SUM(v) FROM (
+            SELECT MAX(sf.value) AS v FROM siem_features sf
+            WHERE sf.agent_id = a.agent_id AND sf.name = 'openshell_would_block_5m' AND sf.expires_at_ms > ?1
+            GROUP BY COALESCE(sf.sandbox_id, sf.subject_id)
+          )), 0)
+         FROM agents a
+         WHERE a.agent_id NOT LIKE 'epprobe-%' AND a.agent_id NOT LIKE 'auditprobe-%'
+         ORDER BY a.agent_id LIMIT 200",
     ))?;
     Ok(stmt.query_map(params![now_ms], |row| Ok(json!({
         "agent_id": row.get::<_, String>(0)?, "display_name": row.get::<_, String>(1)?,
@@ -854,7 +1094,11 @@ pub(super) fn agent_inventory(conn: &Connection, now_ms: i64) -> Result<Vec<Valu
         // closed by a delete event. `open_sandbox_count` is the subset of those seen recently; the rest are presumed gone.
         "active_sandbox_count": row.get::<_, i64>(14)?,
         "open_sandbox_count": row.get::<_, i64>(15)?,
-        "presumed_gone_sandbox_count": (row.get::<_, i64>(14)? - row.get::<_, i64>(15)?).max(0)
+        "presumed_gone_sandbox_count": (row.get::<_, i64>(14)? - row.get::<_, i64>(15)?).max(0),
+        "quarantined": row.get::<_, bool>(16)?,
+        "openshell_denials_1h": row.get::<_, i64>(17)?,
+        "openshell_denials_5m": row.get::<_, i64>(18)?,
+        "openshell_would_block_5m": row.get::<_, i64>(19)?
     })))?.collect::<std::result::Result<Vec<_>, _>>()?)
 }
 

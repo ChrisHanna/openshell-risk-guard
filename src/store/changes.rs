@@ -18,12 +18,14 @@ use serde_json::Value;
 
 const TWO_PERSON: &str = "two_person_required";
 const EXPIRY_MS: i64 = 24 * 60 * 60 * 1000;
-const KINDS: [&str; 5] = [
+const KINDS: [&str; 7] = [
     "release_quarantine",
     "clear_restriction",
     "disable_two_person",
     "baseline_update",
     "policy_update",
+    "update_guardrails",
+    "demote_adaptive_model",
 ];
 /// A baseline change may add at most this many routes or hosts at once, so a request stays reviewable.
 const MAX_BASELINE_ADDITIONS: usize = 50;
@@ -285,6 +287,12 @@ impl SqliteRiskStore {
         now_ms: i64,
     ) -> Result<Value> {
         self.needs_second_person("clearing a restriction")?;
+        person(operator, "operator")?;
+        if reason.trim().is_empty() || reason.len() > 1000 || reason.chars().any(char::is_control) {
+            return Err(RiskGuardError::InvalidArgument(
+                "reason must be 1..1000 bytes without control characters".into(),
+            ));
+        }
         self.clear_restriction_unchecked(target, scope, operator, reason, now_ms)
     }
 
@@ -399,6 +407,44 @@ impl SqliteRiskStore {
                     return Err(RiskGuardError::InvalidArgument(format!(
                         "there is no baseline for task profile '{target}'"
                     )));
+                }
+            }
+            "update_guardrails" => {
+                if !self.two_person_required()? {
+                    return Err(RiskGuardError::InvalidArgument(
+                        "two-person approval is not on".into(),
+                    ));
+                }
+                let update: crate::guardrails::GuardrailsUpdate =
+                    serde_json::from_value(params.clone()).map_err(|e| {
+                        RiskGuardError::InvalidArgument(format!(
+                            "update_guardrails needs valid GuardrailsUpdate params: {e}"
+                        ))
+                    })?;
+                update.settings.validate()?;
+                let exists: bool = self.lock_read_conn()?.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM agents WHERE agent_id = ?1)",
+                    params![target],
+                    |row| row.get(0),
+                )?;
+                if !exists {
+                    return Err(RiskGuardError::InvalidArgument(
+                        "agent does not exist".into(),
+                    ));
+                }
+            }
+            "demote_adaptive_model" => {
+                if !self.two_person_required()? {
+                    return Err(RiskGuardError::InvalidArgument(
+                        "two-person approval is not on".into(),
+                    ));
+                }
+                let model_id = params["model_id"].as_str().unwrap_or_default().trim();
+                let mode = params["mode"].as_str().unwrap_or_default();
+                if model_id.is_empty() || !matches!(mode, "shadow" | "off") {
+                    return Err(RiskGuardError::InvalidArgument(
+                        "demote_adaptive_model needs params.model_id and params.mode ('shadow' or 'off')".into(),
+                    ));
                 }
             }
             _ => {
@@ -530,6 +576,28 @@ impl SqliteRiskStore {
                     )
                     .map(|_| "cleared".to_string()),
                 "baseline_update" => self.apply_baseline_update(&target, &params, &who, id),
+                "update_guardrails" => serde_json::from_value::<crate::guardrails::GuardrailsUpdate>(params.clone())
+                    .map_err(|e| RiskGuardError::InvalidArgument(format!("invalid GuardrailsUpdate: {e}")))
+                    .and_then(|update| {
+                        match self.save_agent_guardrails_approved(&target, &update, &who, now_ms)? {
+                            crate::guardrails::GuardrailsSaveResult::Saved(view) => Ok(format!(
+                                "guardrails saved (revision {})",
+                                view["revision"].as_u64().unwrap_or(0)
+                            )),
+                            crate::guardrails::GuardrailsSaveResult::Conflict { current_revision } => {
+                                Err(RiskGuardError::InvalidArgument(format!(
+                                    "guardrail revision conflict (current revision is {current_revision})"
+                                )))
+                            }
+                        }
+                    }),
+                "demote_adaptive_model" => self.demote_adaptive_model_approved(
+                    &target,
+                    params["model_id"].as_str().unwrap_or_default(),
+                    params["mode"].as_str().unwrap_or_default(),
+                    &who,
+                    now_ms,
+                ),
                 _ => self
                     .lock_conn()?
                     .execute(

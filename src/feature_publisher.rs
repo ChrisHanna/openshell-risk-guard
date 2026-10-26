@@ -47,10 +47,24 @@ const WOULD_BLOCK_5M: &str = "openshell_would_block_5m";
 const REFUSAL_RATIO: &str = "refusal_ratio_15m_permille";
 const NEW_ROUTES: &str = "new_routes_1h";
 const ROUTES_UNIQUE: &str = "routes_unique_to_workload_permille";
+const ANOMALY_GRADE: &str = "anomaly_grade_15m_permille";
 const FLEET_DENIALS: &str = "fleet_openshell_denials_5m";
 const FLEET_SANDBOXES: &str = "fleet_workloads_with_denials_5m";
 const FLEET_REFUSAL_RATIO: &str = "fleet_refusal_ratio_15m_permille";
 const FLEET_ACTIVE: &str = "fleet_active_workloads_15m";
+
+/// When the publisher runs on a fast sub-30s tick (e.g. 5s for near-real-time denial/anomaly ingestion), reuse the heavy 7-day composite
+/// route scan for up to 25 seconds so OpenSearch is not hit with a 7-day scan every 5 seconds.
+const FAST_ROUTE_CACHE_MS: i64 = 25_000;
+
+type RouteCacheEntry = (i64, Vec<RouteSeen>);
+
+fn route_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, RouteCacheEntry>> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, RouteCacheEntry>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
 
 type Features = BTreeMap<&'static str, u64>;
 
@@ -423,6 +437,70 @@ fn route_features(seen: &[RouteSeen], now_ms: i64) -> BTreeMap<String, Features>
         .collect()
 }
 
+/// Produces `anomaly_grade_15m_permille` (per workload) from OpenSearch's Anomaly Detection plugin (`workload-activity-by-agent`).
+/// Queries `/_plugins/_anomaly_detection/detectors/results/_search` for anomaly results in the last 15 minutes with `anomaly_grade > 0`.
+pub fn anomaly_grades_query(now_ms: i64) -> Value {
+    json!({
+        "size": 1000,
+        "timeout": "10s",
+        "_source": ["entity", "data_end_time", "anomaly_grade"],
+        "query": {"bool": {"filter": [
+            {"range": {"data_end_time": {"gte": now_ms - 15 * MIN_MS}}},
+            {"range": {"anomaly_grade": {"gt": 0.0}}}
+        ]}}
+    })
+}
+
+/// Parse OpenSearch Anomaly Detection results into `workload_id -> max(anomaly_grade * 1000)` in permille (`0..=1000`).
+/// Supports both `_source` hits (from `/_plugins/_anomaly_detection/detectors/results/_search`) and `by_workload` aggregation buckets.
+pub fn parse_anomaly_grades(response: &Value) -> std::result::Result<BTreeMap<String, u64>, String> {
+    let mut out: BTreeMap<String, u64> = BTreeMap::new();
+    let to_permille = |grade: f64| -> u64 {
+        if grade.is_finite() && grade > 0.0 {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            {
+                ((grade * 1000.0).round() as u64).min(MAX_PERMILLE)
+            }
+        } else {
+            0
+        }
+    };
+    if let Some(buckets) = response["aggregations"]["by_workload"]["buckets"].as_array() {
+        for bucket in buckets {
+            let Some(id) = bucket["key"].as_str() else {
+                continue;
+            };
+            let grade = bucket["max_grade"]["value"].as_f64().unwrap_or(0.0);
+            let permille = to_permille(grade);
+            if permille > 0 {
+                let entry = out.entry(id.to_string()).or_default();
+                *entry = (*entry).max(permille);
+            }
+        }
+        return Ok(out);
+    }
+    let hits = response["hits"]["hits"]
+        .as_array()
+        .ok_or("no hits.hits or aggregations.by_workload in anomaly detection response")?;
+    for hit in hits {
+        let source = &hit["_source"];
+        let entity = source["entity"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|e| e["value"].as_str());
+        let Some(workload) = entity else {
+            continue;
+        };
+        let grade = source["anomaly_grade"].as_f64().unwrap_or(0.0);
+        let permille = to_permille(grade);
+        if permille > 0 {
+            let entry = out.entry(workload.to_string()).or_default();
+            *entry = (*entry).max(permille);
+        }
+    }
+    Ok(out)
+}
+
 // ------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // Collecting and building the batch
 // ------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -484,6 +562,17 @@ impl Collected {
     fn absorb_routes(&mut self, parsed: BTreeMap<String, Features>) {
         for (id, features) in parsed {
             self.workloads.entry(id).or_default().extend(features);
+        }
+    }
+
+    fn absorb_anomaly_grades(&mut self, parsed: BTreeMap<String, u64>) {
+        for (id, grade_permille) in parsed {
+            if grade_permille > 0 {
+                self.workloads
+                    .entry(id)
+                    .or_default()
+                    .insert(ANOMALY_GRADE, grade_permille.min(MAX_PERMILLE));
+            }
         }
     }
 
@@ -578,7 +667,19 @@ impl SearchClient {
     }
 
     /// All pages of the route list, or an error if it is too large to read whole.
-    async fn route_list(&self, now_ms: i64) -> std::result::Result<Vec<RouteSeen>, String> {
+    /// On fast ticks (`0 < now_ms - cached_at_ms < FAST_ROUTE_CACHE_MS`), returns `(seen, true)` from the in-memory cache so the 7-day
+    /// composite scan does not run on every 5-second tick.
+    async fn route_list(
+        &self,
+        now_ms: i64,
+    ) -> std::result::Result<(Vec<RouteSeen>, bool), String> {
+        if let Ok(cache) = route_cache().lock()
+            && let Some((cached_at, cached_seen)) = cache.get(&self.url)
+            && now_ms > *cached_at
+            && now_ms.saturating_sub(*cached_at) < FAST_ROUTE_CACHE_MS
+        {
+            return Ok((cached_seen.clone(), true));
+        }
         let mut seen = Vec::new();
         let mut after: Option<Value> = None;
         for _ in 0..COMPOSITE_MAX_PAGES {
@@ -587,13 +688,54 @@ impl SearchClient {
             seen.extend(page);
             match next {
                 Some(key) => after = Some(key),
-                None => return Ok(seen),
+                None => {
+                    if let Ok(mut cache) = route_cache().lock() {
+                        if cache.len() >= 32 {
+                            cache.clear();
+                        }
+                        cache.insert(self.url.clone(), (now_ms, seen.clone()));
+                    }
+                    return Ok((seen, false));
+                }
             }
         }
         Err(format!(
             "more than {} workload/host/route combinations in seven days; not computed from a truncated list",
             COMPOSITE_MAX_PAGES * COMPOSITE_PAGE
         ))
+    }
+
+    /// Query OpenSearch's Anomaly Detection plugin for recent per-workload anomaly grades (`0..=1000` permille).
+    /// If the plugin endpoint is absent (404) or not permitted for the read-only index user (403), returns an empty map without failing the tick.
+    async fn anomaly_grades(&self, now_ms: i64) -> std::result::Result<BTreeMap<String, u64>, String> {
+        let response = self
+            .http
+            .post(format!(
+                "{}/_plugins/_anomaly_detection/detectors/results/_search",
+                self.url
+            ))
+            .basic_auth(&self.user, Some(&self.password))
+            .json(&anomaly_grades_query(now_ms))
+            .send()
+            .await
+            .map_err(|error| format!("request failed: {}", error_chain(&error)))?;
+        let status = response.status();
+        if matches!(status.as_u16(), 403 | 404) {
+            return Ok(BTreeMap::new());
+        }
+        let text = response
+            .text()
+            .await
+            .map_err(|error| format!("reading the response: {error}"))?;
+        if !status.is_success() {
+            return Err(format!("HTTP {status}: {}", snippet(&text)));
+        }
+        let value: Value =
+            serde_json::from_str(&text).map_err(|error| format!("not JSON: {error}"))?;
+        if value["timed_out"].as_bool().unwrap_or(false) {
+            return Err("OpenSearch anomaly detection search timed_out".into());
+        }
+        parse_anomaly_grades(&value)
     }
 }
 
@@ -617,7 +759,7 @@ fn snippet(text: &str) -> String {
 
 /// Run every query (concurrently; they are independent) and gather what they produce.
 async fn collect(client: &SearchClient, now_ms: i64) -> Collected {
-    let (sandbox_denials, would_block, fleet_denials, refusals, routes) = tokio::join!(
+    let (sandbox_denials, would_block, fleet_denials, refusals, routes, anomalies) = tokio::join!(
         async {
             let response = client.search(&sandbox_denials_query(now_ms)).await?;
             parse_sandbox_denials(&response)
@@ -635,8 +777,13 @@ async fn collect(client: &SearchClient, now_ms: i64) -> Collected {
             parse_refusals(&response)
         },
         async { client.route_list(now_ms).await },
+        async { client.anomaly_grades(now_ms).await },
     );
     let mut collected = Collected::default();
+    let any_live_query_ok = sandbox_denials.is_ok()
+        || would_block.is_ok()
+        || fleet_denials.is_ok()
+        || refusals.is_ok();
     match sandbox_denials {
         Ok(parsed) => collected.absorb_sandbox_denials(parsed),
         Err(reason) => collected.failed.push(("sandbox_denials", reason)),
@@ -654,8 +801,17 @@ async fn collect(client: &SearchClient, now_ms: i64) -> Collected {
         Err(reason) => collected.failed.push(("refusals", reason)),
     }
     match routes {
-        Ok(seen) => collected.absorb_routes(route_features(&seen, now_ms)),
+        Ok((seen, from_cache)) => {
+            if !from_cache || any_live_query_ok {
+                collected.absorb_routes(route_features(&seen, now_ms));
+            }
+        }
         Err(reason) => collected.failed.push(("routes", reason)),
+    }
+    if let Ok(grades) = anomalies
+        && any_live_query_ok
+    {
+        collected.absorb_anomaly_grades(grades);
     }
     collected
 }
@@ -1283,6 +1439,7 @@ mod tests {
             REFUSAL_RATIO,
             NEW_ROUTES,
             ROUTES_UNIQUE,
+            ANOMALY_GRADE,
             FLEET_DENIALS,
             FLEET_SANDBOXES,
             FLEET_REFUSAL_RATIO,
@@ -1291,5 +1448,27 @@ mod tests {
         for name in body["subjects"][0]["features"].as_object().unwrap().keys() {
             assert!(vocabulary.contains(&name.as_str()), "{name}");
         }
+    }
+
+    #[test]
+    fn anomaly_grades_are_parsed_from_hits_or_buckets_and_scaled_to_permille() {
+        let hits = json!({
+            "hits": {"hits": [
+                {"_source": {"entity": [{"name": "actor.user.name.keyword", "value": "agent-a"}], "data_end_time": NOW, "anomaly_grade": 0.425}},
+                {"_source": {"entity": [{"name": "actor.user.name.keyword", "value": "agent-a"}], "data_end_time": NOW - 60_000, "anomaly_grade": 0.812}},
+                {"_source": {"entity": [{"name": "actor.user.name.keyword", "value": "agent-b"}], "data_end_time": NOW, "anomaly_grade": 0.0}}
+            ]}
+        });
+        let parsed = parse_anomaly_grades(&hits).unwrap();
+        assert_eq!(parsed.get("agent-a"), Some(&812));
+        assert!(!parsed.contains_key("agent-b"));
+
+        let buckets = json!({
+            "aggregations": {"by_workload": {"buckets": [
+                {"key": "agent-c", "max_grade": {"value": 0.75}}
+            ]}}
+        });
+        let parsed_buckets = parse_anomaly_grades(&buckets).unwrap();
+        assert_eq!(parsed_buckets.get("agent-c"), Some(&750));
     }
 }

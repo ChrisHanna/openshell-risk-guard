@@ -458,7 +458,7 @@ impl RiskGuardInterceptorService {
         principal: &HashMap<String, String>,
     ) -> std::result::Result<InterceptorResult, Status> {
         match method {
-            "CreateSandbox" | "UpdateConfig" => {
+            "CreateSandbox" | "UpdateConfig" | "ApproveDraftChunk" | "ApproveAllDraftChunks" => {
                 self.post_commit_sandbox_mutation(method, committed_response, principal)
             }
             "DeleteSandbox" | "StopSandbox" | "TerminateSandbox" => {
@@ -547,8 +547,8 @@ impl RiskGuardInterceptorService {
                     })?;
                 let baseline_hash = crate::detector::compute_baseline_hash(&baseline);
 
-                let epoch_id = format!("ep_{sandbox_id}_1");
-                let epoch = EpochRecord {
+                let mut epoch_id = format!("ep_{sandbox_id}_1");
+                let mut epoch = EpochRecord {
                     epoch_id: epoch_id.clone(),
                     gateway_id: self.gateway_id.clone(),
                     sandbox_id: sandbox_id.clone(),
@@ -561,9 +561,32 @@ impl RiskGuardInterceptorService {
                     credentialed_endpoints: credentialed_endpoints.clone(),
                     active_policy_hash: active_policy_hash.clone(),
                 };
-                self.store
-                    .upsert_epoch(&epoch)
-                    .map_err(risk_guard_error_to_status)?;
+                if let Err(RiskGuardError::PermissionDenied(_)) = self.store.upsert_epoch(&epoch) {
+                    // A previous sandbox with the same name was deleted (its bound `ep_{sandbox_id}_1` is closed and immutable).
+                    // Allocate the next generation epoch ID so recreating a sandbox name works cleanly.
+                    let mut created_gen = false;
+                    for generation in 2..=10_000_u32 {
+                        let candidate = format!("ep_{sandbox_id}_{generation}");
+                        epoch.epoch_id = candidate.clone();
+                        match self.store.upsert_epoch(&epoch) {
+                            Ok(()) => {
+                                epoch_id = candidate;
+                                created_gen = true;
+                                break;
+                            }
+                            Err(RiskGuardError::PermissionDenied(_)) => continue,
+                            Err(other) => return Err(risk_guard_error_to_status(other)),
+                        }
+                    }
+                    if !created_gen {
+                        let candidate = format!("ep_{sandbox_id}_{now_ms}");
+                        epoch.epoch_id = candidate.clone();
+                        self.store
+                            .upsert_epoch(&epoch)
+                            .map_err(risk_guard_error_to_status)?;
+                        epoch_id = candidate;
+                    }
+                }
                 result
                     .log_annotations
                     .insert("epoch_id".to_string(), epoch_id);
@@ -578,10 +601,10 @@ impl RiskGuardInterceptorService {
             let policy_hash = active_policy_hash
                 .clone()
                 .unwrap_or_else(|| sha256_hex(yaml.as_bytes()));
-            let source = if method == "CreateSandbox" {
-                "create_sandbox"
-            } else {
-                "update_config"
+            let source = match method {
+                "CreateSandbox" => "create_sandbox",
+                "ApproveDraftChunk" | "ApproveAllDraftChunks" => "approve_draft_chunk",
+                _ => "update_config",
             };
             self.store
                 .record_policy_snapshot(
@@ -2904,6 +2927,37 @@ network_policies:
             Some("run-delete-test")
         );
         assert!(store.get_active_epoch(sandbox_id_2).unwrap().is_none());
+
+        // Recreating the first sandbox with the same name after it was stopped/deleted allocates generation 2 for both epoch and run.
+        let recreated = service
+            .post_commit_sandbox_mutation(
+                "CreateSandbox",
+                &json!({
+                    "sandbox": {
+                        "metadata": {
+                            "workspace": "default",
+                            "id": sandbox_id,
+                            "name": sandbox_id,
+                            "annotations": {
+                                "openshell.nvidia.com/agent-id": "prod-agent"
+                            }
+                        }
+                    }
+                }),
+                &principal_of("operator", "alice"),
+            )
+            .expect("recreating a deleted sandbox name must succeed");
+        assert!(recreated.allowed);
+        assert_eq!(
+            recreated.log_annotations.get("epoch_id").map(String::as_str),
+            Some("ep_sb-prod-lifecycle-01_2")
+        );
+        assert_eq!(
+            recreated.log_annotations.get("agent_id").map(String::as_str),
+            Some("prod-agent")
+        );
+        let active_epoch = store.get_active_epoch(sandbox_id).unwrap().unwrap();
+        assert_eq!(active_epoch.epoch_id, "ep_sb-prod-lifecycle-01_2");
     }
 
     fn derive_service(base: &RiskGuardInterceptorService) -> RiskGuardInterceptorService {

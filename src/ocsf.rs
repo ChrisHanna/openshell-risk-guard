@@ -393,19 +393,40 @@ async fn run(
             continue;
         }
         let count = events.len() as u64;
-        match client.post(&url).json(&otlp_payload(&events)).send().await {
-            Ok(response) if response.status().is_success() => failures = 0,
-            Ok(response) => {
-                emitter.dropped.fetch_add(count, Ordering::Relaxed);
-                failures += 1;
-                if failures == 1 || failures.is_power_of_two() {
-                    tracing::warn!(status = %response.status(), count, "the collector refused OCSF events; they were dropped");
+        let payload = otlp_payload(&events);
+        let mut delivered = false;
+        let mut last_status = None;
+        let mut last_error = None;
+        for delay_ms in [0_u64, 50, 150] {
+            if delay_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            }
+            match client.post(&url).json(&payload).send().await {
+                Ok(response) if response.status().is_success() => {
+                    delivered = true;
+                    failures = 0;
+                    break;
+                }
+                Ok(response) => {
+                    let status = response.status();
+                    last_status = Some(status);
+                    last_error = None;
+                    if !(status.is_server_error() || status.as_u16() == 429) {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    last_error = Some(error);
                 }
             }
-            Err(error) => {
-                emitter.dropped.fetch_add(count, Ordering::Relaxed);
-                failures += 1;
-                if failures == 1 || failures.is_power_of_two() {
+        }
+        if !delivered {
+            emitter.dropped.fetch_add(count, Ordering::Relaxed);
+            failures += 1;
+            if failures == 1 || failures.is_power_of_two() {
+                if let Some(status) = last_status {
+                    tracing::warn!(%status, count, "the collector refused OCSF events; they were dropped");
+                } else if let Some(error) = last_error {
                     tracing::warn!(%error, count, "could not send OCSF events; they were dropped");
                 }
             }

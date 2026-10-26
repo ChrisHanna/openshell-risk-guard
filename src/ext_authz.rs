@@ -175,6 +175,9 @@ fn host_and_port(host: &str, scheme: &str) -> (String, u16) {
 /// How long a sandbox that has been reporting requests may go quiet before its next tunnel is flagged. Agents work in bursts with pauses
 /// between model calls, so this is generous: ten minutes.
 const DEFAULT_SILENCE_MS: i64 = 600_000;
+/// Maximum consecutive `CONNECT` tunnels a sandbox may open without a single new middleware decision being reported before it is flagged
+/// as a silent/bypassing supervisor (defends against trickle keepalives that stay inside `DEFAULT_SILENCE_MS`).
+const DEFAULT_MAX_UNREPORTED_TUNNELS: u32 = 20;
 
 fn now_unix_ms() -> i64 {
     std::time::SystemTime::now()
@@ -199,6 +202,11 @@ pub struct ExtAuthzService {
     restriction_mode: TunnelMode,
     /// How long a sandbox that has been reporting requests may go without one before opening a tunnel counts as a silent supervisor. 0 turns the check off.
     silence_ms: i64,
+    /// Maximum consecutive tunnels a sandbox may open without its `last_decision_ms` advancing before it is flagged as silent (0 disables the count check).
+    max_unreported_tunnels: u32,
+    /// Per-sandbox `(last_seen_decision_ms, consecutive_tunnels_without_new_decision)`.
+    unreported_tunnels:
+        Arc<std::sync::Mutex<std::collections::HashMap<String, (Option<i64>, u32)>>>,
     /// Where tunnel refusals and silent supervisors are sent as OCSF events. `None` sends nothing.
     ocsf: Option<Arc<crate::ocsf::OcsfEmitter>>,
 }
@@ -238,6 +246,8 @@ impl ExtAuthzService {
             tunnels: None,
             restriction_mode: TunnelMode::Shadow,
             silence_ms: DEFAULT_SILENCE_MS,
+            max_unreported_tunnels: DEFAULT_MAX_UNREPORTED_TUNNELS,
+            unreported_tunnels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             ocsf: None,
         })
     }
@@ -256,6 +266,13 @@ impl ExtAuthzService {
     #[must_use]
     pub fn with_silence_threshold(mut self, threshold: std::time::Duration) -> Self {
         self.silence_ms = i64::try_from(threshold.as_millis()).unwrap_or(i64::MAX);
+        self
+    }
+
+    /// Set how many consecutive `CONNECT` tunnels a sandbox may open without a new middleware decision before being flagged as silent (`0` disables).
+    #[must_use]
+    pub fn with_max_unreported_tunnels(mut self, max: u32) -> Self {
+        self.max_unreported_tunnels = max;
         self
     }
 
@@ -327,12 +344,45 @@ impl ExtAuthzService {
         let silence_mode = baseline.as_ref().map_or(RuleMode::Shadow, |baseline| {
             baseline.rule_mode(RULE_SUPERVISOR_SILENT)
         });
+        let unreported_burst = if let Some(last_decision_ms) =
+            state.as_ref().and_then(|s| s.last_decision_ms).filter(|_| {
+                self.silence_ms > 0 && silence_mode != RuleMode::Off && self.max_unreported_tunnels > 0
+            })
+        {
+            if let Ok(mut map) = self.unreported_tunnels.lock() {
+                if map.len() >= 4_096 && !map.contains_key(&sandbox_id) {
+                    map.clear();
+                }
+                let entry = map
+                    .entry(sandbox_id.clone())
+                    .or_insert((Some(last_decision_ms), 0));
+                if entry.0 != Some(last_decision_ms) {
+                    // The supervisor reported a new decision since the last tunnel check; reset the consecutive tunnel counter.
+                    *entry = (Some(last_decision_ms), 1);
+                } else {
+                    entry.1 = entry.1.saturating_add(1);
+                }
+                entry.1 > self.max_unreported_tunnels
+            } else {
+                false
+            }
+        } else {
+            false
+        };
         let silent_for_ms = state
             .as_ref()
             .and_then(|state| state.last_decision_ms)
             .map(|last| now_ms.saturating_sub(last))
             .filter(|gap| {
                 self.silence_ms > 0 && *gap > self.silence_ms && silence_mode != RuleMode::Off
+            })
+            .or_else(|| {
+                unreported_burst.then(|| {
+                    state
+                        .as_ref()
+                        .and_then(|state| state.last_decision_ms)
+                        .map_or(self.silence_ms, |last| now_ms.saturating_sub(last).max(1))
+                })
             });
         if let Some(gap) = silent_for_ms {
             let store = Arc::clone(&self.store);
@@ -537,7 +587,13 @@ impl ExtAuthzService {
             }),
         )
         .await;
-        if let (Some(ocsf), Ok(Ok(Ok(evaluation)))) = (&self.ocsf, &evaluated) {
+        if let (Some(ocsf), Ok(Ok(Ok(evaluation)))) = (&self.ocsf, &evaluated)
+            && !matches!(
+                evaluation.reason_code.as_str(),
+                crate::types::REASON_BEHAVIORAL_RISK_RESTRICTED
+                    | crate::types::REASON_WORKLOAD_QUARANTINED
+            )
+        {
             ocsf.record_decision(
                 &evaluation.sandbox_id,
                 evaluation.outcome == DecisionOutcome::Deny,

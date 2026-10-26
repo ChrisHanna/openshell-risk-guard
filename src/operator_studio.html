@@ -1,0 +1,2835 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OpenShell × Risk Guard · Enterprise Security Console</title>
+<style>
+:root, [data-theme="light"] {
+  --bg-page: #f5f5f7;
+  --bg-nav: rgba(255, 255, 255, 0.86);
+  --bg-card: #ffffff;
+  --bg-subtle: #f8f8fa;
+  --bg-hover: #f1f2f5;
+  --bg-code: #f3f4f7;
+  --bg-canvas: #fafafc;
+  --border: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.15);
+  --text-primary: #1d1d1f;
+  --text-secondary: #515154;
+  --text-muted: #86868b;
+  --blue: #0071e3;
+  --blue-bg: rgba(0, 113, 227, 0.09);
+  --blue-border: rgba(0, 113, 227, 0.28);
+  --green: #1d9f3a;
+  --green-bright: #28cd41;
+  --green-bg: #ebf9ee;
+  --green-border: rgba(29, 159, 58, 0.28);
+  --amber: #c96e00;
+  --amber-bright: #ff9500;
+  --amber-bg: #fff6e5;
+  --amber-border: rgba(201, 110, 0, 0.30);
+  --red: #d70015;
+  --red-bright: #ff3b30;
+  --red-bg: #fff1f0;
+  --red-border: rgba(215, 0, 21, 0.26);
+  --os-color: #2c6e1f;
+  --os-bg: rgba(118, 185, 0, 0.13);
+  --os-border: rgba(91, 143, 0, 0.35);
+  --rg-color: #005bb5;
+  --rg-bg: rgba(0, 113, 227, 0.10);
+  --rg-border: rgba(0, 113, 227, 0.32);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04);
+  --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.045), 0 1px 2px rgba(0, 0, 0, 0.03);
+  --node-fill: #ffffff;
+  --node-stroke: rgba(0, 0, 0, 0.14);
+  --edge-idle: rgba(0, 0, 0, 0.16);
+}
+[data-theme="dark"] {
+  --bg-page: #0d0e11;
+  --bg-nav: rgba(20, 22, 27, 0.85);
+  --bg-card: #16181d;
+  --bg-subtle: #1d2027;
+  --bg-hover: #252932;
+  --bg-code: #111318;
+  --bg-canvas: #12141a;
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --text-primary: #f5f5f7;
+  --text-secondary: #a1a1a6;
+  --text-muted: #6e6e73;
+  --blue: #2997ff;
+  --blue-bg: rgba(41, 151, 255, 0.15);
+  --blue-border: rgba(41, 151, 255, 0.35);
+  --green: #30d158;
+  --green-bright: #30d158;
+  --green-bg: rgba(48, 209, 88, 0.13);
+  --green-border: rgba(48, 209, 88, 0.35);
+  --amber: #ff9f0a;
+  --amber-bright: #ff9f0a;
+  --amber-bg: rgba(255, 159, 10, 0.14);
+  --amber-border: rgba(255, 159, 10, 0.35);
+  --red: #ff453a;
+  --red-bright: #ff453a;
+  --red-bg: rgba(255, 69, 58, 0.14);
+  --red-border: rgba(255, 69, 58, 0.38);
+  --os-color: #8ee000;
+  --os-bg: rgba(118, 185, 0, 0.16);
+  --os-border: rgba(118, 185, 0, 0.42);
+  --rg-color: #54a6ff;
+  --rg-bg: rgba(41, 151, 255, 0.16);
+  --rg-border: rgba(41, 151, 255, 0.42);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-card: 0 10px 28px rgba(0, 0, 0, 0.38);
+  --node-fill: #1d2028;
+  --node-stroke: rgba(255, 255, 255, 0.18);
+  --edge-idle: rgba(255, 255, 255, 0.20);
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", "Segoe UI", system-ui, sans-serif;
+  font-size: 13.5px;
+  line-height: 1.48;
+  -webkit-font-smoothing: antialiased;
+}
+.mono { font-family: "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, monospace; font-variant-numeric: tabular-nums; }
+
+.top-nav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 28px;
+  background: var(--bg-nav);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: 11px; }
+.brand-badge {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: #1d1d1f;
+  color: #ffffff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 12px;
+  border-bottom: 2.5px solid #76b900;
+}
+[data-theme="dark"] .brand-badge { background: #262932; }
+.brand-title { font-weight: 600; font-size: 14.5px; letter-spacing: -0.015em; }
+.brand-sub { font-size: 12px; color: var(--text-muted); margin-left: 8px; padding-left: 8px; border-left: 1px solid var(--border-strong); }
+
+.seg-tabs {
+  display: inline-flex;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  padding: 3px;
+  border-radius: 10px;
+  gap: 2px;
+}
+.seg-tab {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 6px 14px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+.seg-tab:hover { color: var(--text-primary); }
+.seg-tab.active {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+.tab-badge {
+  padding: 1px 6px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--blue-bg);
+  color: var(--blue);
+}
+.tab-badge.alert { background: var(--red-bg); color: var(--red); }
+
+.nav-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btn {
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  line-height: 1.2;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.14s ease;
+}
+.btn:hover:not(:disabled) { background: var(--bg-hover); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary {
+  background: var(--blue);
+  color: #ffffff;
+  border-color: var(--blue);
+  font-weight: 600;
+}
+.btn-primary:hover:not(:disabled) { background: #0062c4; color: #ffffff; }
+.btn-danger {
+  background: var(--red-bg);
+  color: var(--red);
+  border-color: var(--red-border);
+  font-weight: 600;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2.5px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  line-height: 1.25;
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+}
+.pill-green { background: var(--green-bg); color: var(--green); border-color: var(--green-border); }
+.pill-amber { background: var(--amber-bg); color: var(--amber); border-color: var(--amber-border); }
+.pill-red { background: var(--red-bg); color: var(--red); border-color: var(--red-border); }
+.pill-blue { background: var(--blue-bg); color: var(--blue); border-color: var(--blue-border); }
+.pill-os { background: var(--os-bg); color: var(--os-color); border-color: var(--os-border); }
+.pill-rg { background: var(--rg-bg); color: var(--rg-color); border-color: var(--rg-border); }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: inline-block; }
+
+.container { max-width: 1520px; margin: 0 auto; padding: 20px 28px 56px; }
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px 20px;
+  box-shadow: var(--shadow-card);
+}
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.card-title { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; color: var(--text-primary); }
+.card-subtitle { margin: 2px 0 0; font-size: 12.5px; color: var(--text-secondary); }
+
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-cockpit { display: grid; grid-template-columns: 1.38fr 1fr; gap: 16px; align-items: start; }
+.grid-graduation { display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: 16px; align-items: stretch; }
+@media (max-width: 1180px) { .grid-3, .grid-2, .grid-cockpit, .grid-graduation { grid-template-columns: 1fr; } }
+
+.system-banner {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+@media (max-width: 980px) { .system-banner { grid-template-columns: 1fr; } }
+.sys-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  padding: 14px 18px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+}
+.sys-box.os-box { border-left: 4px solid #76b900; }
+.sys-box.rg-box { border-left: 4px solid var(--blue); }
+
+.metric-big { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.bar-row { display: grid; grid-template-columns: 145px 1fr 78px; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 12.5px; }
+.bar-track { height: 8px; background: var(--bg-subtle); border-radius: 99px; overflow: hidden; border: 1px solid var(--border); }
+.bar-fill { height: 100%; border-radius: 99px; transition: width 0.25s ease; }
+
+table.apple-table { width: 100%; border-collapse: collapse; font-size: 12.8px; }
+table.apple-table th {
+  text-align: left;
+  padding: 9px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+table.apple-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+table.apple-table tr.row-click { cursor: pointer; transition: background 0.12s ease; }
+table.apple-table tr.row-click:hover { background: var(--bg-hover); }
+table.apple-table tr.row-selected { background: var(--blue-bg); }
+
+.triage-stack { display: flex; flex-direction: column; gap: 7px; }
+.triage-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+  padding: 9px 13px;
+  border-radius: 10px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+}
+.triage-card.crit { background: var(--red-bg); border-color: var(--red-border); }
+.triage-card.warn { background: var(--amber-bg); border-color: var(--amber-border); }
+
+.flow-canvas-wrap {
+  background: var(--bg-canvas);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.flow-scrubber {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.waterfall-item {
+  display: grid;
+  grid-template-columns: 1.5fr 82px 1.2fr;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 11px;
+  border-radius: 9px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  margin-bottom: 6px;
+  font-size: 12.5px;
+}
+
+.scenario-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+@media (max-width: 1024px) { .scenario-grid { grid-template-columns: 1fr; } }
+.scenario-card {
+  text-align: left;
+  padding: 13px 15px;
+  border-radius: 12px;
+  border: 1.5px solid var(--border-strong);
+  background: var(--bg-subtle);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.scenario-card:hover { border-color: var(--blue); background: var(--bg-hover); }
+.scenario-card.active { border-color: var(--blue); background: var(--blue-bg); }
+input[type="text"], input[type="number"], input[type="search"], select, textarea {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  font-family: inherit;
+}
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header class="top-nav">
+  <div class="brand">
+    <div class="brand-badge">RG</div>
+    <div>
+      <span class="brand-title">OpenShell × Risk Guard</span>
+      <span class="brand-sub">Two-Layer Agent Security: OpenShell Policy Floor + Risk Guard Adaptive Control</span>
+    </div>
+  </div>
+
+  <nav class="seg-tabs" role="tablist" aria-label="Main workspaces">
+    <button type="button" class="seg-tab active" data-ws="command" role="tab" aria-selected="true">
+      <span>Command Center</span>
+      <span class="tab-badge alert" id="nav-triage-badge">0</span>
+    </button>
+    <button type="button" class="seg-tab" data-ws="cockpit" role="tab" aria-selected="false">
+      <span>Agent Workflow Map</span>
+    </button>
+    <button type="button" class="seg-tab" data-ws="prover" role="tab" aria-selected="false">
+      <span>Risk Guard → OpenShell Policy Studio</span>
+    </button>
+    <button type="button" class="seg-tab" data-ws="approvals" role="tab" aria-selected="false">
+      <span>2-Person Approvals</span>
+      <span class="tab-badge" id="nav-appr-badge">0</span>
+    </button>
+  </nav>
+
+  <div class="nav-actions">
+    <span class="pill pill-green" id="nav-latency-pill" title="Risk Guard inline scoring latency">p50 — · p99 —</span>
+    <span class="pill" id="nav-auth-pill">Read-only view</span>
+    <button type="button" class="btn" id="btn-theme-toggle" title="Toggle Light / Pro Dark theme">◐ Theme</button>
+    <button type="button" class="btn" id="btn-signin">Sign in / Switch account</button>
+    <a class="btn" href="/classic" title="Open the backup classic console">Classic View ↗</a>
+    <button type="button" class="btn" id="btn-refresh">Refresh</button>
+  </div>
+</header>
+<!-- Agent evidence · Context-scoped restrictions -->
+
+<div class="container">
+  <!-- PERSISTENT TWO-SYSTEM EXPLAINER BANNER (Makes OpenShell vs. Risk Guard unmistakable everywhere) -->
+  <section class="system-banner" aria-label="The Two Security Systems">
+    <div class="sys-box os-box">
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
+          <span class="pill pill-os">System 1 · OpenShell Policy Enforcement</span>
+          <span style="font-size:12px;color:var(--text-muted)">Static Sandbox Floor</span>
+        </div>
+        <div style="font-size:12.5px;color:var(--text-secondary)">
+          Enforces static YAML rules (Landlock filesystem + L4/L7 allowed hosts &amp; path globs) inside the sandbox. Calls OpenShell refuses (<code>policy_denied</code>) are stopped at the floor and never reach Risk Guard.
+        </div>
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <div class="metric-big" style="color:var(--os-color)" id="banner-os-kpi">—</div>
+        <div style="font-size:11px;color:var(--text-muted)" id="banner-os-sub">Active sandboxes</div>
+      </div>
+    </div>
+
+    <div class="sys-box rg-box">
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
+          <span class="pill pill-rg">System 2 · Risk Guard Adaptive &amp; Policy Proposer</span>
+          <span style="font-size:12px;color:var(--text-muted)">Behavioral Gate + Policy Graduation</span>
+        </div>
+        <div style="font-size:12.5px;color:var(--text-secondary)">
+          Scores calls that <strong>OpenShell allowed through</strong>, blocks risky behavior, latches cross-sandbox locks, and <strong>proposes tighter YAML policies back to OpenShell</strong> (verified safe by OpenShell's Z3 Prover).
+        </div>
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <div class="metric-big" style="color:var(--red)" id="banner-rg-kpi">—</div>
+        <div style="font-size:11px;color:var(--text-muted)" id="banner-rg-sub">Blocked by Risk Guard</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =================================================================== -->
+  <!-- WORKSPACE 1: COMMAND CENTER                                         -->
+  <!-- =================================================================== -->
+  <main id="ws-command">
+    <section class="card" style="margin-bottom:16px">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">End-to-End Request &amp; Policy Feedback Loop</h2>
+          <p class="card-subtitle">How a request flows through System 1 (OpenShell) and System 2 (Risk Guard), and how Risk Guard graduates new rules back into OpenShell</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span class="pill pill-blue" id="cmd-two-person-pill">2-Person Governance: Checking…</span>
+          <span class="pill" id="cmd-siem-freshness-pill">SIEM Batch: Checking…</span>
+        </div>
+      </div>
+      <div class="flow-canvas-wrap">
+        <svg id="cmd-arch-svg" viewBox="0 0 1360 155" style="width:100%;height:155px;display:block" role="img" aria-label="Two-system architecture pipeline"></svg>
+      </div>
+    </section>
+
+    <section class="grid-3" style="margin-bottom:16px">
+      <div class="card">
+        <div class="card-header" style="margin-bottom:10px">
+          <div>
+            <h3 class="card-title">Fleet Posture by System</h3>
+            <p class="card-subtitle">Workloads contained by Risk Guard locks vs. nominal</p>
+          </div>
+          <span class="metric-big" id="chart-total-workloads">0</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:18px">
+          <svg id="chart-posture-donut" viewBox="0 0 120 120" style="width:110px;height:110px;flex-shrink:0"></svg>
+          <div id="chart-posture-legend" style="flex:1;font-size:12.5px"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header" style="margin-bottom:10px">
+          <div>
+            <h3 class="card-title">Workloads Blocked by Risk Guard</h3>
+            <p class="card-subtitle">Calls that passed OpenShell's static YAML but were stopped by Risk Guard</p>
+          </div>
+          <span class="pill pill-red" id="chart-total-denied-pill">0 blocked</span>
+        </div>
+        <div id="chart-top-blocked-bars"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header" style="margin-bottom:10px">
+          <div>
+            <h3 class="card-title">Risk Guard Inline Scoring Latency</h3>
+            <p class="card-subtitle">Server-side decision time vs. OpenShell's 500 ms budget</p>
+          </div>
+          <span class="pill pill-green" id="chart-p99-badge">p99 —</span>
+        </div>
+        <div id="chart-latency-bars"></div>
+      </div>
+    </section>
+
+    <div class="grid-2">
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Priority Triage Queue</h2>
+            <p class="card-subtitle">Workloads holding Risk Guard cross-sandbox locks, SIEM quarantines, or awaiting 2-person approval</p>
+          </div>
+        </div>
+        <div class="triage-stack" id="triage-list"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Workload Directory</h2>
+            <p class="card-subtitle">Consolidated view of System 1 (OpenShell via OpenStream) &amp; System 2 (Risk Guard)</p>
+          </div>
+          <input type="search" id="fleet-search" placeholder="Search workload…" aria-label="Search workloads" style="width:180px" />
+        </div>
+        <div style="overflow-x:auto;max-height:520px">
+          <table class="apple-table">
+            <thead>
+              <tr>
+                <th>Workload</th>
+                <th>Posture</th>
+                <th title="OpenShell floor denials reported via OpenStream OCSF">OpenShell (S1)</th>
+                <th title="Risk Guard adaptive blocks, total calls, and peak score">Risk Guard (S2)</th>
+                <th style="text-align:right">Inspect</th>
+              </tr>
+            </thead>
+            <tbody id="fleet-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- =================================================================== -->
+  <!-- WORKSPACE 2: AGENT WORKFLOW MAP (Clean Top Bar, Diagram First!)     -->
+  <!-- =================================================================== -->
+  <main id="ws-cockpit" class="hidden">
+    <!-- Clean Single-Line Header Bar + Diagram Immediately Below (No messy lock list above the map!) -->
+    <section class="card" style="margin-bottom:16px">
+      <div class="card-header" style="margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <label for="cockpit-agent-select" style="font-weight:600;font-size:14px">Workload:</label>
+          <select id="cockpit-agent-select" aria-label="Select workload" style="font-weight:600;min-width:260px"></select>
+          <span class="pill pill-os" id="cockpit-os-pill">OpenShell Policy: Enforcing</span>
+          <span class="pill pill-rg" id="cockpit-rg-pill">Risk Guard: Nominal</span>
+          <span class="pill pill-blue" id="cockpit-siem-pill" hidden>OpenStream SIEM: —</span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn" id="btn-toggle-locks-drawer" hidden>🔒 View / Clear Locks (0)</button>
+          <button type="button" class="btn btn-primary" id="btn-jump-prover">Propose Tighter OpenShell Policy →</button>
+        </div>
+      </div>
+
+      <!-- Optional Collapsible Drawer for Managing Locks (Hidden by default so the top stays super clean!) -->
+      <div id="cockpit-locks-drawer" class="hidden" style="margin-bottom:14px"></div>
+
+      <!-- Interactive 5-Column Workflow Map -->
+      <div class="flow-canvas-wrap">
+        <div class="flow-scrubber">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span class="pill" id="flow-live-badge"><span class="dot"></span>Select or Pulse any call below</span>
+            <button type="button" class="btn btn-primary" id="btn-step-replay">▶ Step Through All Calls</button>
+            <button type="button" class="btn" id="btn-pulse-os-block" title="Simulate/replay an OpenShell Floor Block reported via OpenStream OCSF">▶ Pulse OpenShell (S1) Block</button>
+            <button type="button" class="btn" id="btn-step-blocked-only">▶ Replay Risk Guard (S2) Blocks</button>
+            <button type="button" class="btn" id="btn-stop-replay" hidden>■ Stop</button>
+            <button type="button" class="btn" id="btn-clear-node-filter" hidden>✕ Clear Filter</button>
+            <span style="display:inline-flex;align-items:center;gap:12px;font-size:11.5px;color:var(--text-secondary);margin-left:4px">
+              <span><strong style="color:var(--blue)">● Blue</strong> = Origin</span>
+              <span><strong style="color:var(--green)">● Green</strong> = Allowed / Reached</span>
+              <span><strong style="color:var(--red)">● Red ✕</strong> = Stopped at Gate</span>
+            </span>
+          </div>
+          <div class="mono" style="font-size:12px;color:var(--text-secondary)" id="flow-packet-readout">
+            Click any row or ▶ Pulse to trace that request across OpenShell (System 1) and Risk Guard (System 2).
+          </div>
+        </div>
+        <svg id="cockpit-flow-svg" viewBox="0 0 1380 460" style="width:100%;height:450px;display:block" role="img" aria-label="Agent workflow showing OpenShell Policy vs Risk Guard Adaptive Gate and Destination Host"></svg>
+      </div>
+    </section>
+
+    <!-- Synchronized Decision Table (Explicitly showing System 1 OpenShell vs System 2 Risk Guard) + Waterfall Inspector -->
+    <div class="grid-cockpit">
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Recorded Calls &amp; OpenStream Events: OpenShell (S1) vs. Risk Guard (S2)</h2>
+            <p class="card-subtitle">Shows calls stopped at System 1 (OpenShell Floor via OpenStream OCSF) alongside calls evaluated by System 2 (Risk Guard).</p>
+          </div>
+          <select id="cockpit-filter-select" aria-label="Filter recorded requests">
+            <option value="all">All Events (Blocks first)</option>
+            <option value="os_deny">Blocked by OpenShell (S1 via OpenStream)</option>
+            <option value="deny">Blocked by Risk Guard (S2)</option>
+            <option value="flagged">Flagged / Elevated (Score 20+)</option>
+          </select>
+        </div>
+        <div style="overflow-x:auto;max-height:480px">
+          <table class="apple-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>System 1: OpenShell</th>
+                <th>System 2: Risk Guard</th>
+                <th>Method &amp; Route</th>
+                <th>Destination Host:Port &amp; Target</th>
+                <th>Replay</th>
+              </tr>
+            </thead>
+            <tbody id="cockpit-decisions-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <aside class="card" id="cockpit-inspector-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title" id="insp-heading">Two-System Decision Breakdown</h2>
+            <p class="card-subtitle" id="insp-subheading">Select any row on the left to see what OpenShell checked vs. why Risk Guard scored or blocked it</p>
+          </div>
+          <span class="pill" id="insp-score-pill">—</span>
+        </div>
+        <div id="insp-content"></div>
+      </aside>
+    </div>
+  </main>
+
+  <!-- =================================================================== -->
+  <!-- WORKSPACE 3: RISK GUARD → OPENSHELL POLICY GRADUATION STUDIO        -->
+  <!-- =================================================================== -->
+  <main id="ws-prover" class="hidden">
+    <!-- Clear Two-System Story Header -->
+    <section class="card" style="margin-bottom:16px">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">How System 2 (Risk Guard) Proposes Tighter Policies for System 1 (OpenShell)</h2>
+          <p class="card-subtitle">
+            When OpenShell's static YAML policy is broader than what an agent actually needs, Risk Guard catches and blocks the extra routes dynamically—and then <strong>generates a tighter OpenShell YAML policy</strong> so OpenShell can block those routes at the sandbox floor.
+          </p>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <label for="prover-agent-select" style="font-weight:600">Workload:</label>
+          <select id="prover-agent-select" aria-label="Select workload for Policy Studio" style="font-weight:600;min-width:250px"></select>
+        </div>
+      </div>
+
+      <!-- 3-Column Visual Graduation Pipeline: [1. Current OpenShell YAML] -> [2. Risk Guard Proposal + Z3 Proof] -> [3. New OpenShell YAML] -->
+      <div class="grid-graduation" style="margin-bottom:16px">
+        <!-- Column 1: System 1 Today -->
+        <div class="card" style="background:var(--bg-subtle);box-shadow:none">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span class="pill pill-os">1 · OpenShell Policy Today</span>
+            <span class="mono" style="font-size:11px;color:var(--text-muted)" id="grad-col1-meta">Current Sandbox Floor</span>
+          </div>
+          <div style="font-weight:600;font-size:13.5px;margin-bottom:6px">Routes OpenShell Currently Permits</div>
+          <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px">
+            OpenShell allows these routes into the middleware. Any route marked <strong style="color:var(--amber)">Broader than Task</strong> is only being stopped by Risk Guard today:
+          </p>
+          <div id="grad-current-routes"></div>
+        </div>
+
+        <!-- Column 2: System 2 (Risk Guard) Proposal + OpenShell Z3 Solver Check -->
+        <div class="card" style="background:var(--bg-subtle);box-shadow:none;border-width:1.5px" id="grad-center-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span class="pill pill-rg">2 · Risk Guard Proposal + Z3 Proof</span>
+            <span class="pill" id="grad-z3-pill">Checking…</span>
+          </div>
+          <div style="font-weight:600;font-size:13.5px;margin-bottom:6px" id="grad-verdict-title">Risk Guard Narrows OpenShell Policy</div>
+          <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px" id="grad-verdict-desc"></p>
+
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px">Try 3 Policy Modes:</div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <button type="button" class="scenario-card active" id="scen-btn-tighten" style="padding:9px 12px">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <strong>A · Apply Risk Guard's Recommended Policy</strong>
+                <span class="pill pill-green">✓ Z3 Proven Narrower</span>
+              </div>
+              <div style="font-size:11.5px;color:var(--text-secondary);margin-top:2px">Moves Risk Guard's approved route list into OpenShell's static YAML so OpenShell blocks unapproved routes at the floor.</div>
+            </button>
+
+            <button type="button" class="scenario-card" id="scen-btn-widen" style="padding:9px 12px">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <strong>B · Test a Bad Proposal (+ DELETE /admin/*)</strong>
+                <span class="pill pill-red">✕ Z3 Rejects Widening</span>
+              </div>
+              <div style="font-size:11.5px;color:var(--text-secondary);margin-top:2px">Shows what happens if someone proposes a policy wider than the sandbox boundary: OpenShell's Z3 solver blocks it in ~10 ms.</div>
+            </button>
+
+            <button type="button" class="scenario-card" id="scen-btn-bypass" style="padding:9px 12px">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <strong>C · Test Detaching Risk Guard (on_error: allow)</strong>
+                <span class="pill pill-red">✕ Step-1 Rejects</span>
+              </div>
+              <div style="font-size:11.5px;color:var(--text-secondary);margin-top:2px">Shows what happens if a policy tries to weaken <code>on_error: fail_closed</code> on Risk Guard.</div>
+            </button>
+          </div>
+        </div>
+
+        <!-- Column 3: Result After Updating OpenShell -->
+        <div class="card" style="background:var(--bg-subtle);box-shadow:none">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span class="pill pill-green" id="grad-col3-pill">3 · Result on Real Calls</span>
+            <span class="mono" style="font-size:11px;color:var(--text-muted)" id="grad-col3-meta">Before vs. After</span>
+          </div>
+          <div style="font-weight:600;font-size:13.5px;margin-bottom:6px">Where Calls Get Stopped (Before vs. After)</div>
+          <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px">
+            Once Risk Guard's proposed policy is applied to OpenShell, unapproved routes are blocked at <strong>System 1 (OpenShell)</strong> before ever reaching Risk Guard:
+          </p>
+          <div id="grad-impact-summary"></div>
+          <div style="margin-top:12px">
+            <button type="button" class="btn btn-primary" id="btn-propose-openshell-yaml" style="width:100%;justify-content:center">
+              Propose This OpenShell Policy Update (2-Person Approval) →
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Interactive "Send a Test Request Through Both Systems" + Replay Table -->
+    <div class="grid-2">
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h3 class="card-title">Test Any Request Through System 1 (OpenShell) &amp; System 2 (Risk Guard)</h3>
+            <p class="card-subtitle">Pick a sample call or enter any URL to see which system blocks or allows it under the candidate policy</p>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+          <button type="button" class="btn" id="probe-preset-ok">✓ GET /services (Approved Read)</button>
+          <button type="button" class="btn" id="probe-preset-del">✕ DELETE /services/payments (Destructive)</button>
+          <button type="button" class="btn" id="probe-preset-admin">✕ DELETE /admin/wipe-everything (Unauthorized)</button>
+        </div>
+
+        <div style="display:grid;grid-template-columns:92px 1.25fr 1.15fr auto;gap:8px;align-items:center;margin-bottom:14px">
+          <select id="probe-method" aria-label="HTTP method">
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+            <option value="DELETE" selected>DELETE</option>
+            <option value="PUT">PUT</option>
+          </select>
+          <input type="text" id="probe-host" value="deploy-api.openshell.svc.cluster.local" aria-label="Destination host" />
+          <input type="text" id="probe-path" value="/services/payments" aria-label="Request path" />
+          <button type="button" class="btn btn-primary" id="btn-fire-probe">Test Request</button>
+        </div>
+
+        <div id="probe-3hop-visual"></div>
+
+        <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:14px">
+          <div style="font-weight:600;font-size:13px;margin-bottom:8px">Tune System 2 (Risk Guard) Thresholds &amp; Rules</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px">
+            <div>
+              <label for="sim-obs-thresh" style="display:block;font-size:11.5px;color:var(--text-secondary);margin-bottom:3px">Flag Line (0–99)</label>
+              <input type="number" id="sim-obs-thresh" value="20" min="0" max="99" style="width:100%" />
+            </div>
+            <div>
+              <label for="sim-enf-thresh" style="display:block;font-size:11.5px;color:var(--text-secondary);margin-bottom:3px">Block Line (1–100)</label>
+              <input type="number" id="sim-enf-thresh" value="70" min="1" max="100" style="width:100%" />
+            </div>
+            <div>
+              <label for="sim-siem-cap" style="display:block;font-size:11.5px;color:var(--text-secondary);margin-bottom:3px">SIEM Max Bonus (0–30)</label>
+              <input type="number" id="sim-siem-cap" value="15" min="0" max="30" style="width:100%" />
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+            <div>
+              <label for="sim-rule-action" style="display:block;font-size:11.5px;color:var(--text-secondary);margin-bottom:3px">Approved-Action Rule</label>
+              <select id="sim-rule-action" style="width:100%"><option value="enforce" selected>enforce (block)</option><option value="shadow">shadow (watch)</option><option value="off">off</option></select>
+            </div>
+            <div>
+              <label for="sim-rule-resource" style="display:block;font-size:11.5px;color:var(--text-secondary);margin-bottom:3px">Approved-Resource Rule</label>
+              <select id="sim-rule-resource" style="width:100%"><option value="enforce" selected>enforce (block)</option><option value="shadow">shadow (watch)</option><option value="off">off</option></select>
+            </div>
+            <div>
+              <label for="sim-rule-siem" style="display:block;font-size:11.5px;color:var(--text-secondary);margin-bottom:3px">SIEM Context (R1–R6)</label>
+              <select id="sim-rule-siem" style="width:100%"><option value="enforce" selected>enforce (add pts)</option><option value="shadow">shadow (watch)</option><option value="off">off</option></select>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h3 class="card-title">Recorded Calls: System 1 (OpenShell) vs. System 2 (Risk Guard)</h3>
+            <p class="card-subtitle" id="replay-summary-sub">Shows which system stops each recorded call before and after applying the candidate policy</p>
+          </div>
+          <span class="pill pill-blue" id="replay-flip-pill">0 shifted</span>
+        </div>
+        <div style="overflow-x:auto;max-height:370px">
+          <table class="apple-table">
+            <thead>
+              <tr>
+                <th>Route &amp; Destination</th>
+                <th>Today (Recorded)</th>
+                <th>After: OpenShell (S1)</th>
+                <th>After: Risk Guard (S2)</th>
+              </tr>
+            </thead>
+            <tbody id="replay-tbody"></tbody>
+          </table>
+        </div>
+
+        <details style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+          <summary style="cursor:pointer;font-weight:600;font-size:12.5px;color:var(--text-secondary)">Advanced: View / Edit Raw OpenShell Boundary &amp; Candidate YAML</summary>
+          <div class="grid-2" style="margin-top:10px">
+            <div>
+              <div style="font-size:11.5px;font-weight:600;margin-bottom:4px;color:var(--text-secondary)">Current OpenShell Policy YAML (Sandbox Floor)</div>
+              <textarea id="prover-boundary-yaml" class="mono" style="width:100%;min-height:190px;font-size:11.5px;background:var(--bg-code)" spellcheck="false"></textarea>
+            </div>
+            <div>
+              <div style="font-size:11.5px;font-weight:600;margin-bottom:4px;color:var(--text-secondary)">Candidate OpenShell Policy YAML (Proposed by Risk Guard)</div>
+              <textarea id="prover-candidate-yaml" class="mono" style="width:100%;min-height:190px;font-size:11.5px;background:var(--bg-code)" spellcheck="false"></textarea>
+            </div>
+          </div>
+          <div style="margin-top:8px;text-align:right">
+            <button type="button" class="btn btn-primary" id="btn-run-custom-yaml">Verify Edited YAML with OpenShell Z3 Prover</button>
+          </div>
+        </details>
+      </section>
+    </div>
+  </main>
+
+  <!-- =================================================================== -->
+  <!-- WORKSPACE 4: TWO-PERSON GOVERNANCE & APPROVALS DESK                 -->
+  <!-- =================================================================== -->
+  <main id="ws-approvals" class="hidden">
+    <section class="card" style="margin-bottom:16px">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">Two-Person Governance &amp; Approvals Desk</h2>
+          <p class="card-subtitle">Tightening is immediate. Loosening protection or approving a new OpenShell policy requires a proposer and a distinct second administrator (<code>learningnemo-approver@christopherghannagmail.onmicrosoft.com</code>).</p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap" id="studio-appr-top-actions"></div>
+      </div>
+      <div id="studio-appr-pending" class="triage-stack"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">Audited Decision History</h2>
+          <p class="card-subtitle">Executed, approved, rejected, and refused change proposals</p>
+        </div>
+      </div>
+      <div id="studio-appr-history" class="triage-stack"></div>
+    </section>
+  </main>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+const STATE = {
+  ws: "command",
+  theme: "light",
+  fleet: null,
+  controls: null,
+  changes: null,
+  selectedAgentId: "",
+  agentDetail: null,
+  selectedDecisionIdx: 0,
+  nodeFilter: "",
+  locksDrawerOpen: false,
+  lastSeenDecisionIds: new Map(),
+  activeReplayTimer: null,
+  activeReplayPacket: null,
+  auth: { cfg: null, token: "", name: "", role: "" },
+  twoPerson: false
+};
+
+const SIGNAL_NAMES = {
+  I: "High-impact API call (I)",
+  task_constraint: "Outside approved task rules (Layer A)",
+  shadow_rule: "Shadow rule match (recorded only)",
+  "restriction:strict_epoch": "Latched Risk Guard lock (strict_epoch)",
+  "restriction:cooldown": "Tier-2 cooldown restriction",
+  quarantine: "Workload / SPIFFE quarantine",
+  siem_context: "Correlated SIEM & RCF ML anomaly (R1–R6)",
+  maturity_credit: "Learned behavioral maturity credit",
+  guardrails_revision: "Saved enforcement settings revision",
+  N_r: "Unfamiliar target resource (N_r)",
+  N_a: "Unfamiliar action route (N_a)",
+  J_Nr_I: "Unfamiliar resource × high-impact synergy",
+  T: "Unexpected process binary (T)",
+  C: "Credentialed endpoint (C)",
+  V: "1m request velocity spike (V)",
+  F: "15m resource fan-out spike (F)"
+};
+
+const shortId = (v, n = 16) => {
+  if (!v) return "—";
+  const s = String(v);
+  return s.length > n ? `${s.slice(0, n)}…` : s;
+};
+const fmtUs = us => {
+  if (!Number.isFinite(us)) return "—";
+  if (us < 1000) return `${Math.round(us)} µs`;
+  return `${(us / 1000).toFixed(1)} ms`;
+};
+
+function el(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") node.className = v;
+    else if (k === "text") node.textContent = v;
+    else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2), v);
+    else if (v !== undefined && v !== null) node.setAttribute(k, String(v));
+  }
+  for (const c of children.flat()) {
+    if (c !== null && c !== undefined) {
+      node.append(typeof c === "string" ? document.createTextNode(c) : c);
+    }
+  }
+  return node;
+}
+
+$("btn-theme-toggle").addEventListener("click", () => {
+  STATE.theme = STATE.theme === "light" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", STATE.theme);
+  renderCommandCenter();
+  if (STATE.agentDetail) renderCockpit();
+});
+
+function authHeaders(extra = {}) {
+  return STATE.auth.token ? { ...extra, Authorization: `Bearer ${STATE.auth.token}` } : extra;
+}
+
+async function apiJson(url, options = {}) {
+  const res = await fetch(url, {
+    cache: "no-store",
+    credentials: "same-origin",
+    ...options,
+    headers: authHeaders({ ...(options.body ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) })
+  });
+  const payload = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(payload?.error || `HTTP ${res.status}`);
+  return payload;
+}
+
+function authB64(bytes) {
+  let text = "";
+  for (const b of bytes) text += String.fromCharCode(b);
+  return btoa(text).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+const authRedirectUri = () => location.origin + "/admin";
+const authEndpoint = kind => `https://login.microsoftonline.com/${STATE.auth.cfg.tenant_id}/oauth2/v2.0/${kind}`;
+const authScopes = () => `${STATE.auth.cfg.scope} openid profile offline_access`;
+
+async function authStart(chooseAccount = false) {
+  if (!STATE.auth.cfg) return;
+  const verifier = authB64(crypto.getRandomValues(new Uint8Array(48)));
+  const state = authB64(crypto.getRandomValues(new Uint8Array(24)));
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  sessionStorage.setItem("rg_pkce", JSON.stringify({ verifier, state }));
+  const params = new URLSearchParams({
+    client_id: STATE.auth.cfg.client_id,
+    response_type: "code",
+    redirect_uri: authRedirectUri(),
+    response_mode: "query",
+    scope: authScopes(),
+    state,
+    code_challenge: authB64(new Uint8Array(digest)),
+    code_challenge_method: "S256"
+  });
+  if (chooseAccount) params.set("prompt", "select_account");
+  location.assign(authEndpoint("authorize") + "?" + params);
+}
+
+async function authFinish(params) {
+  const saved = JSON.parse(sessionStorage.getItem("rg_pkce") || "null");
+  sessionStorage.removeItem("rg_pkce");
+  if (params.get("error")) throw new Error((params.get("error_description") || params.get("error")).split("\r")[0]);
+  if (!saved || params.get("state") !== saved.state) throw new Error("Sign-in state mismatch.");
+  const response = await fetch(authEndpoint("token"), {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: STATE.auth.cfg.client_id,
+      scope: authScopes(),
+      grant_type: "authorization_code",
+      code: params.get("code"),
+      redirect_uri: authRedirectUri(),
+      code_verifier: saved.verifier
+    })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.access_token) {
+    throw new Error((payload.error_description || "Sign-in was not completed.").split("\r")[0]);
+  }
+  const expiresAt = Date.now() + (Number(payload.expires_in) || 3000) * 1000;
+  STATE.auth.token = payload.access_token;
+  sessionStorage.setItem("rg_auth", JSON.stringify({
+    token: payload.access_token,
+    expiresAt,
+    refreshToken: payload.refresh_token || ""
+  }));
+}
+
+async function initAuth() {
+  try {
+    const status = await apiJson("/api/operator/status");
+    STATE.auth.cfg = status?.sign_in || null;
+    const params = new URLSearchParams(location.search);
+    if (STATE.auth.cfg && (params.has("code") || params.has("error"))) {
+      history.replaceState(null, "", location.pathname);
+      await authFinish(params).catch(err => window.alert(err.message));
+      const returnTo = sessionStorage.getItem("rg_return_to");
+      if (returnTo && returnTo.startsWith("/classic")) {
+        sessionStorage.removeItem("rg_return_to");
+        location.assign(returnTo);
+        return;
+      }
+    }
+    const saved = JSON.parse(sessionStorage.getItem("rg_auth") || "null");
+    if (saved?.token && saved.expiresAt > Date.now()) {
+      STATE.auth.token = saved.token;
+      const who = await apiJson("/api/auth/whoami").catch(() => null);
+      if (who?.name) {
+        STATE.auth.name = who.name;
+        STATE.auth.role = who.role;
+        $("nav-auth-pill").textContent = `${who.name} (${who.role})`;
+        $("nav-auth-pill").className = "pill pill-green";
+        $("btn-signin").textContent = "⇄ Switch Account";
+      }
+    } else if (STATE.auth.cfg && (location.pathname === "/admin" || location.pathname === "/studio/admin")) {
+      await authStart(true);
+    }
+  } catch (_) {}
+}
+
+$("btn-signin").addEventListener("click", () => {
+  sessionStorage.removeItem("rg_auth");
+  if (STATE.auth.cfg) {
+    void authStart(true);
+  } else {
+    location.assign("/admin");
+  }
+});
+
+function switchWorkspace(ws) {
+  STATE.ws = ws;
+  for (const btn of document.querySelectorAll(".seg-tab")) {
+    const active = btn.dataset.ws === ws;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", String(active));
+  }
+  for (const id of ["command", "cockpit", "prover", "approvals"]) {
+    $(`ws-${id}`).classList.toggle("hidden", id !== ws);
+  }
+  if (ws === "prover" && !$("probe-3hop-visual").children.length) {
+    void runStudioScenario("tighten");
+  }
+}
+for (const btn of document.querySelectorAll(".seg-tab")) {
+  btn.addEventListener("click", () => switchWorkspace(btn.dataset.ws));
+}
+
+function parseLockScope(scope) {
+  const parts = String(scope || "").trim().split(/\s+/);
+  if (parts.length >= 4) {
+    return { origin: parts[0], method: parts[1], route: parts[2], resource: parts.slice(3).join(" ") };
+  }
+  return { origin: "unknown", method: "LOCKED", route: scope || "/", resource: "target" };
+}
+
+// ---- WORKSPACE 1: COMMAND CENTER ----
+function renderCommandCenter() {
+  const state = STATE.fleet;
+  const ctl = STATE.controls;
+  if (!state) return;
+
+  const agents = state.agents || [];
+  const totalCalls = agents.reduce((s, a) => s + Number(a.decision_count || 0), 0);
+  const totalDenied = agents.reduce((s, a) => s + Number(a.denied_count || 0), 0);
+  const totalLocks = agents.reduce((s, a) => s + Number(a.active_restriction_count || 0), 0);
+  const totalOsDenials1h = Number(state.openshell_floor_summary?.denials_1h ?? agents.reduce((s, a) => s + Number(a.openshell_denials_1h || 0), 0));
+  const totalOsDenials5m = Number(state.openshell_floor_summary?.denials_5m ?? agents.reduce((s, a) => s + Number(a.openshell_denials_5m || 0), 0));
+  const quarantinedCount = agents.filter(a => a.quarantined).length;
+  const lockedWorkloads = agents.filter(a => !a.quarantined && Number(a.active_restriction_count || 0) > 0).length;
+  const blockedHistoryWorkloads = agents.filter(a => !a.quarantined && !Number(a.active_restriction_count || 0) && Number(a.denied_count || 0) > 0).length;
+  const cleanWorkloads = Math.max(0, agents.length - quarantinedCount - lockedWorkloads - blockedHistoryWorkloads);
+
+  $("banner-os-kpi").textContent = `${totalOsDenials1h} Blocked`;
+  $("banner-os-sub").textContent = `1h via OpenStream · ${state.sandbox_lifecycle?.open ?? 0} open pods`;
+  $("banner-rg-kpi").textContent = `${totalDenied} Blocked`;
+  $("banner-rg-sub").textContent = `${totalLocks} active locks across ${lockedWorkloads} workloads`;
+
+  const lat = state.decision_latency;
+  if (lat && lat.samples > 0) {
+    $("nav-latency-pill").textContent = `p50 ≤ ${fmtUs(lat.p50_us)} · p99 ≤ ${fmtUs(lat.p99_us)}`;
+    $("chart-p99-badge").textContent = `p99 ≤ ${fmtUs(lat.p99_us)}`;
+  }
+
+  STATE.twoPerson = Boolean(STATE.changes?.two_person_required);
+  $("cmd-two-person-pill").textContent = STATE.twoPerson ? "2-Person Rule: Enforcing 🔒" : "2-Person Rule: Off";
+  $("cmd-two-person-pill").className = `pill ${STATE.twoPerson ? "pill-blue" : "pill-amber"}`;
+
+  const list = ctl?.controls || [];
+  const silentCtl = list.find(c => c.id === "supervisor_silent");
+  const siemCtl = list.find(c => c.id === "siem_context");
+  const freshFeatures = Number(siemCtl?.evidence?.fresh_features || 0);
+  const batchAge = siemCtl?.evidence?.newest_batch_age_seconds;
+  $("cmd-siem-freshness-pill").textContent = freshFeatures > 0
+    ? `OpenStream SIEM: ${freshFeatures} features (${batchAge ?? 0}s ago)`
+    : "OpenStream SIEM: Waiting for batch";
+  $("cmd-siem-freshness-pill").className = `pill ${freshFeatures > 0 ? "pill-green" : "pill-amber"}`;
+
+  const svg = $("cmd-arch-svg");
+  svg.replaceChildren();
+  const NS = "http://www.w3.org/2000/svg";
+  const stages = [
+    { x: 135, num: "SYSTEM 1 · CONTROL PLANE", title: "OpenShell Gateway + Interceptor", kpi: "Z3 Verified", sub: "Blocks policy widening on create/set", color: "var(--os-color)" },
+    { x: 405, num: "SYSTEM 1 · SANDBOX FLOOR", title: "OpenShell Static Policy", kpi: `${totalOsDenials1h} Floor Blocks (1h)`, sub: `via OpenStream OCSF · ${state.sandbox_lifecycle?.open ?? 0} open pods`, color: "var(--os-color)" },
+    { x: 675, num: "SYSTEM 2 · INLINE SCORER", title: "Risk Guard Adaptive Gate", kpi: `${totalDenied} / ${totalCalls} Blocked`, sub: `${totalLocks} locks · scores calls OpenShell allowed`, color: "var(--rg-color)" },
+    { x: 945, num: "SYSTEM 2 · TUNNEL GATE", title: "Risk Guard Envoy ext_authz", kpi: `${silentCtl?.evidence?.seen_24h ?? 0} Silent Alerts`, sub: "Blocks quarantined & silent tunnels", color: "var(--rg-color)" },
+    { x: 1215, num: "OPENSTREAM & POLICY LOOP", title: "OpenStream → Risk Guard → Z3", kpi: `${freshFeatures} SIEM Features`, sub: `S1 5m blocks (${totalOsDenials5m}) feed R1–R6 & Z3`, color: "var(--green)" }
+  ];
+  for (let i = 0; i < stages.length - 1; i++) {
+    const x1 = stages[i].x + 115, x2 = stages[i + 1].x - 115;
+    const line = document.createElementNS(NS, "line");
+    line.setAttribute("x1", String(x1)); line.setAttribute("y1", "78");
+    line.setAttribute("x2", String(x2)); line.setAttribute("y2", "78");
+    line.setAttribute("stroke", "var(--edge-idle)");
+    line.setAttribute("stroke-width", "2");
+    svg.append(line);
+  }
+  for (const st of stages) {
+    const g = document.createElementNS(NS, "g");
+    g.setAttribute("transform", `translate(${st.x}, 78)`);
+    const rect = document.createElementNS(NS, "rect");
+    rect.setAttribute("x", "-115"); rect.setAttribute("y", "-54");
+    rect.setAttribute("width", "230"); rect.setAttribute("height", "108");
+    rect.setAttribute("rx", "12");
+    rect.setAttribute("fill", "var(--node-fill)");
+    rect.setAttribute("stroke", "var(--node-stroke)");
+    rect.setAttribute("stroke-width", "1.2");
+    const topBar = document.createElementNS(NS, "rect");
+    topBar.setAttribute("x", "-115"); topBar.setAttribute("y", "-54");
+    topBar.setAttribute("width", "230"); topBar.setAttribute("height", "4");
+    topBar.setAttribute("rx", "2");
+    topBar.setAttribute("fill", st.color);
+    const tNum = document.createElementNS(NS, "text");
+    tNum.setAttribute("x", "-98"); tNum.setAttribute("y", "-30");
+    tNum.setAttribute("fill", st.color); tNum.setAttribute("font-size", "9.8"); tNum.setAttribute("font-weight", "700");
+    tNum.textContent = st.num;
+    const tTitle = document.createElementNS(NS, "text");
+    tTitle.setAttribute("x", "-98"); tTitle.setAttribute("y", "-11");
+    tTitle.setAttribute("fill", "var(--text-primary)"); tTitle.setAttribute("font-size", "12.5"); tTitle.setAttribute("font-weight", "600");
+    tTitle.textContent = st.title;
+    const tKpi = document.createElementNS(NS, "text");
+    tKpi.setAttribute("x", "-98"); tKpi.setAttribute("y", "16");
+    tKpi.setAttribute("fill", "var(--text-primary)"); tKpi.setAttribute("font-size", "16"); tKpi.setAttribute("font-weight", "700");
+    tKpi.textContent = st.kpi;
+    const tSub = document.createElementNS(NS, "text");
+    tSub.setAttribute("x", "-98"); tSub.setAttribute("y", "37");
+    tSub.setAttribute("fill", "var(--text-secondary)"); tSub.setAttribute("font-size", "11");
+    tSub.textContent = st.sub;
+    g.append(rect, topBar, tNum, tTitle, tKpi, tSub);
+    svg.append(g);
+  }
+
+  $("chart-total-workloads").textContent = String(agents.length);
+  const donut = $("chart-posture-donut");
+  donut.replaceChildren();
+  const segments = [
+    { label: "Locked by Risk Guard", count: lockedWorkloads + quarantinedCount, color: "var(--red-bright)" },
+    { label: "Blocked Calls by Risk Guard", count: blockedHistoryWorkloads, color: "var(--amber-bright)" },
+    { label: "Allowed by Both Systems", count: cleanWorkloads, color: "var(--green-bright)" }
+  ];
+  const r = 42, circ = 2 * Math.PI * r;
+  let offset = 0;
+  const totalW = Math.max(1, agents.length);
+  for (const seg of segments) {
+    if (seg.count <= 0) continue;
+    const len = (seg.count / totalW) * circ;
+    const circle = document.createElementNS(NS, "circle");
+    circle.setAttribute("cx", "60"); circle.setAttribute("cy", "60"); circle.setAttribute("r", String(r));
+    circle.setAttribute("fill", "none");
+    circle.setAttribute("stroke", seg.color);
+    circle.setAttribute("stroke-width", "14");
+    circle.setAttribute("stroke-dasharray", `${len} ${circ - len}`);
+    circle.setAttribute("stroke-dashoffset", String(-offset));
+    circle.setAttribute("transform", "rotate(-90 60 60)");
+    donut.append(circle);
+    offset += len;
+  }
+  $("chart-posture-legend").replaceChildren(...segments.map(s =>
+    el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:6px" },
+      el("span", { style: "display:inline-flex;align-items:center;gap:7px" },
+        el("span", { style: `width:9px;height:9px;border-radius:50%;background:${s.color};display:inline-block` }),
+        el("span", { text: s.label })
+      ),
+      el("strong", { class: "mono", text: String(s.count) })
+    )
+  ));
+
+  $("chart-total-denied-pill").textContent = `${totalDenied} Risk Guard blocks · ${totalLocks} locks`;
+  const topBlocked = agents.slice().sort((a, b) => Number(b.active_restriction_count || 0) - Number(a.active_restriction_count || 0) || Number(b.denied_count || 0) - Number(a.denied_count || 0)).slice(0, 4);
+  const maxDenied = Math.max(1, ...topBlocked.map(a => Number(a.denied_count || 0)));
+  $("chart-top-blocked-bars").replaceChildren(...topBlocked.map(a => {
+    const dCount = Number(a.denied_count || 0);
+    const lCount = Number(a.active_restriction_count || 0);
+    const pct = Math.max(4, Math.round((dCount / maxDenied) * 100));
+    return el("div", { class: "bar-row", style: "cursor:pointer", onclick: () => openAgentInCockpit(a.agent_id) },
+      el("span", { style: "font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis", title: a.display_name || a.agent_id, text: shortId(a.display_name || a.agent_id, 20) }),
+      el("div", { class: "bar-track" },
+        el("div", { class: "bar-fill", style: `width:${pct}%;background:${lCount > 0 ? "var(--red-bright)" : "var(--amber-bright)"}` })
+      ),
+      el("span", { class: "mono", style: "text-align:right;font-size:11.5px;font-weight:600", text: `${dCount} RG blk${lCount ? ` · ${lCount}🔒` : ""}` })
+    );
+  }));
+
+  const p50 = lat?.p50_us ?? 180;
+  const p99 = lat?.p99_us ?? 1200;
+  const maxUs = lat?.max_us ?? 4500;
+  $("chart-latency-bars").replaceChildren(
+    ...[
+      ["Median (p50)", fmtUs(p50), Math.min(100, Math.max(5, Math.round((p50 / 10000) * 100))), "var(--green-bright)"],
+      ["Tail (p99)", fmtUs(p99), Math.min(100, Math.max(8, Math.round((p99 / 10000) * 100))), "var(--blue)"],
+      ["Slowest (1h)", fmtUs(maxUs), Math.min(100, Math.max(12, Math.round((maxUs / 50000) * 100))), "var(--amber-bright)"],
+      ["OpenShell Budget", "500.0 ms", 100, "var(--text-muted)"]
+    ].map(([label, val, pct, col]) =>
+      el("div", { class: "bar-row" },
+        el("span", { style: "color:var(--text-secondary)", text: label }),
+        el("div", { class: "bar-track" }, el("div", { class: "bar-fill", style: `width:${pct}%;background:${col}` })),
+        el("span", { class: "mono", style: "text-align:right;font-size:11.5px;font-weight:600", text: val })
+      )
+    )
+  );
+
+  const pendingChanges = (STATE.changes?.changes || []).filter(c => c.status === "pending");
+  $("nav-appr-badge").textContent = String(pendingChanges.length);
+  const triage = [];
+  for (const a of agents) {
+    const locks = Number(a.active_restriction_count || 0);
+    const denied = Number(a.denied_count || 0);
+    const osBlk = Number(a.openshell_denials_1h || 0);
+    if (a.quarantined) {
+      triage.push({
+        cls: "crit",
+        pill: ["Quarantined", "pill-red"],
+        title: a.display_name || a.agent_id,
+        sub: `All outbound HTTP and tunnel calls refused across sandboxes.`,
+        btn: "Details →",
+        onClick: () => openAgentInCockpit(a.agent_id)
+      });
+    } else if (locks > 0) {
+      triage.push({
+        cls: "crit",
+        pill: [`🔒 ${locks} Lock${locks === 1 ? "" : "s"}`, "pill-red"],
+        title: a.display_name || a.agent_id,
+        sub: `OpenShell (S1): ${osBlk} floor blk · Risk Guard (S2): ${denied} blk (${locks} cross-pod lock${locks === 1 ? "" : "s"})`,
+        btn: "Details →",
+        onClick: () => openAgentInCockpit(a.agent_id)
+      });
+    } else if (denied > 0 || osBlk > 0) {
+      if (String(a.agent_id || "").startsWith("epprobe-") && Number(a.open_sandbox_count || 0) === 0) continue;
+      triage.push({
+        cls: "warn",
+        pill: [denied > 0 ? `🛡️ ${denied} RG Blk` : `⚡ ${osBlk} OS Blk`, "pill-amber"],
+        title: a.display_name || a.agent_id,
+        sub: `OpenShell (S1): ${osBlk} floor blk · Risk Guard (S2): ${denied} blk · Peak ${a.max_risk_score ?? 0}/100`,
+        btn: "Details →",
+        onClick: () => openAgentInCockpit(a.agent_id)
+      });
+    }
+  }
+  for (const c of pendingChanges) {
+    triage.push({
+      cls: "warn",
+      pill: ["2P Pending", "pill-blue"],
+      title: `${c.kind} on ${c.target}`,
+      sub: `By ${c.proposer} · "${c.reason}"`,
+      btn: "Review →",
+      onClick: () => switchWorkspace("approvals")
+    });
+  }
+  $("nav-triage-badge").textContent = String(triage.length);
+  const tList = $("triage-list");
+  if (!triage.length) {
+    tList.replaceChildren(el("div", { class: "triage-card", text: "All workloads are nominal. No active locks, quarantines, or pending approvals." }));
+  } else {
+    tList.replaceChildren(...triage.slice(0, 10).map(item =>
+      el("div", { class: `triage-card ${item.cls}`, style: "padding:9px 13px;gap:10px" },
+        el("div", { style: "min-width:0" },
+          el("div", { style: "display:flex;align-items:center;gap:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" },
+            el("span", { class: `pill ${item.pill[1]}`, style: "padding:2px 7px;font-size:11px", text: item.pill[0] }),
+            el("strong", { style: "font-size:13px;overflow:hidden;text-overflow:ellipsis", text: item.title })
+          ),
+          el("div", { class: "mono", style: "font-size:11.2px;color:var(--text-secondary);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis", text: item.sub })
+        ),
+        el("button", { type: "button", class: "btn btn-primary", style: "padding:4px 10px;font-size:11.5px;white-space:nowrap;flex-shrink:0", text: item.btn, onclick: item.onClick })
+      )
+    ));
+  }
+
+  const q = ($("fleet-search").value || "").trim().toLowerCase();
+  const hideProbes = Boolean($("fleet-hide-probes")?.checked);
+  const filtered = agents
+    .filter(a => {
+      if (hideProbes && String(a.agent_id || "").startsWith("epprobe-")) return false;
+      return !q || `${a.agent_id} ${a.display_name || ""}`.toLowerCase().includes(q);
+    })
+    .sort((a, b) =>
+      Number(b.active_restriction_count || 0) - Number(a.active_restriction_count || 0) ||
+      Number(b.openshell_denials_1h || 0) - Number(a.openshell_denials_1h || 0) ||
+      Number(b.denied_count || 0) - Number(a.denied_count || 0)
+    );
+  $("fleet-tbody").replaceChildren(...filtered.map(a => {
+    const locks = Number(a.active_restriction_count || 0);
+    const denied = Number(a.denied_count || 0);
+    const osBlk1h = Number(a.openshell_denials_1h || 0);
+    const osBlk5m = Number(a.openshell_denials_5m || 0);
+    const openPods = Number(a.open_sandbox_count ?? a.active_sandbox_count ?? 0);
+    const badge = a.quarantined
+      ? el("span", { class: "pill pill-red", style: "padding:2px 8px;font-size:11px;white-space:nowrap", text: "Quarantined" })
+      : locks > 0
+        ? el("span", { class: "pill pill-red", style: "padding:2px 8px;font-size:11px;white-space:nowrap", text: `🔒 ${locks} Lock${locks === 1 ? "" : "s"}` })
+        : denied > 0
+          ? el("span", { class: "pill pill-amber", style: "padding:2px 8px;font-size:11px;white-space:nowrap", text: `🛡️ RG Blocked` })
+          : osBlk1h > 0
+            ? el("span", { class: "pill pill-os", style: "padding:2px 8px;font-size:11px;white-space:nowrap", text: `⚡ OS Floor` })
+            : el("span", { class: "pill pill-green", style: "padding:2px 8px;font-size:11px;white-space:nowrap", text: "✓ Nominal" });
+
+    const osCell = osBlk1h > 0
+      ? el("span", { class: "pill pill-os mono", style: "padding:2px 7px;font-size:11px;white-space:nowrap", title: `${osBlk1h} OpenShell floor denials in 1h (${osBlk5m} in last 5m) via OpenStream OCSF`, text: `${osBlk1h} blk (1h)` })
+      : el("span", { class: "mono", style: "font-size:11.5px;color:var(--text-muted)", text: "0 blk" });
+
+    return el("tr", { class: "row-click", onclick: () => openAgentInCockpit(a.agent_id) },
+      el("td", { style: "padding:8px 10px" },
+        el("div", { style: "font-weight:600;font-size:12.8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px", title: a.display_name || a.agent_id, text: a.display_name || a.agent_id }),
+        el("div", { class: "mono", style: "font-size:10.5px;color:var(--text-muted);white-space:nowrap", text: `${openPods} open / ${a.sandbox_count} pods · ${shortId(a.agent_id, 14)}` })
+      ),
+      el("td", { style: "padding:8px 8px;white-space:nowrap" }, badge),
+      el("td", { style: "padding:8px 8px;white-space:nowrap" }, osCell),
+      el("td", { class: "mono", style: "padding:8px 8px;white-space:nowrap;font-size:11.5px" },
+        el("span", { style: denied > 0 ? "color:var(--red);font-weight:700" : "color:var(--text-secondary)", text: `${denied}/${a.decision_count} blk` }),
+        el("span", { style: "color:var(--text-muted);margin-left:5px", text: `· ${a.max_risk_score ?? 0} pk` })
+      ),
+      el("td", { style: "padding:8px 10px;text-align:right;white-space:nowrap" },
+        el("button", { type: "button", class: "btn", style: "padding:4px 10px;font-size:11.5px", text: "Details →", onclick: e => { e.stopPropagation(); openAgentInCockpit(a.agent_id); } })
+      )
+    );
+  }));
+}
+$("fleet-search").addEventListener("input", renderCommandCenter);
+
+// ---- WORKSPACE 2: AGENT WORKFLOW MAP (Diagram First, Clean Lock Drawer on Demand!) ----
+async function selectAgent(agentId) {
+  if (!agentId) return;
+  stopReplay();
+  STATE.selectedAgentId = agentId;
+  STATE.locksDrawerOpen = false;
+  $("cockpit-agent-select").value = agentId;
+  $("prover-agent-select").value = agentId;
+  const detail = await apiJson(`/api/agents/${encodeURIComponent(agentId)}`);
+  const decisions = detail.decisions || [];
+
+  // Surface OpenStream-reported OpenShell Floor Blocks (System 1 denials) as up to 2 top rows so both S1 and S2 blocks are immediately visible!
+  const sbDenials = detail.siem_features?.sandbox_denials || [];
+  const sampleHost = decisions[0]?.request?.host || "deploy-api.openshell.svc.cluster.local";
+  const samplePort = decisions[0]?.request?.port || 18081;
+  if (sbDenials.length > 0) {
+    const total1h = sbDenials.reduce((s, x) => s + Number(x.openshell_denials_1h || 0), 0);
+    const max5m = Math.max(0, ...sbDenials.map(x => Number(x.openshell_denials_5m || 0)));
+    const topSbd = sbDenials[0];
+    if (total1h > 0 || max5m > 0) {
+      decisions.unshift({
+        blocked_by_openshell: true,
+        openstream_count_1h: total1h,
+        openstream_count_5m: max5m,
+        request: {
+          request_id: `openstream-os-deny-${topSbd.sandbox_id}`,
+          sandbox_id: topSbd.sandbox_id,
+          timestamp_ms: topSbd.generated_at_ms || Date.now(),
+          scheme: "http",
+          host: sampleHost,
+          port: samplePort,
+          method: "OS FLOOR",
+          route_template: `policy_denied (${total1h}× across ${sbDenials.length} pod${sbDenials.length === 1 ? "" : "s"})`,
+          resource_id: "unapproved-floor-target",
+          binary_path: "/usr/bin/python3",
+          semantic_category: "openshell_floor_refusal",
+          high_impact: true
+        },
+        evaluation: {
+          request_id: `openstream-os-deny-${topSbd.sandbox_id}`,
+          decision_timestamp_ms: topSbd.generated_at_ms || Date.now(),
+          outcome: "openshell_deny",
+          risk_score: 0,
+          threshold: 70,
+          reason_code: "openshell_policy_denied_via_openstream",
+          signals: []
+        }
+      });
+    }
+  }
+
+  const prevSet = STATE.lastSeenDecisionIds.get(agentId);
+  const currentIds = new Set(decisions.map(d => d?.evaluation?.request_id || d?.request?.request_id));
+  const newLive = prevSet ? decisions.filter(d => !prevSet.has(d?.evaluation?.request_id || d?.request?.request_id)) : [];
+  STATE.lastSeenDecisionIds.set(agentId, currentIds);
+
+  STATE.agentDetail = detail;
+  STATE.nodeFilter = "";
+  $("btn-clear-node-filter").hidden = true;
+
+  const firstDeniedIdx = decisions.findIndex(d => d?.evaluation?.outcome === "deny" || d?.blocked_by_openshell || Number(d?.evaluation?.risk_score || 0) >= 20);
+  STATE.selectedDecisionIdx = firstDeniedIdx >= 0 ? firstDeniedIdx : 0;
+
+  renderCockpit();
+  populateProverFromAgent(detail);
+
+  if (newLive.length > 0) {
+    animateSingleDecision(newLive[0], `🟢 Live request just arrived`);
+  }
+}
+
+async function openAgentInCockpit(agentId) {
+  switchWorkspace("cockpit");
+  await selectAgent(agentId);
+}
+
+async function openAgentInProver(agentId) {
+  switchWorkspace("prover");
+  await selectAgent(agentId);
+  await runStudioScenario("tighten");
+}
+
+$("btn-toggle-locks-drawer").addEventListener("click", () => {
+  STATE.locksDrawerOpen = !STATE.locksDrawerOpen;
+  $("cockpit-locks-drawer").classList.toggle("hidden", !STATE.locksDrawerOpen);
+});
+
+function renderCockpit() {
+  const d = STATE.agentDetail;
+  if (!d) return;
+  const ctx = (d.contexts || [])[d.contexts.length - 1] || {};
+  const snap = (d.policy_snapshots || [])[0];
+  const siem = d.siem_features?.features || {};
+  const osDenials1h = Number(siem.openshell_denials_1h || 0);
+  const osDenials5m = Number(siem.openshell_denials_5m || 0);
+  $("cockpit-os-pill").textContent = `System 1 (OpenShell): ${osDenials1h} Floor Blocks (1h via OpenStream) · ${snap ? `YAML ${snap.policy_hash.slice(0, 8)}` : "Static Floor"}`;
+
+  const allLocks = (d.contexts || []).flatMap(c =>
+    (c.active_restrictions || []).map(r => ({
+      ...r,
+      context_id: c.context_id,
+      task_profile: c.task_profile,
+      parsed: parseLockScope(r.scope)
+    }))
+  );
+  const byScope = new Map();
+  for (const lock of allLocks) {
+    const prev = byScope.get(lock.scope);
+    if (!prev) byScope.set(lock.scope, { ...lock, contextsCount: 1 });
+    else prev.contextsCount++;
+  }
+  const uniqueLocks = Array.from(byScope.values());
+  const deniedCount = (d.decisions || []).filter(x => x?.evaluation?.outcome === "deny").length;
+
+  if (d.quarantine) {
+    $("cockpit-rg-pill").textContent = `System 2 (Risk Guard): Quarantined`;
+    $("cockpit-rg-pill").className = "pill pill-red";
+  } else if (uniqueLocks.length > 0) {
+    $("cockpit-rg-pill").textContent = `System 2 (Risk Guard): ${uniqueLocks.length} Locked Route(s) · ${deniedCount} Blocked`;
+    $("cockpit-rg-pill").className = "pill pill-red";
+  } else if (deniedCount > 0) {
+    $("cockpit-rg-pill").textContent = `System 2 (Risk Guard): ${deniedCount} Blocked (${ctx.task_profile || "default"})`;
+    $("cockpit-rg-pill").className = "pill pill-amber";
+  } else {
+    $("cockpit-rg-pill").textContent = `System 2 (Risk Guard): Allowing (${ctx.task_profile || "default"})`;
+    $("cockpit-rg-pill").className = "pill pill-green";
+  }
+
+  if (d.siem_features) {
+    const grade = (Number(siem.anomaly_grade_15m_permille || 0) / 1000).toFixed(2);
+    const r1Bonus = osDenials5m >= 10 ? "+8 pts" : osDenials5m >= 3 ? "+4 pts" : "+0 pts";
+    $("cockpit-siem-pill").hidden = false;
+    $("cockpit-siem-pill").textContent = `OpenStream SIEM: ${osDenials5m} S1 blk (5m → R1 ${r1Bonus}) · RCF ${grade}`;
+  } else {
+    $("cockpit-siem-pill").hidden = true;
+  }
+
+  // Compact Lock Drawer Toggle Button (Keeps the top of the page super clean!)
+  const lockBtn = $("btn-toggle-locks-drawer");
+  const drawer = $("cockpit-locks-drawer");
+  if (uniqueLocks.length > 0 || d.quarantine) {
+    lockBtn.hidden = false;
+    lockBtn.textContent = `🔒 Manage Risk Guard Locks (${uniqueLocks.length}) ${STATE.locksDrawerOpen ? "▴" : "▾"}`;
+    drawer.classList.toggle("hidden", !STATE.locksDrawerOpen);
+    drawer.replaceChildren(
+      el("div", { class: "triage-card crit", style: "display:block" },
+        el("div", { style: "font-size:12.5px;margin-bottom:8px;color:var(--text-secondary)" },
+          "These routes were permitted by System 1 (OpenShell YAML), but System 2 (Risk Guard) blocked them and latched a persistent cross-sandbox lock:"
+        ),
+        ...uniqueLocks.map(lock =>
+          el("div", { style: "display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 10px;background:var(--bg-card);border:1px solid var(--red-border);border-radius:8px;margin-top:6px;flex-wrap:wrap" },
+            el("div", {},
+              el("span", { class: "pill pill-red", style: "margin-right:8px", text: `Risk Guard Lock · ${lock.strike_count} strikes` }),
+              el("strong", { class: "mono", text: `${lock.parsed.method} ${lock.parsed.route}` }),
+              el("span", { class: "mono", style: "margin-left:8px;color:var(--text-secondary)", text: `→ ${lock.parsed.origin} (target: '${lock.parsed.resource}')` })
+            ),
+            el("div", { style: "display:flex;gap:6px" },
+              el("button", { type: "button", class: "btn", text: "Filter Map", onclick: () => {
+                STATE.nodeFilter = lock.parsed.resource;
+                $("btn-clear-node-filter").hidden = false;
+                renderCockpit();
+              } }),
+              el("button", { type: "button", class: "btn btn-danger", text: STATE.twoPerson ? "Propose Clearance (2P)" : "Clear Lock", onclick: async () => {
+                const reason = (window.prompt(`Enter audit reason to clear lock on ${lock.scope}:`) || "").trim();
+                if (!reason) return;
+                try {
+                  if (STATE.twoPerson) {
+                    await apiJson("/api/changes", { method: "POST", body: JSON.stringify({ kind: "clear_restriction", agent_id: d.agent.agent_id, scope: lock.scope, context_id: lock.contextsCount === 1 ? lock.context_id : null, reason }) });
+                    window.alert("Lock clearance proposed! Switch to second approver (learningnemo-approver@christopherghannagmail.onmicrosoft.com) in Tab 4 to approve.");
+                  } else {
+                    await apiJson(`/api/agents/${encodeURIComponent(d.agent.agent_id)}/restrictions/clear`, { method: "POST", body: JSON.stringify({ scope: lock.scope, context_id: lock.contextsCount === 1 ? lock.context_id : null, reason }) });
+                  }
+                  await refreshAll();
+                } catch (err) { window.alert(err.message); }
+              } })
+            )
+          )
+        )
+      )
+    );
+  } else {
+    lockBtn.hidden = true;
+    drawer.classList.add("hidden");
+  }
+
+  renderCockpitFlowMap(d, uniqueLocks);
+  renderCockpitDecisions(d);
+}
+
+function renderCockpitFlowMap(d, uniqueLocks) {
+  const svg = $("cockpit-flow-svg");
+  svg.replaceChildren();
+  const NS = "http://www.w3.org/2000/svg";
+  const W = 1380, H = 460;
+  const cols = [115, 345, 600, 885, 1195];
+  const headers = [
+    "1. Agent Workload (Origin)",
+    "2. Sandbox Pod (SPIFFE)",
+    "3. System 1: OpenShell Policy",
+    "4. System 2: Risk Guard Gate",
+    "5. Destination Route & Host:Port"
+  ];
+  for (let i = 0; i < cols.length; i++) {
+    const t = document.createElementNS(NS, "text");
+    t.setAttribute("x", String(cols[i]));
+    t.setAttribute("y", "26");
+    t.setAttribute("text-anchor", "middle");
+    t.setAttribute("fill", i === 2 ? "var(--os-color)" : i === 3 ? "var(--rg-color)" : "var(--text-muted)");
+    t.setAttribute("font-size", "11");
+    t.setAttribute("font-weight", "700");
+    t.textContent = headers[i];
+    svg.append(t);
+  }
+
+  const decisions = d.decisions || [];
+  const activeDecision = decisions[STATE.selectedDecisionIdx] || decisions[0] || null;
+  const activeReq = activeDecision?.request || {};
+  const activeEv = activeDecision?.evaluation || {};
+  const activeBlockedByOs = Boolean(activeDecision?.blocked_by_openshell || activeEv.outcome === "openshell_deny");
+  const activeDenied = activeBlockedByOs || activeEv.outcome === "deny";
+  const activeFlagged = !activeDenied && Number(activeEv.risk_score || 0) >= 20;
+  const activeScore = Number(activeEv.risk_score || 0);
+  const activeThreshold = Number(activeEv.threshold ?? 70);
+  const activeHostPort = `${activeReq.host || "deploy-api.openshell.svc.cluster.local"}:${activeReq.port ?? 18081}`;
+  const activeResource = activeReq.resource_id || "default";
+  const activeRouteKey = activeDecision
+    ? `${activeReq.method || "GET"} ${activeReq.route_template || "/"} → ${activeResource} @ ${activeHostPort}`
+    : "";
+
+  // Build Sandbox Pod map (Col 2) — guarantee the activeDecision's sandbox_id is always included!
+  const sbMap = new Map();
+  for (const run of d.runs || []) {
+    for (const sb of run.sandboxes || []) {
+      if (sb.sandbox_id && !sbMap.has(sb.sandbox_id)) {
+        sbMap.set(sb.sandbox_id, { id: sb.sandbox_id, spiffe: sb.spiffe_id || "", allow: 0, deny: 0, osDeny: 0, binary: "" });
+      }
+    }
+  }
+
+  // Build Destination Route & Host map (Col 5) — include both locks and all recorded decisions
+  const routeMap = new Map();
+  for (const lock of uniqueLocks) {
+    const p = lock.parsed;
+    const hostPort = p.origin.replace(/^https?:\/\//, "");
+    const rKey = `${p.method} ${p.route} → ${p.resource} @ ${hostPort}`;
+    routeMap.set(rKey, {
+      key: rKey, method: p.method, route: p.route, resource: p.resource,
+      hostPort, origin: p.origin, allow: 0, deny: 0, osDeny: 0, locked: true, strikes: lock.strike_count
+    });
+  }
+
+  for (const item of decisions) {
+    const req = item.request || {};
+    const ev = item.evaluation || {};
+    const isOsDeny = Boolean(item.blocked_by_openshell || ev.outcome === "openshell_deny");
+    const isDeny = isOsDeny || ev.outcome === "deny";
+    if (req.sandbox_id) {
+      const sb = sbMap.get(req.sandbox_id) || { id: req.sandbox_id, spiffe: "", allow: 0, deny: 0, osDeny: 0, binary: "" };
+      if (isOsDeny) sb.osDeny += Number(item.openstream_count_1h || 1);
+      else if (isDeny) sb.deny++;
+      else sb.allow++;
+      if (req.binary_path && !sb.binary) sb.binary = req.binary_path;
+      sbMap.set(req.sandbox_id, sb);
+    }
+    const hostPort = `${req.host || "unknown"}:${req.port ?? 80}`;
+    const origin = `${req.scheme || "http"}://${hostPort}`;
+    const resource = req.resource_id || "default";
+    const rKey = `${req.method || "GET"} ${req.route_template || "/"} → ${resource} @ ${hostPort}`;
+    const r = routeMap.get(rKey) || {
+      key: rKey, method: req.method || "GET", route: req.route_template || "/",
+      resource, hostPort, origin, allow: 0, deny: 0, osDeny: 0, locked: false, strikes: 0
+    };
+    if (isOsDeny) r.osDeny += Number(item.openstream_count_1h || 1);
+    else if (isDeny) r.deny++;
+    else r.allow++;
+    if (ev.reason_code === "behavioral_risk_restricted") r.locked = true;
+    routeMap.set(rKey, r);
+  }
+
+  // Guarantee activeDecision's sandbox pod is in the displayed list of up to 4 pods
+  const allSbs = Array.from(sbMap.values()).sort((a, b) => (b.allow + b.deny + b.osDeny) - (a.allow + a.deny + a.osDeny));
+  let sbs = allSbs.slice(0, 4);
+  if (activeReq.sandbox_id && !sbs.some(s => s.id === activeReq.sandbox_id)) {
+    const activeSb = sbMap.get(activeReq.sandbox_id) || { id: activeReq.sandbox_id, spiffe: "", allow: 1, deny: 0, osDeny: 0, binary: activeReq.binary_path || "" };
+    sbs = [activeSb, ...sbs.slice(0, 3)];
+  }
+  if (!sbs.length) sbs.push({ id: "no-sandbox", spiffe: "", allow: 0, deny: 0, osDeny: 0, binary: "" });
+
+  // Guarantee BOTH allowed destination routes AND blocked/locked routes are visible in Column 5,
+  // AND guarantee activeRouteKey is ALWAYS present in Column 5!
+  const allRoutes = Array.from(routeMap.values());
+  const allowedRoutes = allRoutes.filter(r => r.allow > 0 && !r.locked).sort((a, b) => b.allow - a.allow);
+  const blockedRoutes = allRoutes.filter(r => r.locked || r.deny > 0 || r.osDeny > 0).sort((a, b) => Number(b.locked) - Number(a.locked) || b.deny - a.deny || b.osDeny - a.osDeny);
+  const chosenKeys = new Set();
+  const chosenRoutes = [];
+  const addRoute = r => {
+    if (r && !chosenKeys.has(r.key) && chosenRoutes.length < 6) {
+      chosenKeys.add(r.key);
+      chosenRoutes.push(r);
+    }
+  };
+  if (activeRouteKey && routeMap.has(activeRouteKey)) addRoute(routeMap.get(activeRouteKey));
+  for (const r of allowedRoutes.slice(0, 3)) addRoute(r);
+  for (const r of blockedRoutes.slice(0, 3)) addRoute(r);
+  for (const r of allRoutes) addRoute(r);
+  if (!chosenRoutes.length) {
+    chosenRoutes.push({ key: "none", method: "IDLE", route: "/no-calls", resource: "—", hostPort: "none", origin: "—", allow: 0, deny: 0, osDeny: 0, locked: false });
+  }
+
+  const rowY = (idx, count, padTop = 76, padBot = 82) =>
+    count <= 1 ? Math.round(H / 2) : Math.round(padTop + (idx * (H - padTop - padBot)) / (count - 1));
+
+  const ctx = (d.contexts || [])[d.contexts.length - 1] || {};
+  const agentNode = {
+    x: cols[0], y: Math.round(H / 2), w: 185, h: 72,
+    title: shortId(d.agent.display_name || d.agent.agent_id, 20),
+    sub1: `Profile: ${ctx.task_profile || "default"}`,
+    sub2: `ID: ${shortId(d.agent.agent_id, 18)}`,
+    sub3: d.quarantine ? "Quarantined workload" : `${sbs.length} pod(s) · ${decisions.length} events`,
+    isQuarantined: Boolean(d.quarantine)
+  };
+
+  const sbNodes = sbs.map((s, i) => ({
+    x: cols[1], y: rowY(i, sbs.length, 86, 90), w: 195, h: 60,
+    sandboxId: s.id,
+    isActive: Boolean(activeReq.sandbox_id && s.id === activeReq.sandbox_id),
+    title: `Pod: ${shortId(s.id, 11)}`,
+    sub1: s.osDeny > 0 ? `⚡ ${s.osDeny} OpenShell floor blk (OpenStream)` : (s.binary ? `bin: ${shortId(s.binary, 22)}` : "OpenShell SPIFFE Pod"),
+    sub2: `${s.allow} ok · ${s.deny} RG blk · ${s.osDeny} OS blk`,
+    filter: s.id
+  }));
+
+  const snap = (d.policy_snapshots || [])[0];
+  const osCount1h = Number(activeDecision?.openstream_count_1h || d.siem_features?.features?.openshell_denials_1h || 0);
+  const osCount5m = Number(activeDecision?.openstream_count_5m || d.siem_features?.features?.openshell_denials_5m || 0);
+  const osGate = {
+    x: cols[2], y: Math.round(H / 2), w: 220, h: 196,
+    hash: snap ? snap.policy_hash.slice(0, 8) : "default",
+    blockedHere: activeBlockedByOs,
+    verdict: activeBlockedByOs
+      ? `✕ BLOCKED BY OPENSHELL (${osCount1h || 1}×)`
+      : "✓ ALLOWED BY OPENSHELL",
+    rows: activeBlockedByOs
+      ? [
+          { label: "1. Process", val: `✓ ${shortId(activeReq.binary_path || "/usr/bin/python3", 18)}`, bad: false },
+          { label: "2. YAML Floor", val: "✕ REFUSED (policy_denied)", bad: true },
+          { label: "3. OpenStream", val: `⚡ ${osCount1h || 1} in 1h · ${osCount5m || 1} in 5m`, bad: true },
+          { label: "4. Action", val: "✕ Stopped at Sandbox Floor", bad: true }
+        ]
+      : [
+          { label: "1. Process", val: `✓ ${shortId(activeReq.binary_path || "/usr/bin/python3", 18)}`, bad: false },
+          { label: "2. Host Rule", val: `✓ ${shortId(activeHostPort, 20)}`, bad: false },
+          { label: "3. Route Glob", val: `✓ ${activeReq.method || "GET"} ${shortId(activeReq.route_template || "/", 14)}`, bad: false },
+          { label: "4. Action", val: "→ Forward to System 2", bad: false }
+        ]
+  };
+
+  // Extract live Risk Guard signal contributions for the active decision so System 2 is visually explained!
+  const sigs = Array.isArray(activeEv.signals) ? activeEv.signals : [];
+  const sigPts = names => sigs.filter(s => names.includes(s.feature)).reduce((acc, s) => acc + Number(s.contribution || 0), 0);
+  const isLockHit = activeEv.reason_code === "behavioral_risk_restricted" || sigPts(["restriction:active"]) > 0;
+  const baselinePts = sigPts(["unapproved_action", "unapproved_resource", "egress_destination", "resource_scope"]);
+  const driftPts = sigPts(["rate_burst", "sequence_novelty", "payload_shape", "credentialed_repeat", "off_hours"]);
+  const siemPts = sigPts(["siem_context", "supervisor_silent", "quarantine"]);
+  const r1Bonus = osCount5m >= 10 ? 8 : osCount5m >= 3 ? 4 : 0;
+
+  const rgGate = {
+    x: cols[3], y: Math.round(H / 2), w: 245, h: 214,
+    notReached: activeBlockedByOs,
+    denied: !activeBlockedByOs && activeDenied,
+    flagged: activeFlagged,
+    score: activeScore,
+    threshold: activeThreshold,
+    verdict: activeBlockedByOs
+      ? `⚪ NOT REACHED (Stopped at S1)`
+      : activeDenied
+        ? `✕ BLOCKED BY RISK GUARD (${activeScore}/100)`
+        : activeFlagged
+          ? `⚠ FLAGGED BY RISK GUARD (${activeScore}/100)`
+          : `✓ ALLOWED BY RISK GUARD (${activeScore}/100)`,
+    rows: activeBlockedByOs
+      ? [
+          { label: "1. Inline Call", val: "⚪ Stopped at OpenShell Floor", bad: false },
+          { label: "2. OpenStream", val: `⚡ ${osCount5m || 1} S1 denials ingested`, bad: false },
+          { label: "3. SIEM Rule R1", val: r1Bonus > 0 ? `⚠ Probing (+${r1Bonus} pts next call)` : "✓ <3 in 5m (+0 pts)", bad: r1Bonus > 0 },
+          { label: "4. Policy Loop", val: "→ Feeds Z3 Policy Studio", bad: false }
+        ]
+      : [
+          {
+            label: "1. Cross-Pod Lock",
+            val: isLockHit ? "✕ LOCKED (+100 pts)" : "✓ Clear (0 strikes)",
+            bad: isLockHit
+          },
+          {
+            label: "2. L7 Baseline",
+            val: baselinePts > 0 ? `✕ Violation (+${baselinePts} pts)` : "✓ Approved (+0 pts)",
+            bad: baselinePts > 0
+          },
+          {
+            label: "3. Rate & Drift",
+            val: driftPts > 0 ? `⚠ Drift (+${driftPts} pts)` : "✓ Nominal (+0 pts)",
+            bad: driftPts >= 30
+          },
+          {
+            label: "4. SIEM & Tunnel",
+            val: siemPts > 0 ? `⚠ Context (+${siemPts} pts)` : "✓ Nominal (+0 pts)",
+            bad: siemPts > 0
+          }
+        ]
+  };
+
+  const dstNodes = chosenRoutes.map((r, i) => {
+    const isSelectedRoute = r.key === activeRouteKey;
+    return {
+      x: cols[4], y: rowY(i, chosenRoutes.length, 62, 74), w: 280, h: 56,
+      routeKey: r.key,
+      isSelectedRoute,
+      methodRoute: `${r.method} ${shortId(r.route, 20)} ['${shortId(r.resource, 10)}']`,
+      hostLine: `${shortId(r.hostPort, 32)}`,
+      outcomeLine: isSelectedRoute
+        ? (activeBlockedByOs
+            ? `🛡️ Protected — Stopped at System 1 (OpenShell Floor)`
+            : activeDenied
+              ? `🛡️ Protected — Request stopped at System 2 (Risk Guard)`
+              : `✓ Reached host (${r.allow} allowed total)`)
+        : (r.osDeny > 0
+            ? `⚡ ${r.osDeny} stopped at OpenShell Floor (OpenStream)`
+            : r.locked
+              ? `🛡️ Risk Guard Lock (${r.deny} stopped · ${r.allow} reached)`
+              : r.deny > 0
+                ? `${r.allow} reached · ${r.deny} stopped by RG`
+                : `✓ ${r.allow} reached host`),
+      filter: r.resource,
+      raw: r
+    };
+  });
+
+  const bezier = (x1, y1, x2, y2) => {
+    const dx = Math.round((x2 - x1) * 0.45);
+    return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+  };
+  const bezierCont = (x1, y1, x2, y2) => {
+    const dx = Math.round((x2 - x1) * 0.45);
+    return `L ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+  };
+
+  // 1. Draw background topology lines for all non-active pods and routes in soft neutral gray
+  for (const sb of sbNodes) {
+    if (!sb.isActive) {
+      const p1 = document.createElementNS(NS, "path");
+      p1.setAttribute("d", bezier(agentNode.x + agentNode.w / 2, agentNode.y, sb.x - sb.w / 2, sb.y));
+      p1.setAttribute("fill", "none"); p1.setAttribute("stroke", "var(--edge-idle)"); p1.setAttribute("stroke-width", "1.2");
+      svg.append(p1);
+      const p2 = document.createElementNS(NS, "path");
+      p2.setAttribute("d", bezier(sb.x + sb.w / 2, sb.y, osGate.x - osGate.w / 2, osGate.y));
+      p2.setAttribute("fill", "none"); p2.setAttribute("stroke", "var(--edge-idle)"); p2.setAttribute("stroke-width", "1.2");
+      svg.append(p2);
+    }
+  }
+  for (const dst of dstNodes) {
+    if (!dst.isSelectedRoute) {
+      const p = document.createElementNS(NS, "path");
+      p.setAttribute("d", bezier(rgGate.x + rgGate.w / 2, rgGate.y, dst.x - dst.w / 2, dst.y));
+      p.setAttribute("fill", "none");
+      p.setAttribute("stroke", "var(--edge-idle)");
+      p.setAttribute("stroke-width", "1.2");
+      if (dst.raw.locked || (dst.raw.deny > 0 && dst.raw.allow === 0) || dst.raw.osDeny > 0) p.setAttribute("stroke-dasharray", "4 4");
+      svg.append(p);
+    }
+  }
+
+  // 2. Draw the ACTIVE Selected Call's Path across the layers!
+  const activeSbNode = sbNodes.find(s => s.isActive) || sbNodes[0];
+  const activeDstNode = dstNodes.find(dn => dn.isSelectedRoute) || dstNodes[0];
+
+  const seg1 = bezier(agentNode.x + agentNode.w / 2, agentNode.y, activeSbNode.x - activeSbNode.w / 2, activeSbNode.y);
+  const seg2 = bezier(activeSbNode.x + activeSbNode.w / 2, activeSbNode.y, osGate.x - osGate.w / 2, osGate.y);
+  const seg3 = bezier(osGate.x + osGate.w / 2, osGate.y, rgGate.x - rgGate.w / 2, rgGate.y);
+  const seg4 = bezier(rgGate.x + rgGate.w / 2, rgGate.y, activeDstNode.x - activeDstNode.w / 2, activeDstNode.y);
+
+  for (const segD of [seg1, seg2]) {
+    const p = document.createElementNS(NS, "path");
+    p.setAttribute("d", segD);
+    p.setAttribute("fill", "none");
+    p.setAttribute("stroke", "var(--blue)");
+    p.setAttribute("stroke-width", "2.8");
+    svg.append(p);
+  }
+
+  // Segment 3 (System 1 OpenShell -> System 2 Risk Guard):
+  // Dashed RED when stopped at System 1 (OpenShell Floor); Solid GREEN when OpenShell permits through to System 2!
+  const p3 = document.createElementNS(NS, "path");
+  p3.setAttribute("d", seg3);
+  p3.setAttribute("fill", "none");
+  p3.setAttribute("stroke", activeBlockedByOs ? "var(--red-bright)" : "var(--green-bright)");
+  p3.setAttribute("stroke-width", activeBlockedByOs ? "2.0" : "2.8");
+  if (activeBlockedByOs) p3.setAttribute("stroke-dasharray", "5 5");
+  svg.append(p3);
+
+  // Segment 4 (System 2 Risk Guard -> Destination Host:Port):
+  const p4 = document.createElementNS(NS, "path");
+  p4.setAttribute("d", seg4);
+  p4.setAttribute("fill", "none");
+  p4.setAttribute("stroke", activeBlockedByOs ? "var(--edge-idle)" : activeDenied ? "var(--red-bright)" : "var(--green-bright)");
+  p4.setAttribute("stroke-width", activeDenied ? "2.0" : "3.0");
+  if (activeDenied) p4.setAttribute("stroke-dasharray", "5 5");
+  svg.append(p4);
+
+  // 3. Draw Clean Structured Feedback Loop Badge directly beneath the S1 <-> S2 Bridge (no floating text at canvas border!)
+  {
+    const midX = Math.round((cols[2] + cols[3]) / 2);
+    const loopY = 368;
+    const arc = document.createElementNS(NS, "path");
+    arc.setAttribute("d", `M ${cols[3] - 40} 336 C ${cols[3] - 40} ${loopY}, ${cols[2] + 40} ${loopY}, ${cols[2] + 40} 328`);
+    arc.setAttribute("fill", "none");
+    arc.setAttribute("stroke", "var(--blue)");
+    arc.setAttribute("stroke-width", "1.5");
+    arc.setAttribute("stroke-dasharray", "4 3");
+    svg.append(arc);
+
+    const badgeG = document.createElementNS(NS, "g");
+    badgeG.setAttribute("transform", `translate(${midX}, ${loopY - 4})`);
+    const bRect = document.createElementNS(NS, "rect");
+    bRect.setAttribute("x", "-158"); bRect.setAttribute("y", "-12");
+    bRect.setAttribute("width", "316"); bRect.setAttribute("height", "24");
+    bRect.setAttribute("rx", "12");
+    bRect.setAttribute("fill", "var(--blue-bg)");
+    bRect.setAttribute("stroke", "var(--blue-border)");
+    bRect.setAttribute("stroke-width", "1");
+    const bTxt = document.createElementNS(NS, "text");
+    bTxt.setAttribute("x", "0"); bTxt.setAttribute("y", "4");
+    bTxt.setAttribute("text-anchor", "middle");
+    bTxt.setAttribute("fill", "var(--blue)");
+    bTxt.setAttribute("font-size", "10");
+    bTxt.setAttribute("font-weight", "700");
+    bTxt.textContent = "⟵ OpenStream S1 Telemetry · S2 Proposes Z3 Policy to S1";
+    badgeG.append(bRect, bTxt);
+    svg.append(badgeG);
+  }
+
+  // 4. Render Column 1 (Agent Workload — Clean Origin Node)
+  {
+    const g = document.createElementNS(NS, "g");
+    g.setAttribute("transform", `translate(${agentNode.x}, ${agentNode.y})`);
+    const hw = agentNode.w / 2, hh = agentNode.h / 2;
+    const r = document.createElementNS(NS, "rect");
+    r.setAttribute("x", String(-hw)); r.setAttribute("y", String(-hh));
+    r.setAttribute("width", String(agentNode.w)); r.setAttribute("height", String(agentNode.h));
+    r.setAttribute("rx", "11");
+    r.setAttribute("fill", agentNode.isQuarantined ? "var(--red-bg)" : "var(--node-fill)");
+    r.setAttribute("stroke", agentNode.isQuarantined ? "var(--red-bright)" : "var(--blue)");
+    r.setAttribute("stroke-width", "2");
+    const t1 = document.createElementNS(NS, "text");
+    t1.setAttribute("x", String(-hw + 12)); t1.setAttribute("y", "-13");
+    t1.setAttribute("fill", "var(--text-primary)"); t1.setAttribute("font-size", "12.5"); t1.setAttribute("font-weight", "700");
+    t1.textContent = agentNode.title;
+    const t2 = document.createElementNS(NS, "text");
+    t2.setAttribute("x", String(-hw + 12)); t2.setAttribute("y", "3");
+    t2.setAttribute("fill", "var(--blue)"); t2.setAttribute("font-size", "10.8"); t2.setAttribute("font-weight", "600");
+    t2.textContent = agentNode.sub1;
+    const t3 = document.createElementNS(NS, "text");
+    t3.setAttribute("x", String(-hw + 12)); t3.setAttribute("y", "19");
+    t3.setAttribute("fill", "var(--text-secondary)"); t3.setAttribute("font-size", "10.2");
+    t3.textContent = agentNode.sub3;
+    g.append(r, t1, t2, t3);
+    svg.append(g);
+  }
+
+  // 5. Render Column 2 (Sandbox Pods — Clean Origin Nodes, Active Pod Highlighted in Blue)
+  for (const sb of sbNodes) {
+    const g = document.createElementNS(NS, "g");
+    g.setAttribute("transform", `translate(${sb.x}, ${sb.y})`);
+    g.style.cursor = "pointer";
+    g.addEventListener("click", () => {
+      STATE.nodeFilter = sb.filter;
+      $("btn-clear-node-filter").hidden = false;
+      renderCockpit();
+    });
+    const hw = sb.w / 2, hh = sb.h / 2;
+    const r = document.createElementNS(NS, "rect");
+    r.setAttribute("x", String(-hw)); r.setAttribute("y", String(-hh));
+    r.setAttribute("width", String(sb.w)); r.setAttribute("height", String(sb.h));
+    r.setAttribute("rx", "10");
+    r.setAttribute("fill", sb.isActive ? "var(--blue-bg)" : "var(--node-fill)");
+    r.setAttribute("stroke", sb.isActive ? "var(--blue)" : "var(--node-stroke)");
+    r.setAttribute("stroke-width", sb.isActive ? "2.2" : "1.2");
+    const t1 = document.createElementNS(NS, "text");
+    t1.setAttribute("x", String(-hw + 12)); t1.setAttribute("y", "-9");
+    t1.setAttribute("fill", sb.isActive ? "var(--blue)" : "var(--text-primary)");
+    t1.setAttribute("font-size", "11.5"); t1.setAttribute("font-weight", "700");
+    t1.textContent = sb.isActive ? `● ${sb.title} (Active)` : sb.title;
+    const t2 = document.createElementNS(NS, "text");
+    t2.setAttribute("x", String(-hw + 12)); t2.setAttribute("y", "6");
+    t2.setAttribute("fill", "var(--text-secondary)"); t2.setAttribute("font-size", "10.4");
+    t2.textContent = sb.sub1;
+    const t3 = document.createElementNS(NS, "text");
+    t3.setAttribute("x", String(-hw + 12)); t3.setAttribute("y", "20");
+    t3.setAttribute("fill", "var(--text-muted)"); t3.setAttribute("font-size", "10");
+    t3.textContent = sb.sub2;
+    g.append(r, t1, t2, t3);
+    svg.append(g);
+  }
+
+  // 6. Render Column 3 (System 1: OpenShell Policy Gate Card — Red when OpenShell blocked at floor, Green when permitted!)
+  {
+    const g = document.createElementNS(NS, "g");
+    g.setAttribute("transform", `translate(${osGate.x}, ${osGate.y})`);
+    const hw = osGate.w / 2, hh = osGate.h / 2;
+    const r = document.createElementNS(NS, "rect");
+    r.setAttribute("x", String(-hw)); r.setAttribute("y", String(-hh));
+    r.setAttribute("width", String(osGate.w)); r.setAttribute("height", String(osGate.h));
+    r.setAttribute("rx", "12");
+    r.setAttribute("fill", "var(--node-fill)");
+    r.setAttribute("stroke", osGate.blockedHere ? "var(--red-bright)" : "var(--green-bright)");
+    r.setAttribute("stroke-width", "2.4");
+
+    const banner = document.createElementNS(NS, "rect");
+    banner.setAttribute("x", String(-hw)); banner.setAttribute("y", String(-hh));
+    banner.setAttribute("width", String(osGate.w)); banner.setAttribute("height", "32");
+    banner.setAttribute("rx", "11");
+    banner.setAttribute("fill", osGate.blockedHere ? "var(--red-bg)" : "var(--green-bg)");
+
+    const bTxt = document.createElementNS(NS, "text");
+    bTxt.setAttribute("x", "0"); bTxt.setAttribute("y", String(-hh + 20));
+    bTxt.setAttribute("text-anchor", "middle");
+    bTxt.setAttribute("fill", osGate.blockedHere ? "var(--red)" : "var(--green)");
+    bTxt.setAttribute("font-size", "10.8");
+    bTxt.setAttribute("font-weight", "700");
+    bTxt.textContent = osGate.verdict;
+
+    const subHead = document.createElementNS(NS, "text");
+    subHead.setAttribute("x", String(-hw + 12)); subHead.setAttribute("y", String(-hh + 50));
+    subHead.setAttribute("fill", "var(--os-color)"); subHead.setAttribute("font-size", "10.5"); subHead.setAttribute("font-weight", "700");
+    subHead.textContent = `OpenShell YAML (${osGate.hash})`;
+
+    g.append(r, banner, bTxt, subHead);
+
+    osGate.rows.forEach((row, idx) => {
+      const ry = -hh + 70 + idx * 30;
+      const rowBg = document.createElementNS(NS, "rect");
+      rowBg.setAttribute("x", String(-hw + 10)); rowBg.setAttribute("y", String(ry - 12));
+      rowBg.setAttribute("width", String(osGate.w - 20)); rowBg.setAttribute("height", "24");
+      rowBg.setAttribute("rx", "5");
+      rowBg.setAttribute("fill", row.bad ? "var(--red-bg)" : "var(--bg-subtle)");
+      const rl = document.createElementNS(NS, "text");
+      rl.setAttribute("x", String(-hw + 16)); rl.setAttribute("y", String(ry + 3));
+      rl.setAttribute("fill", "var(--text-secondary)"); rl.setAttribute("font-size", "9.8");
+      rl.textContent = `${row.label}: `;
+      const rv = document.createElementNS(NS, "text");
+      rv.setAttribute("x", String(hw - 16)); rv.setAttribute("y", String(ry + 3));
+      rv.setAttribute("text-anchor", "end");
+      rv.setAttribute("fill", row.bad ? "var(--red)" : "var(--green)"); rv.setAttribute("font-size", "9.8"); rv.setAttribute("font-weight", "600");
+      rv.textContent = row.val;
+      g.append(rowBg, rl, rv);
+    });
+    svg.append(g);
+  }
+
+  // 7. Render Column 4 (System 2: Risk Guard Gate Card — Explicitly Visualized with 4 Sub-Checks!)
+  {
+    const g = document.createElementNS(NS, "g");
+    g.setAttribute("transform", `translate(${rgGate.x}, ${rgGate.y})`);
+    const hw = rgGate.w / 2, hh = rgGate.h / 2;
+    const borderCol = rgGate.notReached
+      ? "var(--text-muted)"
+      : rgGate.denied
+        ? "var(--red-bright)"
+        : rgGate.flagged
+          ? "var(--amber-bright)"
+          : "var(--green-bright)";
+    const bannerBg = rgGate.notReached
+      ? "var(--bg-subtle)"
+      : rgGate.denied
+        ? "var(--red-bg)"
+        : rgGate.flagged
+          ? "var(--amber-bg)"
+          : "var(--green-bg)";
+    const bannerFg = rgGate.notReached
+      ? "var(--text-secondary)"
+      : rgGate.denied
+        ? "var(--red)"
+        : rgGate.flagged
+          ? "var(--amber)"
+          : "var(--green)";
+
+    const r = document.createElementNS(NS, "rect");
+    r.setAttribute("x", String(-hw)); r.setAttribute("y", String(-hh));
+    r.setAttribute("width", String(rgGate.w)); r.setAttribute("height", String(rgGate.h));
+    r.setAttribute("rx", "12");
+    r.setAttribute("fill", "var(--node-fill)");
+    r.setAttribute("stroke", borderCol);
+    r.setAttribute("stroke-width", "2.4");
+    if (rgGate.notReached) r.setAttribute("stroke-dasharray", "5 4");
+
+    const banner = document.createElementNS(NS, "rect");
+    banner.setAttribute("x", String(-hw)); banner.setAttribute("y", String(-hh));
+    banner.setAttribute("width", String(rgGate.w)); banner.setAttribute("height", "34");
+    banner.setAttribute("rx", "11");
+    banner.setAttribute("fill", bannerBg);
+
+    const bTxt = document.createElementNS(NS, "text");
+    bTxt.setAttribute("x", "0"); bTxt.setAttribute("y", String(-hh + 21));
+    bTxt.setAttribute("text-anchor", "middle");
+    bTxt.setAttribute("fill", bannerFg);
+    bTxt.setAttribute("font-size", "10.8");
+    bTxt.setAttribute("font-weight", "700");
+    bTxt.textContent = rgGate.verdict;
+
+    const subHead = document.createElementNS(NS, "text");
+    subHead.setAttribute("x", String(-hw + 12)); subHead.setAttribute("y", String(-hh + 52));
+    subHead.setAttribute("fill", "var(--text-secondary)"); subHead.setAttribute("font-size", "10.2"); subHead.setAttribute("font-weight", "600");
+    subHead.textContent = rgGate.notReached
+      ? `OpenStream SIEM → Risk Guard Feedback`
+      : `Risk Guard Engine (Block Threshold: ${rgGate.threshold}/100)`;
+
+    g.append(r, banner, bTxt, subHead);
+
+    rgGate.rows.forEach((row, idx) => {
+      const ry = -hh + 74 + idx * 34;
+      const rowBg = document.createElementNS(NS, "rect");
+      rowBg.setAttribute("x", String(-hw + 10)); rowBg.setAttribute("y", String(ry - 13));
+      rowBg.setAttribute("width", String(rgGate.w - 20)); rowBg.setAttribute("height", "26");
+      rowBg.setAttribute("rx", "6");
+      rowBg.setAttribute("fill", row.bad ? "var(--red-bg)" : "var(--bg-subtle)");
+      rowBg.setAttribute("stroke", row.bad ? "var(--red-border)" : "var(--border)");
+      rowBg.setAttribute("stroke-width", "1");
+
+      const rl = document.createElementNS(NS, "text");
+      rl.setAttribute("x", String(-hw + 16)); rl.setAttribute("y", String(ry + 4));
+      rl.setAttribute("fill", "var(--text-primary)"); rl.setAttribute("font-size", "9.8"); rl.setAttribute("font-weight", "600");
+      rl.textContent = row.label;
+
+      const rv = document.createElementNS(NS, "text");
+      rv.setAttribute("x", String(hw - 16)); rv.setAttribute("y", String(ry + 4));
+      rv.setAttribute("text-anchor", "end");
+      rv.setAttribute("fill", row.bad ? "var(--red)" : rgGate.notReached ? "var(--os-color)" : "var(--green)");
+      rv.setAttribute("font-size", "9.8"); rv.setAttribute("font-weight", "700");
+      rv.textContent = row.val;
+      g.append(rowBg, rl, rv);
+    });
+    svg.append(g);
+  }
+
+  // 8. Render Column 5 (Destination Route & Host:Port — Clean, Showing Both Allowed & Blocked Routes)
+  for (const dst of dstNodes) {
+    const g = document.createElementNS(NS, "g");
+    g.setAttribute("transform", `translate(${dst.x}, ${dst.y})`);
+    g.style.cursor = "pointer";
+    g.addEventListener("click", () => {
+      const matchIdx = decisions.findIndex(item => {
+        const rq = item.request || {};
+        const hp = `${rq.host || "unknown"}:${rq.port ?? 80}`;
+        const rk = `${rq.method || "GET"} ${rq.route_template || "/"} → ${rq.resource_id || "default"} @ ${hp}`;
+        return rk === dst.routeKey;
+      });
+      if (matchIdx >= 0) {
+        STATE.selectedDecisionIdx = matchIdx;
+        animateSingleDecision(decisions[matchIdx], "Selected destination route");
+        renderCockpitDecisions(d);
+      }
+    });
+
+    const hw = dst.w / 2, hh = dst.h / 2;
+    const isSel = dst.isSelectedRoute;
+    const fillCol = isSel
+      ? (activeDenied ? "var(--bg-subtle)" : "var(--green-bg)")
+      : "var(--node-fill)";
+    const strokeCol = isSel
+      ? (activeDenied ? "var(--text-muted)" : "var(--green-bright)")
+      : "var(--node-stroke)";
+
+    const r = document.createElementNS(NS, "rect");
+    r.setAttribute("x", String(-hw)); r.setAttribute("y", String(-hh));
+    r.setAttribute("width", String(dst.w)); r.setAttribute("height", String(dst.h));
+    r.setAttribute("rx", "10");
+    r.setAttribute("fill", fillCol);
+    r.setAttribute("stroke", strokeCol);
+    r.setAttribute("stroke-width", isSel ? "2.2" : "1.2");
+    if (isSel && activeDenied) r.setAttribute("stroke-dasharray", "5 4");
+
+    const t1 = document.createElementNS(NS, "text");
+    t1.setAttribute("x", String(-hw + 12)); t1.setAttribute("y", "-9");
+    t1.setAttribute("fill", isSel ? (activeDenied ? "var(--text-primary)" : "var(--green)") : "var(--text-primary)");
+    t1.setAttribute("font-size", "11.2"); t1.setAttribute("font-weight", "700");
+    t1.textContent = dst.methodRoute;
+
+    const t2 = document.createElementNS(NS, "text");
+    t2.setAttribute("x", String(-hw + 12)); t2.setAttribute("y", "6");
+    t2.setAttribute("fill", "var(--text-secondary)"); t2.setAttribute("font-size", "10.2");
+    t2.textContent = `Host: ${dst.hostLine}`;
+
+    const t3 = document.createElementNS(NS, "text");
+    t3.setAttribute("x", String(-hw + 12)); t3.setAttribute("y", "20");
+    t3.setAttribute("fill", isSel ? (activeDenied ? "var(--red)" : "var(--green)") : "var(--text-muted)");
+    t3.setAttribute("font-size", "9.8"); t3.setAttribute("font-weight", isSel ? "600" : "400");
+    t3.textContent = dst.outcomeLine;
+
+    g.append(r, t1, t2, t3);
+    svg.append(g);
+  }
+
+  // 9. Single Continuous Animated Packet Dot along the exact Bezier curves!
+  // - Blocked by OpenShell (System 1): Red dot stops at the entry of Column 3 (osGate.x - osGate.w / 2).
+  // - Blocked by Risk Guard (System 2): Red dot passes Column 3 and stops at the entry of Column 4 (rgGate.x - rgGate.w / 2).
+  // - Allowed by Both Systems: Green dot passes both gates and reaches Column 5 (Destination)!
+  if (STATE.activeReplayPacket) {
+    const c1 = bezier(agentNode.x + agentNode.w / 2, agentNode.y, activeSbNode.x - activeSbNode.w / 2, activeSbNode.y);
+    const c2 = bezierCont(activeSbNode.x + activeSbNode.w / 2, activeSbNode.y, osGate.x - osGate.w / 2, osGate.y);
+    const c3 = bezierCont(osGate.x + osGate.w / 2, osGate.y, rgGate.x - rgGate.w / 2, rgGate.y);
+    const c4 = bezierCont(rgGate.x + rgGate.w / 2, rgGate.y, activeDstNode.x - activeDstNode.w / 2, activeDstNode.y);
+
+    const fullMotionPath = activeBlockedByOs
+      ? `${c1} ${c2}`
+      : activeDenied
+        ? `${c1} ${c2} ${c3}`
+        : `${c1} ${c2} ${c3} ${c4}`;
+
+    const dot = document.createElementNS(NS, "circle");
+    dot.setAttribute("r", "7");
+    dot.setAttribute("fill", activeDenied ? "var(--red-bright)" : "var(--green-bright)");
+    dot.setAttribute("stroke", "#ffffff");
+    dot.setAttribute("stroke-width", "2");
+    const anim = document.createElementNS(NS, "animateMotion");
+    anim.setAttribute("dur", activeBlockedByOs ? "0.75s" : activeDenied ? "0.95s" : "1.2s");
+    anim.setAttribute("repeatCount", "1");
+    anim.setAttribute("fill", "freeze");
+    anim.setAttribute("path", fullMotionPath);
+    dot.append(anim);
+    svg.append(dot);
+  }
+}
+
+function stopReplay() {
+  if (STATE.activeReplayTimer) {
+    clearInterval(STATE.activeReplayTimer);
+    STATE.activeReplayTimer = null;
+  }
+  STATE.activeReplayPacket = null;
+  $("btn-stop-replay").hidden = true;
+}
+
+function animateSingleDecision(decision, prefixLabel = "Replaying call") {
+  if (!decision || !STATE.agentDetail) return;
+  const all = STATE.agentDetail.decisions || [];
+  const idx = all.indexOf(decision);
+  if (idx >= 0) STATE.selectedDecisionIdx = idx;
+  const req = decision.request || {};
+  const ev = decision.evaluation || {};
+  const hostPort = `${req.host || "unknown"}:${req.port ?? 80}`;
+  const resource = req.resource_id || "default";
+  const routeKey = `${req.method || "GET"} ${req.route_template || "/"} → ${resource} @ ${hostPort}`;
+  const blockedByOs = Boolean(decision.blocked_by_openshell || ev.outcome === "openshell_deny");
+  const denied = blockedByOs || ev.outcome === "deny";
+  STATE.activeReplayPacket = { sandboxId: req.sandbox_id, routeKey, denied, blockedByOs, ts: Date.now() };
+  const ts = new Date(req.timestamp_ms || ev.decision_timestamp_ms || Date.now()).toLocaleTimeString();
+  $("flow-live-badge").textContent = blockedByOs
+    ? `🔴 System 1 (OpenShell): BLOCKED AT FLOOR (Reported via OpenStream OCSF)`
+    : denied
+      ? `🔴 System 1 (OpenShell): Allowed → System 2 (Risk Guard): BLOCKED (${ev.risk_score}/100)`
+      : `🟢 Allowed by Both Systems (OpenShell ✓ → Risk Guard ✓ ${ev.risk_score}/100)`;
+  $("flow-live-badge").className = `pill ${denied ? "pill-red" : "pill-green"}`;
+  $("flow-packet-readout").textContent = blockedByOs
+    ? `${prefixLabel} (${ts}): OpenShell refused ${req.route_template} inside sandbox ${shortId(req.sandbox_id, 12)} → Emitted OCSF to OpenStream → Fed to Risk Guard SIEM R1`
+    : `${prefixLabel} (${ts}): ${req.method} ${req.scheme || "http"}://${hostPort}${req.route_template} ['${resource}'] → OpenShell: Permitted → Risk Guard: ${denied ? `BLOCKED (${ev.risk_score}/100 · ${ev.reason_code})` : `ALLOWED (${ev.risk_score}/100) → Reached Host`}`;
+  const locks = (STATE.agentDetail.contexts || []).flatMap(c => (c.active_restrictions || []).map(r => ({ ...r, parsed: parseLockScope(r.scope) })));
+  renderCockpitFlowMap(STATE.agentDetail, locks);
+}
+
+function pulseOpenShellFloorBlock() {
+  stopReplay();
+  const d = STATE.agentDetail;
+  if (!d) return;
+  const all = d.decisions || [];
+  let osItem = all.find(x => x?.blocked_by_openshell || x?.evaluation?.outcome === "openshell_deny");
+  if (!osItem) {
+    const sampleSb = d.runs?.[0]?.sandboxes?.[0]?.sandbox_id || all[0]?.request?.sandbox_id || "sandbox-floor";
+    const sampleHost = all[0]?.request?.host || "deploy-api.openshell.svc.cluster.local";
+    const samplePort = all[0]?.request?.port || 18081;
+    osItem = {
+      blocked_by_openshell: true,
+      openstream_count_1h: Number(d.siem_features?.features?.openshell_denials_1h || 1),
+      openstream_count_5m: Number(d.siem_features?.features?.openshell_denials_5m || 1),
+      request: {
+        request_id: `openstream-os-deny-${sampleSb}`,
+        sandbox_id: sampleSb,
+        timestamp_ms: Date.now(),
+        scheme: "http",
+        host: sampleHost,
+        port: samplePort,
+        method: "OS FLOOR",
+        route_template: "policy_denied (unapproved host/route)",
+        resource_id: "unapproved-floor-target",
+        binary_path: "/usr/bin/python3",
+        semantic_category: "openshell_floor_refusal",
+        high_impact: true
+      },
+      evaluation: {
+        request_id: `openstream-os-deny-${sampleSb}`,
+        decision_timestamp_ms: Date.now(),
+        outcome: "openshell_deny",
+        risk_score: 0,
+        threshold: 70,
+        reason_code: "openshell_policy_denied_via_openstream",
+        signals: []
+      }
+    };
+    all.unshift(osItem);
+  }
+  STATE.selectedDecisionIdx = all.indexOf(osItem);
+  animateSingleDecision(osItem, "OpenStream OCSF Floor Block");
+  renderCockpitDecisions(d);
+}
+
+$("btn-pulse-os-block").addEventListener("click", pulseOpenShellFloorBlock);
+
+function startPacketReplay(blockedOnly = false) {
+  stopReplay();
+  const d = STATE.agentDetail;
+  if (!d) return;
+  const all = d.decisions || [];
+  // When stepping through all calls, interleave blocked and allowed calls so the user sees both!
+  let list;
+  if (blockedOnly) {
+    list = all.filter(x => x?.evaluation?.outcome === "deny").slice(0, 20);
+  } else {
+    const deniedList = all.filter(x => x?.evaluation?.outcome === "deny").slice(0, 10);
+    const allowedList = all.filter(x => x?.evaluation?.outcome !== "deny").slice(0, 10);
+    list = [];
+    for (let k = 0; k < Math.max(deniedList.length, allowedList.length); k++) {
+      if (k < allowedList.length) list.push(allowedList[k]);
+      if (k < deniedList.length) list.push(deniedList[k]);
+    }
+  }
+  if (!list.length) {
+    $("flow-packet-readout").textContent = "No matching recorded calls to replay.";
+    return;
+  }
+  $("btn-stop-replay").hidden = false;
+  let i = 0;
+  const step = () => {
+    if (i >= list.length) {
+      stopReplay();
+      $("flow-live-badge").textContent = "⚪ Replay finished";
+      $("flow-live-badge").className = "pill";
+      renderCockpit();
+      return;
+    }
+    const item = list[i];
+    animateSingleDecision(item, `Step ${i + 1} of ${list.length}`);
+    renderCockpitDecisions(d);
+    i++;
+  };
+  step();
+  STATE.activeReplayTimer = setInterval(step, 1600);
+}
+
+$("btn-step-replay").addEventListener("click", () => startPacketReplay(false));
+$("btn-step-blocked-only").addEventListener("click", () => startPacketReplay(true));
+$("btn-stop-replay").addEventListener("click", () => {
+  stopReplay();
+  $("flow-live-badge").textContent = "⚪ Idle";
+  $("flow-live-badge").className = "pill";
+  if (STATE.agentDetail) renderCockpit();
+});
+$("btn-clear-node-filter").addEventListener("click", () => {
+  STATE.nodeFilter = "";
+  $("btn-clear-node-filter").hidden = true;
+  if (STATE.agentDetail) renderCockpit();
+});
+$("cockpit-agent-select").addEventListener("change", e => void selectAgent(e.target.value));
+$("prover-agent-select").addEventListener("change", async e => {
+  await selectAgent(e.target.value);
+  await runStudioScenario("tighten");
+});
+$("cockpit-filter-select").addEventListener("change", () => {
+  if (STATE.agentDetail) renderCockpitDecisions(STATE.agentDetail);
+});
+$("btn-jump-prover").addEventListener("click", () => {
+  if (STATE.selectedAgentId) void openAgentInProver(STATE.selectedAgentId);
+});
+
+function renderCockpitDecisions(d) {
+  const mode = $("cockpit-filter-select").value;
+  const nf = (STATE.nodeFilter || "").toLowerCase();
+  const all = d.decisions || [];
+  const filtered = all.filter(item => {
+    const req = item.request || {};
+    const ev = item.evaluation || {};
+    const isOsDeny = Boolean(item.blocked_by_openshell || ev.outcome === "openshell_deny");
+    if (mode === "os_deny" && !isOsDeny) return false;
+    if (mode === "deny" && ev.outcome !== "deny") return false;
+    if (mode === "flagged" && ev.outcome === "allow" && Number(ev.risk_score || 0) < 20) return false;
+    if (nf && !`${req.sandbox_id} ${req.resource_id} ${req.route_template} ${req.host}:${req.port}`.toLowerCase().includes(nf)) return false;
+    return true;
+  }).sort((a, b) => {
+    const aOs = Boolean(a?.blocked_by_openshell || a?.evaluation?.outcome === "openshell_deny") ? 1 : 0;
+    const bOs = Boolean(b?.blocked_by_openshell || b?.evaluation?.outcome === "openshell_deny") ? 1 : 0;
+    if (aOs !== bOs) return bOs - aOs;
+    const ad = a?.evaluation?.outcome === "deny" ? 1 : 0;
+    const bd = b?.evaluation?.outcome === "deny" ? 1 : 0;
+    if (ad !== bd) return bd - ad;
+    const as = Number(a?.evaluation?.risk_score || 0);
+    const bs = Number(b?.evaluation?.risk_score || 0);
+    if ((as >= 20) !== (bs >= 20)) return (bs >= 20 ? 1 : 0) - (as >= 20 ? 1 : 0);
+    return Number(b?.request?.timestamp_ms || b?.evaluation?.decision_timestamp_ms || 0) - Number(a?.request?.timestamp_ms || a?.evaluation?.decision_timestamp_ms || 0);
+  });
+
+  const tbody = $("cockpit-decisions-tbody");
+  if (!filtered.length) {
+    tbody.replaceChildren(el("tr", {}, el("td", { colspan: "6", text: "No recorded requests match this filter." })));
+    $("insp-content").replaceChildren(el("p", { style: "color:var(--text-secondary)", text: "No request selected." }));
+    return;
+  }
+  const currentItem = all[STATE.selectedDecisionIdx] && filtered.includes(all[STATE.selectedDecisionIdx])
+    ? all[STATE.selectedDecisionIdx]
+    : filtered[0];
+
+  tbody.replaceChildren(...filtered.slice(0, 80).map(item => {
+    const req = item.request || {};
+    const ev = item.evaluation || {};
+    const isOsDeny = Boolean(item.blocked_by_openshell || ev.outcome === "openshell_deny");
+    const deny = ev.outcome === "deny";
+    const isLock = ev.reason_code === "behavioral_risk_restricted";
+    const score = Number(ev.risk_score || 0);
+    const hostPort = `${req.host || "unknown"}:${req.port ?? 80}`;
+    const isSel = item === currentItem;
+    const osCount5m = Number(item.openstream_count_5m || 0);
+    const r1Pts = osCount5m >= 10 ? 8 : osCount5m >= 3 ? 4 : 0;
+    return el("tr", {
+      class: `row-click ${isSel ? "row-selected" : ""}`,
+      onclick: () => {
+        STATE.selectedDecisionIdx = all.indexOf(item);
+        animateSingleDecision(item, "Selected call");
+        renderCockpitDecisions(d);
+      }
+    },
+      el("td", { class: "mono", style: "padding:7px 10px;font-size:11.5px;color:var(--text-secondary);white-space:nowrap", text: new Date(req.timestamp_ms || ev.decision_timestamp_ms || 0).toLocaleTimeString() }),
+      el("td", { style: "padding:7px 8px;white-space:nowrap" },
+        isOsDeny
+          ? el("span", { class: "pill pill-red", style: "padding:2px 8px;font-size:11px", text: `✕ Floor Block (${item.openstream_count_1h || 1}×)` })
+          : el("span", { class: "pill pill-os", style: "padding:2px 8px;font-size:11px", text: "✓ Permitted" })
+      ),
+      el("td", { style: "padding:7px 8px;white-space:nowrap" },
+        isOsDeny
+          ? el("span", { class: "pill", style: "padding:2px 8px;font-size:11px", text: `— Skipped (R1 +${r1Pts})` })
+          : el("span", { class: `pill ${deny ? "pill-red" : score >= 20 ? "pill-amber" : "pill-green"}`, style: "padding:2px 8px;font-size:11px", text: deny ? (isLock ? `🔒 Locked (${score})` : `✕ Blocked (${score})`) : score >= 20 ? `⚠ Flagged (${score})` : `✓ Allowed (${score})` })
+      ),
+      el("td", { class: "mono", style: "padding:7px 8px;font-weight:600;font-size:12px;white-space:nowrap", text: `${req.method || "?"} ${shortId(req.route_template || "/", 26)}` }),
+      el("td", { style: "padding:7px 8px" },
+        el("div", { class: "mono", style: "font-size:11.5px;font-weight:600;white-space:nowrap", text: isOsDeny ? `Stopped in-sandbox (OpenStream)` : `${req.scheme || "http"}://${shortId(hostPort, 28)}` }),
+        el("div", { class: "mono", style: "font-size:10.5px;color:var(--text-secondary);white-space:nowrap", text: `target: '${shortId(req.resource_id || "—", 14)}' · pod: ${shortId(req.sandbox_id, 8)}` })
+      ),
+      el("td", { style: "padding:7px 10px;white-space:nowrap" },
+        el("button", { type: "button", class: "btn", style: "padding:4px 9px;font-size:11.5px", text: "▶ Pulse", onclick: e => {
+          e.stopPropagation();
+          STATE.selectedDecisionIdx = all.indexOf(item);
+          animateSingleDecision(item, "Selected call");
+          renderCockpitDecisions(d);
+        } })
+      )
+    );
+  }));
+
+  renderInspectorWaterfall(currentItem);
+}
+
+function renderInspectorWaterfall(item) {
+  const req = item?.request || {};
+  const ev = item?.evaluation || {};
+  const isOsDeny = Boolean(item?.blocked_by_openshell || ev.outcome === "openshell_deny");
+  const deny = isOsDeny || ev.outcome === "deny";
+  const score = Number(ev.risk_score || 0);
+  const hostPort = `${req.host || "unknown"}:${req.port ?? 80}`;
+  const fullUrl = `${req.scheme || "http"}://${hostPort}${req.route_template || "/"}`;
+
+  $("insp-heading").textContent = `${req.method || "CALL"} ${req.route_template || "/"}`;
+  $("insp-subheading").textContent = isOsDeny
+    ? `OpenStream OCSF Floor Refusal · Sandbox ${req.sandbox_id || "—"}`
+    : `${fullUrl} · target: '${req.resource_id || "—"}'`;
+  $("insp-score-pill").textContent = isOsDeny
+    ? `Blocked by OpenShell (System 1)`
+    : deny
+      ? `Blocked by Risk Guard (${score}/100)`
+      : `Allowed (${score}/100)`;
+  $("insp-score-pill").className = `pill ${deny ? "pill-red" : score >= 20 ? "pill-amber" : "pill-green"}`;
+
+  if (isOsDeny) {
+    const c1h = Number(item.openstream_count_1h || 1);
+    const c5m = Number(item.openstream_count_5m || 1);
+    const r1Pts = c5m >= 10 ? 8 : c5m >= 3 ? 4 : 0;
+    const osExplain = el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px" },
+      el("div", { style: "padding:10px;border-radius:9px;background:var(--red-bg);border:1px solid var(--red-border)" },
+        el("div", { style: "font-size:10.5px;font-weight:700;color:var(--red)", text: "SYSTEM 1 · OPENSHELL POLICY" }),
+        el("div", { style: "font-weight:700;font-size:13px;margin:2px 0;color:var(--red)", text: `✕ Blocked at Sandbox Floor (${c1h}× in 1h)` }),
+        el("div", { style: "font-size:11px;color:var(--text-secondary)", text: "OpenShell dropped the connection/request in-sandbox (policy_denied) before Risk Guard was called." })
+      ),
+      el("div", { style: "padding:10px;border-radius:9px;background:var(--bg-subtle);border:1px solid var(--border)" },
+        el("div", { style: "font-size:10.5px;font-weight:700;color:var(--os-color)", text: "OPENSTREAM → SYSTEM 2 (RISK GUARD)" }),
+        el("div", { style: "font-weight:700;font-size:13px;margin:2px 0", text: `⚡ SIEM Rule R1: +${r1Pts} pts on subsequent calls` }),
+        el("div", { style: "font-size:11px;color:var(--text-secondary)", text: `OpenStream (ocsf-openshell*) published openshell_denials_5m=${c5m} and openshell_denials_1h=${c1h} to Risk Guard over SPIFFE mTLS.` })
+      )
+    );
+    const metaCard = el("div", { style: "padding:9px 12px;background:var(--bg-subtle);border:1px solid var(--border);border-radius:9px;font-size:12px" },
+      el("div", { style: "margin-bottom:4px" }, el("strong", { text: "Telemetry Source: " }), el("code", { class: "mono", text: "OpenStream OCSF (ocsf-openshell* → signal-forwarder → POST /features)" })),
+      el("div", { style: "margin-bottom:4px" }, el("strong", { text: "Sandbox Pod: " }), el("span", { class: "mono", text: req.sandbox_id || "—" })),
+      el("div", {}, el("strong", { text: "How Both Systems Partner Here: " }), el("span", { text: "OpenShell stops unapproved hosts/routes at zero-latency inside the pod, while OpenStream streams those floor denial counts into Risk Guard so subsequent allowed routes carry +4/+8 R1 probing risk points." }))
+    );
+    $("insp-content").replaceChildren(osExplain, metaCard);
+    return;
+  }
+
+  const twoSystemCompare = el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px" },
+    el("div", { style: "padding:10px;border-radius:9px;background:var(--os-bg);border:1px solid var(--os-border)" },
+      el("div", { style: "font-size:10.5px;font-weight:700;color:var(--os-color)", text: "SYSTEM 1 · OPENSHELL POLICY" }),
+      el("div", { style: "font-weight:700;font-size:13px;margin:2px 0", text: "✓ Permitted at Sandbox Floor" }),
+      el("div", { style: "font-size:11px;color:var(--text-secondary)", text: "Matched static YAML endpoint rule; forwarded to Risk Guard before credential injection." })
+    ),
+    el("div", { style: `padding:10px;border-radius:9px;background:${deny ? "var(--red-bg)" : "var(--green-bg)"};border:1px solid ${deny ? "var(--red-border)" : "var(--green-border)"}` },
+      el("div", { style: `font-size:10.5px;font-weight:700;color:${deny ? "var(--red)" : "var(--green)"}`, text: "SYSTEM 2 · RISK GUARD GATE" }),
+      el("div", { style: `font-weight:700;font-size:13px;margin:2px 0;color:${deny ? "var(--red)" : "var(--green)"}`, text: deny ? `✕ Denied (Score ${score} / ${ev.threshold ?? 70})` : `✓ Allowed (Score ${score} / ${ev.threshold ?? 70})` }),
+      el("div", { style: "font-size:11px;color:var(--text-secondary)", text: `Reason: ${ev.reason_code || "none"} · Ratchet: ${ev.ratchet_action?.type || "none"}` })
+    )
+  );
+
+  const metaCard = el("div", { style: "padding:9px 12px;background:var(--bg-subtle);border:1px solid var(--border);border-radius:9px;margin-bottom:12px;font-size:12px" },
+    el("div", { style: "margin-bottom:3px" }, el("strong", { text: "Full Destination URL: " }), el("code", { class: "mono", text: fullUrl })),
+    el("div", { style: "margin-bottom:3px" }, el("strong", { text: "Target Resource & Category: " }), el("span", { class: "mono", text: `${req.resource_id || "—"} (${req.semantic_category || "unknown"}${req.high_impact ? " · high-impact" : ""})` })),
+    el("div", {}, el("strong", { text: "Sandbox Pod & Binary: " }), el("span", { class: "mono", text: `${req.sandbox_id || "—"} · ${req.binary_path || "binary not reported"}` }))
+  );
+
+  const signals = Array.isArray(ev.signals) ? ev.signals : [];
+  const wfRows = signals.map(s => {
+    const c = Number(s.contribution || 0);
+    const pct = Math.min(100, Math.max(4, Math.abs(c)));
+    const col = c < 0 ? "var(--green)" : c >= 30 ? "var(--red-bright)" : c > 0 ? "var(--amber-bright)" : "var(--text-muted)";
+    return el("div", { class: "waterfall-item" },
+      el("div", {},
+        el("div", { style: "font-weight:600", text: SIGNAL_NAMES[s.feature] || s.feature }),
+        el("div", { style: "font-size:11px;color:var(--text-secondary)", text: `${s.observed_summary || ""}${s.support ? ` · ${s.support}` : ""}` })
+      ),
+      el("div", { class: "mono", style: `font-weight:700;text-align:right;color:${col}`, text: c > 0 ? `+${c} pts` : `${c} pts` }),
+      el("div", { class: "bar-track" },
+        el("div", { class: "bar-fill", style: `width:${pct}%;background:${col}` })
+      )
+    );
+  });
+
+  $("insp-content").replaceChildren(twoSystemCompare, metaCard, ...(wfRows.length ? wfRows : [el("p", { style: "color:var(--text-secondary)", text: "No Risk Guard risk signals triggered on this call (0 / 100)." })]));
+}
+
+// ---- WORKSPACE 3: RISK GUARD → OPENSHELL POLICY GRADUATION STUDIO ----
+function populateProverFromAgent(d) {
+  const snap = (d?.policy_snapshots || [])[0];
+  const yaml = snap?.policy_yaml || "";
+  $("prover-boundary-yaml").value = yaml;
+  $("prover-candidate-yaml").value = yaml;
+  const ctx = (d?.contexts || [])[d.contexts.length - 1] || {};
+  const approvedClasses = new Set(ctx.baseline?.allowed_action_classes || []);
+
+  const osRoutes = [];
+  for (const pol of Object.values(snap?.parsed_policy?.network_policies || {})) {
+    for (const ep of pol.endpoints || []) {
+      if (ep.host) $("probe-host").value = ep.host;
+      for (const r of ep.rules || []) {
+        if (r.allow) {
+          osRoutes.push({ method: r.allow.method, path: r.allow.path, host: ep.host });
+        }
+      }
+    }
+  }
+
+  $("grad-col1-meta").textContent = snap ? `Hash ${snap.policy_hash.slice(0, 8)}` : "No policy";
+  const rBox = $("grad-current-routes");
+  if (!osRoutes.length) {
+    rBox.replaceChildren(el("div", { style: "font-size:12px;color:var(--text-muted)", text: "No explicit L7 route rules recorded in OpenShell YAML." }));
+  } else {
+    rBox.replaceChildren(...osRoutes.map(r => {
+      const isExtra = r.method === "DELETE" || !Array.from(approvedClasses).some(c => c.startsWith(r.method));
+      return el("div", { style: "display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;margin-bottom:5px;font-size:12px" },
+        el("code", { class: "mono", style: "font-weight:600", text: `${r.method} ${r.path}` }),
+        el("span", { class: `pill ${isExtra ? "pill-amber" : "pill-os"}`, text: isExtra ? "Caught by Risk Guard" : "In Task Baseline" })
+      );
+    }));
+  }
+
+  const g = d?.guardrails?.settings;
+  if (g) {
+    $("sim-obs-thresh").value = String(g.observe_threshold ?? 20);
+    $("sim-enf-thresh").value = String(g.enforce_threshold ?? 70);
+    $("sim-siem-cap").value = String(g.siem_context_max_points ?? 15);
+  }
+}
+
+async function runStudioScenario(kind) {
+  for (const [id, k] of [["scen-btn-tighten", "tighten"], ["scen-btn-widen", "widen"], ["scen-btn-bypass", "bypass"]]) {
+    $(id).classList.toggle("active", k === kind);
+  }
+  const base = $("prover-boundary-yaml").value;
+  if (kind === "tighten") {
+    await runStudioVerify({ synthesize_mode: "enforce" });
+  } else if (kind === "widen") {
+    const widened = base.replace(/^([ \t]*)rules:\s*$/m, (m, indent) =>
+      `${indent}rules:\n${indent}  - allow:\n${indent}      method: DELETE\n${indent}      path: /admin/wipe-everything`
+    );
+    $("prover-candidate-yaml").value = widened;
+    await runStudioVerify({ candidate_yaml: widened });
+  } else if (kind === "bypass") {
+    const stripped = base.replace(/on_error:\s*fail_closed/g, "on_error: allow");
+    $("prover-candidate-yaml").value = stripped;
+    await runStudioVerify({ candidate_yaml: stripped });
+  }
+}
+
+$("scen-btn-tighten").addEventListener("click", () => void runStudioScenario("tighten"));
+$("scen-btn-widen").addEventListener("click", () => void runStudioScenario("widen"));
+$("scen-btn-bypass").addEventListener("click", () => void runStudioScenario("bypass"));
+$("btn-run-custom-yaml").addEventListener("click", () => void runStudioVerify());
+
+$("probe-preset-ok").addEventListener("click", () => {
+  $("probe-method").value = "GET";
+  $("probe-path").value = "/services";
+  void fireProbe();
+});
+$("probe-preset-del").addEventListener("click", () => {
+  $("probe-method").value = "DELETE";
+  $("probe-path").value = "/services/payments";
+  void fireProbe();
+});
+$("probe-preset-admin").addEventListener("click", () => {
+  $("probe-method").value = "DELETE";
+  $("probe-path").value = "/admin/wipe-everything";
+  void fireProbe();
+});
+$("btn-fire-probe").addEventListener("click", () => void fireProbe());
+
+$("btn-propose-openshell-yaml").addEventListener("click", async () => {
+  const ctx = (STATE.agentDetail?.contexts || [])[(STATE.agentDetail?.contexts || []).length - 1] || {};
+  const profile = ctx.task_profile;
+  if (!profile) return;
+  const reason = (window.prompt(`Enter audit reason to propose graduating Risk Guard's rules for '${profile}' into OpenShell policy:`) || "").trim();
+  if (!reason) return;
+  try {
+    await apiJson("/api/changes", {
+      method: "POST",
+      body: JSON.stringify({ kind: "policy_update", task_profile: profile, enforcement: "enforce", reason })
+    });
+    window.alert("OpenShell policy update proposed! Switch to second approver (learningnemo-approver@christopherghannagmail.onmicrosoft.com) in Tab 4 to approve.");
+    await refreshAll();
+  } catch (err) { window.alert(err.message); }
+});
+
+async function fireProbe() {
+  await runStudioVerify({
+    probe: {
+      method: $("probe-method").value,
+      host: $("probe-host").value,
+      port: 18081,
+      path: $("probe-path").value
+    }
+  });
+}
+
+async function runStudioVerify(extra = {}) {
+  const body = {
+    agent_id: STATE.selectedAgentId || null,
+    boundary_yaml: $("prover-boundary-yaml").value,
+    candidate_yaml: $("prover-candidate-yaml").value,
+    observe_threshold: Number($("sim-obs-thresh").value || 20),
+    enforce_threshold: Number($("sim-enf-thresh").value || 70),
+    siem_context_max_points: Number($("sim-siem-cap").value || 15),
+    rule_modes: {
+      unapproved_action: $("sim-rule-action").value,
+      unapproved_resource: $("sim-rule-resource").value,
+      siem_context: $("sim-rule-siem").value
+    },
+    probe: extra.probe || {
+      method: $("probe-method").value,
+      host: $("probe-host").value,
+      port: 18081,
+      path: $("probe-path").value
+    },
+    ...extra
+  };
+  try {
+    const res = await apiJson("/api/studio/verify", { method: "POST", body: JSON.stringify(body) });
+    if (res.boundary_yaml && !$("prover-boundary-yaml").value.trim()) $("prover-boundary-yaml").value = res.boundary_yaml;
+    if (res.candidate_yaml && extra.synthesize_mode) $("prover-candidate-yaml").value = res.candidate_yaml;
+    renderProverResult(res);
+  } catch (err) {
+    $("grad-verdict-title").textContent = `Verification Error: ${err.message}`;
+  }
+}
+
+for (const id of ["probe-method", "sim-obs-thresh", "sim-enf-thresh", "sim-siem-cap", "sim-rule-action", "sim-rule-resource", "sim-rule-siem"]) {
+  $(id)?.addEventListener("change", () => void fireProbe());
+}
+
+function renderProverResult(res) {
+  const p = res.proof || {};
+  const ok = p.verified_non_expanding === true;
+  const step1Ok = p.step1_middleware_invariant === true;
+
+  const centerCard = $("grad-center-card");
+  centerCard.style.borderColor = ok ? "var(--green-border)" : "var(--red-border)";
+  $("grad-z3-pill").textContent = ok ? `✓ Z3 Certified (${p.elapsed_ms ?? 1} ms)` : `✕ Refused (${p.elapsed_ms ?? 1} ms)`;
+  $("grad-z3-pill").className = `pill ${ok ? "pill-green" : "pill-red"}`;
+
+  $("grad-verdict-title").textContent = ok
+    ? "✓ Safe to Graduate into OpenShell Policy"
+    : !step1Ok
+      ? "✕ Refused: Policy Weakens Risk Guard Attachment"
+      : "✕ Refused by OpenShell Z3 Solver: Policy Widens Access";
+
+  $("grad-verdict-desc").textContent = ok
+    ? "OpenShell's Z3 solver mathematically verified that Risk Guard's proposed YAML is strictly narrower than or equal to the current sandbox boundary across all 5 domains (Filesystem, Landlock, Process, Network L4, REST L7)."
+    : !step1Ok
+      ? `Step 1 failed: ${p.step1_detail || p.error}`
+      : `Z3 Counterexample (newly exposed access): ${p.step2_counterexample_or_reason || p.step2_prover_verdict}`;
+
+  const rep = res.replay || {};
+  $("grad-col3-meta").textContent = `${rep.total || 0} calls replayed`;
+  $("grad-impact-summary").replaceChildren(
+    el("div", { style: "padding:10px;background:var(--bg-card);border:1px solid var(--border);border-radius:9px;font-size:12px" },
+      el("div", { style: "display:flex;justify-content:space-between;margin-bottom:6px" },
+        el("span", { text: "Stopped at System 1 (OpenShell Floor):" }),
+        el("strong", { class: "mono", style: "color:var(--os-color)", text: `0 today → ${rep.simulated_openshell_blocked || 0} after update` })
+      ),
+      el("div", { style: "display:flex;justify-content:space-between;margin-bottom:6px" },
+        el("span", { text: "Stopped at System 2 (Risk Guard Gate):" }),
+        el("strong", { class: "mono", style: "color:var(--rg-color)", text: `${rep.original_blocked || 0} today → ${rep.simulated_rg_blocked || 0} after update` })
+      ),
+      el("div", { style: "display:flex;justify-content:space-between" },
+        el("span", { text: "Allowed by Both Systems:" }),
+        el("strong", { class: "mono", style: "color:var(--green)", text: `${rep.original_allowed || 0} today → ${rep.simulated_rg_allowed || 0} after update` })
+      )
+    )
+  );
+
+  if (res.probe) {
+    const pr = res.probe;
+    const osAllowed = pr.openshell_floor?.allowed;
+    const ev = pr.evaluation || {};
+    const rgDenied = ev.outcome === "deny";
+    const delivered = osAllowed && !rgDenied;
+    $("probe-3hop-visual").replaceChildren(
+      el("div", { style: "display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto minmax(0,1fr);gap:6px;align-items:stretch" },
+        el("div", { style: `padding:10px 11px;border-radius:10px;border:1.5px solid ${osAllowed ? "var(--os-border)" : "var(--red-border)"};background:${osAllowed ? "var(--os-bg)" : "var(--red-bg)"}` },
+          el("div", { style: "font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text-secondary)", text: "1 · OpenShell (S1)" }),
+          el("div", { style: `font-size:12.5px;font-weight:700;color:${osAllowed ? "var(--os-color)" : "var(--red)"};margin:3px 0`, text: osAllowed ? "✓ Permitted" : "✕ Floor Blocked" }),
+          el("div", { class: "mono", style: "font-size:10.5px;color:var(--text-secondary);word-break:break-word", text: pr.openshell_floor?.matched_rule || "—" })
+        ),
+        el("div", { style: `display:flex;align-items:center;font-weight:700;font-size:14px;color:${osAllowed ? "var(--green)" : "var(--red)"}`, text: osAllowed ? "→" : "✕" }),
+        el("div", { style: `padding:10px 11px;border-radius:10px;border:1.5px solid ${!osAllowed ? "var(--border)" : rgDenied ? "var(--red-border)" : "var(--rg-border)"};background:${!osAllowed ? "var(--bg-subtle)" : rgDenied ? "var(--red-bg)" : "var(--rg-bg)"}` },
+          el("div", { style: "font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text-secondary)", text: "2 · Risk Guard (S2)" }),
+          el("div", { style: `font-size:12.5px;font-weight:700;color:${!osAllowed ? "var(--text-muted)" : rgDenied ? "var(--red)" : "var(--rg-color)"};margin:3px 0`, text: !osAllowed ? "⚪ Skipped (Stopped at S1)" : `${rgDenied ? "✕ Blocked" : "✓ Allowed"} (${ev.risk_score}/100)` }),
+          el("div", { class: "mono", style: "font-size:10.5px;color:var(--text-secondary)", text: !osAllowed ? "Caught at OpenShell floor" : `Reason: ${ev.reason_code}` })
+        ),
+        el("div", { style: `display:flex;align-items:center;font-weight:700;font-size:14px;color:${delivered ? "var(--green)" : "var(--red)"}`, text: delivered ? "→" : "✕" }),
+        el("div", { style: `padding:10px 11px;border-radius:10px;border:1.5px solid ${delivered ? "var(--green-border)" : "var(--border)"};background:${delivered ? "var(--green-bg)" : "var(--bg-subtle)"}` },
+          el("div", { style: "font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text-secondary)", text: "3 · Destination Host" }),
+          el("div", { style: `font-size:12.5px;font-weight:700;color:${delivered ? "var(--green)" : "var(--text-secondary)"};margin:3px 0`, text: delivered ? "✓ Reached Host" : !osAllowed ? "🛡️ Protected by S1" : "🛡️ Protected by S2" }),
+          el("div", { class: "mono", style: "font-size:10.5px;color:var(--text-secondary);word-break:break-word", text: `${shortId(pr.normalized?.host || "", 20)}:${pr.normalized?.port} ('${shortId(pr.normalized?.resource_id || "", 16)}')` })
+        )
+      )
+    );
+  }
+
+  $("replay-flip-pill").textContent = `${rep.simulated_openshell_blocked || 0} moved to S1 floor`;
+  $("replay-summary-sub").textContent =
+    `Across ${rep.total || 0} recorded calls: ${rep.simulated_openshell_blocked || 0} now stopped at System 1 (OpenShell), ${rep.simulated_rg_blocked || 0} stopped at System 2 (Risk Guard), ${rep.simulated_rg_allowed || 0} allowed.`;
+
+  $("replay-tbody").replaceChildren(...(rep.items || []).slice(0, 45).map(item =>
+    el("tr", {},
+      el("td", { style: "padding:7px 8px" },
+        el("div", { class: "mono", style: "font-weight:600;font-size:11.8px;white-space:nowrap", text: `${item.method} ${shortId(item.route_template, 24)}` }),
+        el("div", { class: "mono", style: "font-size:10.5px;color:var(--text-secondary);white-space:nowrap", text: `${shortId(item.host, 22)} · '${shortId(item.resource_id, 12)}'` })
+      ),
+      el("td", { style: "padding:7px 8px;white-space:nowrap" }, el("span", { class: `pill ${item.original_outcome === "deny" ? "pill-red" : "pill-green"}`, style: "padding:2px 7px;font-size:11px", text: item.original_outcome === "deny" ? `✕ RG (${item.original_score})` : `✓ Allowed (${item.original_score})` })),
+      el("td", { style: "padding:7px 8px;white-space:nowrap" }, el("span", { class: `pill ${item.openshell_floor?.allowed ? "pill-os" : "pill-red"}`, style: "padding:2px 7px;font-size:11px", text: item.openshell_floor?.allowed ? "✓ S1 Permits" : "✕ S1 Floor Block" })),
+      el("td", { style: "padding:7px 8px;white-space:nowrap" }, el("span", { class: `pill ${!item.openshell_floor?.allowed ? "" : item.simulated_outcome === "allow" ? "pill-green" : "pill-red"}`, style: "padding:2px 7px;font-size:11px", text: !item.openshell_floor?.allowed ? "— Stopped at S1" : item.simulated_outcome === "allow" ? `✓ S2 Allows (${item.simulated_score})` : `✕ S2 Blocks (${item.simulated_score})` }))
+    )
+  ));
+}
+
+// ---- WORKSPACE 4: TWO-PERSON APPROVALS DESK ----
+function renderApprovalsDesk() {
+  const changes = STATE.changes?.changes || [];
+  const pending = changes.filter(c => c.status === "pending");
+  const history = changes.filter(c => c.status !== "pending");
+  $("studio-appr-top-actions").replaceChildren(
+    el("button", { type: "button", class: "btn btn-primary", text: "⇄ Switch Entra Account (learningnemo-approver)", onclick: () => $("btn-signin").click() })
+  );
+
+  const pBox = $("studio-appr-pending");
+  if (!pending.length) {
+    pBox.replaceChildren(el("div", { class: "triage-card", text: "No pending change requests waiting for a second approver." }));
+  } else {
+    pBox.replaceChildren(...pending.map(c => {
+      const reasonInput = el("input", { type: "text", placeholder: "Audit reason for approval / rejection…", style: "min-width:250px" });
+      return el("div", { class: "triage-card warn" },
+        el("div", {},
+          el("div", { style: "font-weight:600;font-size:13.5px", text: `${c.kind} → ${c.target}` }),
+          el("div", { style: "font-size:12px;color:var(--text-secondary)", text: `Proposed by ${c.proposer} · Reason: "${c.reason}"` })
+        ),
+        el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" },
+          reasonInput,
+          el("button", { type: "button", class: "btn btn-primary", text: "Approve (2nd Person)", onclick: async () => {
+            const r = reasonInput.value.trim();
+            if (!r) { reasonInput.focus(); return; }
+            try {
+              await apiJson(`/api/changes/${encodeURIComponent(c.id)}/decide`, { method: "POST", body: JSON.stringify({ approve: true, reason: r }) });
+              await refreshAll();
+            } catch (err) { window.alert(err.message); }
+          } }),
+          el("button", { type: "button", class: "btn btn-danger", text: "Reject", onclick: async () => {
+            const r = reasonInput.value.trim() || "Rejected";
+            try {
+              await apiJson(`/api/changes/${encodeURIComponent(c.id)}/decide`, { method: "POST", body: JSON.stringify({ approve: false, reason: r }) });
+              await refreshAll();
+            } catch (err) { window.alert(err.message); }
+          } })
+        )
+      );
+    }));
+  }
+
+  $("studio-appr-history").replaceChildren(...history.slice(0, 15).map(c =>
+    el("div", { class: "triage-card" },
+      el("div", {},
+        el("div", { style: "font-weight:600", text: `${c.kind} → ${c.target} (${c.status})` }),
+        el("div", { style: "font-size:12px;color:var(--text-secondary)", text: `Proposed by ${c.proposer}${c.decided_by ? ` · Decided by ${c.decided_by}` : ""} · ${c.outcome || c.reason}` })
+      ),
+      el("span", { class: `pill ${c.status === "executed" || c.status === "approved" ? "pill-green" : "pill-red"}`, text: c.status })
+    )
+  ));
+}
+
+async function refreshAll() {
+  const [fleet, controls, changes] = await Promise.all([
+    apiJson("/api/state"),
+    apiJson("/api/controls").catch(() => null),
+    apiJson("/api/changes").catch(() => null)
+  ]);
+  STATE.fleet = fleet;
+  STATE.controls = controls;
+  STATE.changes = changes;
+
+  const agents = (fleet.agents || []).slice().sort((a, b) =>
+    Number(b.active_restriction_count || 0) - Number(a.active_restriction_count || 0)
+    || Number(b.denied_count || 0) - Number(a.denied_count || 0)
+  );
+  const options = agents.map(a => {
+    const locks = Number(a.active_restriction_count || 0);
+    const denied = Number(a.denied_count || 0);
+    return el("option", {
+      value: a.agent_id,
+      text: `${a.display_name || a.agent_id} (${locks ? `${locks} RG locks · ` : ""}${denied} RG blocked / ${a.decision_count} total)`
+    });
+  });
+  const sel1 = $("cockpit-agent-select"), sel2 = $("prover-agent-select");
+  sel1.replaceChildren(...options.map(o => o.cloneNode(true)));
+  sel2.replaceChildren(...options);
+
+  if (!STATE.selectedAgentId && agents.length) {
+    STATE.selectedAgentId = agents[0].agent_id;
+  }
+  if (STATE.selectedAgentId) {
+    await selectAgent(STATE.selectedAgentId).catch(() => null);
+    if (!$("probe-3hop-visual").children.length) {
+      void runStudioScenario("tighten");
+    }
+  }
+
+  renderCommandCenter();
+  renderApprovalsDesk();
+}
+
+$("btn-refresh").addEventListener("click", () => void refreshAll());
+initAuth().then(() => refreshAll());
+</script>
+</body>
+</html>
