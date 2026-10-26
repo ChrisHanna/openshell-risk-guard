@@ -578,18 +578,29 @@ impl SqliteRiskStore {
                      FROM epoch_bindings b JOIN epochs e ON e.epoch_id = b.epoch_id
                      WHERE b.run_id = ?1 ORDER BY b.created_at_ms DESC, b.rowid DESC LIMIT 100",
                 )?;
-                let sandboxes = sandboxes.query_map(params![id], |row| Ok(json!({
-                    "binding": binding_info(&tx, &row.get::<_, String>(0)?)?,
-                    "sandbox_id": row.get::<_, String>(0)?, "epoch_id": row.get::<_, String>(1)?,
-                    "gateway_id": row.get::<_, String>(2)?, "active": row.get::<_, bool>(3)?,
-                    "mode": row.get::<_, String>(4)?, "task_profile": row.get::<_, String>(5)?,
-                    "created_at_ms": row.get::<_, i64>(6)?, "active_policy_hash": row.get::<_, Option<String>>(7)?,
-                    "last_activity_at_ms": row.get::<_, i64>(8)?,
-                    // The name SPIRE assigned this sandbox. Assigned, not presented: Risk Guard does not receive the certificate.
-                    "spiffe_id": self.sandbox_spiffe_id(&row.get::<_, String>(0)?, row.get::<_, i64>(6)?),
-                    // closed: a delete event ended it. Otherwise how recently it was seen; "not_seen_recently" means presumed gone.
-                    "lifecycle": if row.get::<_, bool>(3)? { super::lifecycle_state(row.get::<_, i64>(8)?, now_ms) } else { "closed" }
-                })))?.collect::<std::result::Result<Vec<_>, _>>()?;
+                let sandboxes = sandboxes.query_map(params![id], |row| {
+                    let sbx_id = row.get::<_, String>(0)?;
+                    let created_ms = row.get::<_, i64>(6)?;
+                    let binding = binding_info(&tx, &sbx_id)?;
+                    let spiffe_id = self.sandbox_spiffe_id(&sbx_id, created_ms).or_else(|| {
+                        binding["principal_subject"]
+                            .as_str()
+                            .filter(|s| s.starts_with("spiffe://"))
+                            .map(ToString::to_string)
+                    });
+                    Ok(json!({
+                        "binding": binding,
+                        "sandbox_id": sbx_id, "epoch_id": row.get::<_, String>(1)?,
+                        "gateway_id": row.get::<_, String>(2)?, "active": row.get::<_, bool>(3)?,
+                        "mode": row.get::<_, String>(4)?, "task_profile": row.get::<_, String>(5)?,
+                        "created_at_ms": created_ms, "active_policy_hash": row.get::<_, Option<String>>(7)?,
+                        "last_activity_at_ms": row.get::<_, i64>(8)?,
+                        // The name SPIRE assigned this sandbox or the verified SVID principal presented on the SVID listener.
+                        "spiffe_id": spiffe_id,
+                        // closed: a delete event ended it. Otherwise how recently it was seen; "not_seen_recently" means presumed gone.
+                        "lifecycle": if row.get::<_, bool>(3)? { super::lifecycle_state(row.get::<_, i64>(8)?, now_ms) } else { "closed" }
+                    }))
+                })?.collect::<std::result::Result<Vec<_>, _>>()?;
                 let run_lifecycle = if ended.is_some() {
                     "ended"
                 } else if sandboxes.is_empty()

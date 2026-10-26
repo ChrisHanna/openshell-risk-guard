@@ -541,20 +541,24 @@ input[type="text"], input[type="number"], input[type="search"], select, textarea
   <!-- WORKSPACE 2: AGENT WORKFLOW MAP (Clean Top Bar, Diagram First!)     -->
   <!-- =================================================================== -->
   <main id="ws-cockpit" class="hidden">
-    <!-- Clean Single-Line Header Bar + Diagram Immediately Below (No messy lock list above the map!) -->
+    <!-- Clean Two-Row Header: Row 1 = Workload Selector + Workload ID & SPIFFE ID + Actions; Row 2 = System 1 + System 2 + OpenStream on the Exact Same Level! -->
     <section class="card" style="margin-bottom:16px">
-      <div class="card-header" style="margin-bottom:12px">
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <label for="cockpit-agent-select" style="font-weight:600;font-size:14px">Workload:</label>
-          <select id="cockpit-agent-select" aria-label="Select workload" style="font-weight:600;min-width:260px"></select>
-          <span class="pill pill-os" id="cockpit-os-pill">OpenShell Policy: Enforcing</span>
-          <span class="pill pill-rg" id="cockpit-rg-pill">Risk Guard: Nominal</span>
-          <span class="pill pill-blue" id="cockpit-siem-pill" hidden>OpenStream SIEM: —</span>
+          <select id="cockpit-agent-select" aria-label="Select workload" style="font-weight:600;min-width:250px"></select>
+          <span class="pill mono" id="cockpit-workload-id-pill" title="Canonical workload identifier">Workload ID: —</span>
+          <span class="pill pill-blue mono" id="cockpit-spiffe-pill" title="SPIFFE X.509-SVID URI for the active sandbox pod">SPIFFE: —</span>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button type="button" class="btn" id="btn-toggle-locks-drawer" hidden>🔒 View / Clear Locks (0)</button>
           <button type="button" class="btn btn-primary" id="btn-jump-prover">Propose Tighter OpenShell Policy →</button>
         </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:9px;border-top:1px solid var(--border);margin-bottom:12px">
+        <span class="pill pill-os" id="cockpit-os-pill">System 1 (OpenShell): Enforcing</span>
+        <span class="pill pill-rg" id="cockpit-rg-pill">System 2 (Risk Guard): Nominal</span>
+        <span class="pill pill-blue" id="cockpit-siem-pill" hidden>OpenStream SIEM: —</span>
       </div>
 
       <!-- Optional Collapsible Drawer for Managing Locks (Hidden by default so the top stays super clean!) -->
@@ -1332,10 +1336,16 @@ function renderCommandCenter() {
       ? el("span", { class: "pill pill-os mono", style: "padding:2px 7px;font-size:11px;white-space:nowrap", title: `${osBlk1h} OpenShell floor denials in 1h (${osBlk5m} in last 5m) via OpenStream OCSF`, text: `${osBlk1h} blk (1h)` })
       : el("span", { class: "mono", style: "font-size:11.5px;color:var(--text-muted)", text: "0 blk" });
 
+    const trustDomain = state.sandbox_spiffe_trust_domain || "risk-guard.demo";
+    const hasSpiffe = Number(a.sandbox_count || 0) > 0 && a.agent_id !== "default.user.openshell-client-fe65dd9e1cc32192";
+    const spiffeTag = hasSpiffe
+      ? (String(a.agent_id || "").startsWith("spiffe.workload.") ? `spiffe://${trustDomain}/ns/openshell/sa/…` : `spiffe://${trustDomain}/openshell/sandbox/*`)
+      : "pre-SPIRE";
+
     return el("tr", { class: "row-click", onclick: () => openAgentInCockpit(a.agent_id) },
       el("td", { style: "padding:8px 10px" },
-        el("div", { style: "font-weight:600;font-size:12.8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px", title: a.display_name || a.agent_id, text: a.display_name || a.agent_id }),
-        el("div", { class: "mono", style: "font-size:10.5px;color:var(--text-muted);white-space:nowrap", text: `${openPods} open / ${a.sandbox_count} pods · ${shortId(a.agent_id, 14)}` })
+        el("div", { style: "font-weight:600;font-size:12.8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:210px", title: `${a.display_name || a.agent_id} (${a.agent_id})`, text: a.display_name || a.agent_id }),
+        el("div", { class: "mono", style: "font-size:10.3px;color:var(--text-muted);white-space:nowrap", title: `Workload ID: ${a.agent_id} · ${spiffeTag}`, text: `${openPods} open / ${a.sandbox_count} pods · ${spiffeTag}` })
       ),
       el("td", { style: "padding:8px 8px;white-space:nowrap" }, badge),
       el("td", { style: "padding:8px 8px;white-space:nowrap" }, osCell),
@@ -1581,11 +1591,18 @@ function renderCockpitFlowMap(d, uniqueLocks) {
     : "";
 
   // Build Sandbox Pod map (Col 2) — guarantee the activeDecision's sandbox_id is always included!
+  const trustDomain = STATE.fleet?.sandbox_spiffe_trust_domain || "risk-guard.demo";
+  const defaultSpiffeFor = sbId => {
+    if (!sbId || sbId === "no-sandbox") return "";
+    if (d.agent?.agent_id === "default.user.openshell-client-fe65dd9e1cc32192") return "";
+    if (sbId.startsWith("svid-")) return `spiffe://${trustDomain}/ns/openshell/sa/${sbId.replace(/^svid-spiffe-risk-guard-demo-ns-openshell-sa-/, "").replace(/-[0-9a-f]{16}$/, "")}`;
+    return `spiffe://${trustDomain}/openshell/sandbox/${sbId}`;
+  };
   const sbMap = new Map();
   for (const run of d.runs || []) {
     for (const sb of run.sandboxes || []) {
       if (sb.sandbox_id && !sbMap.has(sb.sandbox_id)) {
-        sbMap.set(sb.sandbox_id, { id: sb.sandbox_id, spiffe: sb.spiffe_id || "", allow: 0, deny: 0, osDeny: 0, binary: "" });
+        sbMap.set(sb.sandbox_id, { id: sb.sandbox_id, spiffe: sb.spiffe_id || defaultSpiffeFor(sb.sandbox_id), allow: 0, deny: 0, osDeny: 0, binary: "" });
       }
     }
   }
@@ -1608,7 +1625,7 @@ function renderCockpitFlowMap(d, uniqueLocks) {
     const isOsDeny = Boolean(item.blocked_by_openshell || ev.outcome === "openshell_deny");
     const isDeny = isOsDeny || ev.outcome === "deny";
     if (req.sandbox_id) {
-      const sb = sbMap.get(req.sandbox_id) || { id: req.sandbox_id, spiffe: "", allow: 0, deny: 0, osDeny: 0, binary: "" };
+      const sb = sbMap.get(req.sandbox_id) || { id: req.sandbox_id, spiffe: defaultSpiffeFor(req.sandbox_id), allow: 0, deny: 0, osDeny: 0, binary: "" };
       if (isOsDeny) sb.osDeny += Number(item.openstream_count_1h || 1);
       else if (isDeny) sb.deny++;
       else sb.allow++;
@@ -1634,10 +1651,26 @@ function renderCockpitFlowMap(d, uniqueLocks) {
   const allSbs = Array.from(sbMap.values()).sort((a, b) => (b.allow + b.deny + b.osDeny) - (a.allow + a.deny + a.osDeny));
   let sbs = allSbs.slice(0, 4);
   if (activeReq.sandbox_id && !sbs.some(s => s.id === activeReq.sandbox_id)) {
-    const activeSb = sbMap.get(activeReq.sandbox_id) || { id: activeReq.sandbox_id, spiffe: "", allow: 1, deny: 0, osDeny: 0, binary: activeReq.binary_path || "" };
+    const activeSb = sbMap.get(activeReq.sandbox_id) || { id: activeReq.sandbox_id, spiffe: defaultSpiffeFor(activeReq.sandbox_id), allow: 1, deny: 0, osDeny: 0, binary: activeReq.binary_path || "" };
     sbs = [activeSb, ...sbs.slice(0, 3)];
   }
   if (!sbs.length) sbs.push({ id: "no-sandbox", spiffe: "", allow: 0, deny: 0, osDeny: 0, binary: "" });
+
+  // Update Row 1 Identity Badges right next to the Workload Dropdown!
+  const activePodForHeader = sbs.find(s => activeReq.sandbox_id && s.id === activeReq.sandbox_id) || sbs[0];
+  const rawAgentId = String(d.agent?.agent_id || "");
+  const isEntraUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(rawAgentId);
+  $("cockpit-workload-id-pill").textContent = `Workload ID: ${shortId(rawAgentId, 20)}${isEntraUuid ? " (Entra)" : ""}`;
+  $("cockpit-workload-id-pill").title = `Workload Name: ${d.agent?.display_name || rawAgentId}\nWorkload ID: ${rawAgentId}`;
+  if (activePodForHeader?.spiffe) {
+    $("cockpit-spiffe-pill").textContent = `SPIFFE: ${shortId(activePodForHeader.spiffe, 46)}`;
+    $("cockpit-spiffe-pill").title = activePodForHeader.spiffe;
+    $("cockpit-spiffe-pill").className = "pill pill-blue mono";
+  } else {
+    $("cockpit-spiffe-pill").textContent = "SPIFFE: None (pre-SPIRE sandbox)";
+    $("cockpit-spiffe-pill").title = "This sandbox was created before SPIRE was enabled on the cluster.";
+    $("cockpit-spiffe-pill").className = "pill mono";
+  }
 
   // Guarantee BOTH allowed destination routes AND blocked/locked routes are visible in Column 5,
   // AND guarantee activeRouteKey is ALWAYS present in Column 5!
@@ -1678,7 +1711,7 @@ function renderCockpitFlowMap(d, uniqueLocks) {
     sandboxId: s.id,
     isActive: Boolean(activeReq.sandbox_id && s.id === activeReq.sandbox_id),
     title: `Pod: ${shortId(s.id, 11)}`,
-    sub1: s.osDeny > 0 ? `⚡ ${s.osDeny} OpenShell floor blk (OpenStream)` : (s.binary ? `bin: ${shortId(s.binary, 22)}` : "OpenShell SPIFFE Pod"),
+    sub1: s.spiffe ? shortId(s.spiffe.replace(/^spiffe:\/\//, "spiffe://"), 26) : (s.binary ? `bin: ${shortId(s.binary, 22)}` : "Pre-SPIRE Pod"),
     sub2: `${s.allow} ok · ${s.deny} RG blk · ${s.osDeny} OS blk`,
     filter: s.id
   }));
