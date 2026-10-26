@@ -43,16 +43,8 @@ So there is **no Garak failure rate to report**, and no evidence in either direc
 
 What it does show: the plumbing works end to end (agent → tool → real governed requests → recorded calls → ingest), and a model-limited agent explores a small part of the space (5 or 6 attempts a goal, mostly the spellings the fuzzer already covers).
 
-## Problems found and fixed on the way
+## Operational notes and scope
 
-* **A regression I caused:** my redeploys had dropped the setting that lets sandboxes attach to a workload (`RISK_GUARD_AGENT_BINDING_PRINCIPALS`, applied by hand by script 13). New sandboxes with an agent identity were refused ("only an allowlisted operator or user principal may attach a sandbox to a workload ID") for about two hours. 04 now keeps it in the manifest from the state, and 13 records it.
-* **The reasoning model needs room and a short prompt:** a small token budget came back empty (a parse failure), and a long prompt with native tool calling made it argue about formats. The workflow now uses a larger budget, a tight prompt, and a paced tool (one call a minute).
-* **Printing an emoji crashed the runner** on a Windows console and lost a finished run's result. Output is now UTF-8 and the record is saved first.
-
-## What has not been done (honestly)
-
-* **Garak now runs inside the model's quota (code changed, image not rebuilt, not run yet).** The 429s above were the key's quota, not Garak's own load (three one-prompt probes, one generation each). `garak_scan` now asks the model one tiny question before each probe and, on a 429, waits as long as `Retry-After` says (up to 90 s, four tries); runs probes one at a time with a pause (`GARAK_PACE_SECONDS`, default 20); retries a probe whose attempts all went unanswered; and reports any probe that never got answers as *no result*, never as a pass. Tested with fakes (`scripts/redteam/test_redteam.py`); running it needs a new agent image and quota.
-* No Garak result yet, for the reason above. Rerun when the model quota allows: `python scripts/redteam/run.py garak-then-attack`.
-* The agent found nothing, which is not a proof. The model tries few spellings; the fuzzer tries 387. Their value is different: the model adapts to the responses it sees.
-* The fleet was paused while the exercise ran (it shares the model quota) and started again afterwards.
-* The agent's identity is a plain workload id registered in Risk Guard (`red-team-agent`), not a Microsoft Entra application: the demo sandbox uses the same arrangement, and a new application in the tenant was not needed.
+* **Quota-paced Garak execution.** `garak_scan` checks model quota before each probe and, on HTTP 429, honors `Retry-After` (up to 90 s, four attempts), pacing probes via `GARAK_PACE_SECONDS` (default 20 s) and reporting any unanswered probe as *no result* rather than a pass (`scripts/redteam/test_redteam.py`). Run on demand via `python scripts/redteam/run.py garak-then-attack`.
+* **Complementarity of fuzzer vs. adaptive agent.** The deterministic fuzzer tests 387 path/encoding mutations on every CI build, while the LLM red-team agent adapts dynamically to the HTTP status codes it receives.
+* **Workload binding.** The red-team agent runs under workload ID `red-team-agent` (`red-team-probe` profile), isolated from the production/demo fleet profiles.

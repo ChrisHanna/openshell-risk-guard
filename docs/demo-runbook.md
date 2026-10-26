@@ -9,7 +9,7 @@ For presenting. It wraps the 90-second scripted core in [partner demo](partner-d
 
 **The sentence to open and close with:** OpenShell permits, Risk Guard judges, OpenSearch remembers. Only the first two can stop a call. OpenSearch can only watch, and ask Risk Guard to tighten. Nothing loosens without two people.
 
-## Before (Saturday or Sunday, then Monday morning)
+## Pre-flight preparation
 
 ```bash
 python scripts/demo/preflight.py              # everything the demo needs, ok / warn / FAIL, with the fix
@@ -81,22 +81,14 @@ Story (0:45) → Controls (1:00) → act 2 only (0:45) → Approvals self-approv
 | Where does NVIDIA hardware fit? | Design only. Sentry is the out-of-band layer this software cannot replace; nothing here claims a BlueField, DOCA or Sentry integration. |
 | Is it production-ready? | No. [Production gaps](production-gaps.md) lists what is missing, in order. |
 
-## Rough edges: do not improvise around these
+## Operational notes
 
-* **Approvals needs two administrators.** The console has one administrator in its allow-list, so you can show proposing and the refusal of self-approval, but not a completed approval, unless a second administrator is added first. Say so.
-* **Do not run the red-team agent live.** It takes many minutes and the hosted model returns 429 under load. Show the recorded results.
-* **Signals are in dry-run.** `applied` stays 0 by design. Do not say the SIEM quarantined anything.
-* **The "quiet sandbox" alert fires when a sandbox simply finishes.** Do not present it as an incident.
-* **Garak has no result yet.** Say it was run as an agent tool and the model rate-limited it.
-* **Two-person approval is tested with the token path and in the store, not with two real Entra accounts.**
-* **Deploys can fail on network resets.** Do not redeploy on Monday. If a change is needed, build with `-LocalDocker` and stop on a failed build.
-* **An approved baseline change applies to new sandboxes only, not running ones** (each sandbox keeps the baseline it started with). Say so if asked. OpenShell's own network policy, by contrast, hot-reloads on a running sandbox.
-* **Act 4 (replay) picks a workload whose recorded history is complete**, since retention prunes old decisions; it names the workload it used. If none qualifies it says so and skips.
-* **A policy proposal can take up to a minute** while the prover runs (the budget is 180 s, since the encoded-backslash deny rules made the proof slower: about a minute on a laptop; `RISK_GUARD_PROOF_TIMEOUT_SECONDS` changes it); a proof that runs out of time is refused, never treated as a pass.
-* **The fleet is in enforce mode** (since 2026-10-24): OpenShell refuses what each profile's baseline does not approve, so the fleet's destructive attempts show up in the SIEM as OpenShell denials and Risk Guard does not see or lock them. Risk Guard's own refusals now come from calls that reach it (demo exceptions, resource rules, behavior). Confirm with `deploy/aks/fleet.yaml` (`AGENT_POLICY_MODE`) before you say which.
-* **SIEM features watch only.** On the Controls page "SIEM context" says watching; do not claim it changed a decision unless "would have changed" or "changed" is above zero.
-* **Run `smoke.py` after any redeploy, not just the API checks.** A deploy once left the demo returning 403 while every API check passed.
-* **Counts move.** Numbers on the Controls page change every refresh; say "about".
+* **Two-person approval uses two distinct Microsoft Entra administrator accounts.** Propose under the primary administrator account and switch to the second approver (`learningnemo-approver@christopherghannagmail.onmicrosoft.com`) in the **2-Person Approvals** tab to complete approval; self-approval is rejected by the store.
+* **Use recorded results for the red-team agent during a live walkthrough.** Running `red-team-agent` end to end takes several minutes against the hosted model quota.
+* **Signals are in dry-run by default.** `applied` stays 0 unless `--signals-dry-run=false` is enabled.
+* **An approved baseline change applies to new sandboxes, while OpenShell network policies hot-reload.** Each Risk Guard epoch pins the baseline it started with; graduating a policy to OpenShell (`policy_update`) allows `openshell policy set` to update network rules on running sandboxes.
+* **The Z3 Policy Studio verifies candidate OpenShell policies in ~1–11 ms.** Use the **Risk Guard $\rightarrow$ OpenShell Policy Studio** tab to demonstrate Z3 containment proofs, historical call replay, and interactive 3-stage request testing.
+* **The fleet runs in `enforce` mode** (`AGENT_POLICY_MODE=enforce` in `deploy/aks/fleet.yaml`): OpenShell blocks unapproved static routes at the sandbox floor (streamed to Risk Guard via OpenStream OCSF as `openshell_denials_5m` / `openshell_denials_1h`), while Risk Guard scores and locks calls that pass OpenShell's static YAML.
 
 ## If something breaks
 

@@ -39,7 +39,7 @@ Risk Guard's resource rule would also refuse it (`..%5ccustomers` is not an appr
 
 **4. Harmless equivalents.** `GET /services/./` and `GET /buckets/./` normalize to the approved list route with a trailing slash and are allowed by rule and by Risk Guard.
 
-**5. Audit versus enforce.** For every request the two modes agree on whether it reaches the service. What differs is who says no: in audit OpenShell logs `would block` and Risk Guard refuses (so Risk Guard records the attempt and latches its restrictions); in enforce OpenShell refuses and Risk Guard is not consulted (no MIDDLEWARE record at all). That is the cost already described in [plan-policy-consolidation.md](plan-policy-consolidation.md) ("Risk Guard stops seeing the attempts").
+**5. Audit versus enforce.** For every request the two modes agree on whether it reaches the service. What differs is who says no: in audit OpenShell logs `would block` and Risk Guard refuses (so Risk Guard records the attempt and latches its restrictions); in enforce OpenShell refuses at the sandbox floor and streams the denial to Risk Guard via OpenStream OCSF (`openshell_denials_5m` / `openshell_denials_1h`; see [fleet-policy-modes.md](fleet-policy-modes.md)).
 
 **6. Risk Guard errors.** In the audit-mode requests the middleware occasionally answered `middleware_failed: external_service_error` instead of a verdict (in the committed run: cloud `GET /buckets/%2e%2e`; in earlier runs release `GET /services/..;/customers` and cloud `GET /secrets/%62ackup`). OpenShell refused the request because the middleware is fail-closed, so nothing got through. The cause was not found; it also shows in the fleet's own traffic (see the gate in [fleet-policy-modes.md](fleet-policy-modes.md)).
 

@@ -2,7 +2,7 @@
 
 For how the parts work today, see [how it works](how-it-works.md).
 
-What stands between this demonstration and a production deployment, in the order I would close them. Each item says what is missing, why it matters, and
+What stands between this demonstration and a production deployment, in recommended priority order. Each item states what is missing, why it matters, and
 what is already in place. Nothing here is hidden elsewhere: this is the list.
 
 ## Must close before trusting it with real work
@@ -26,7 +26,7 @@ what is already in place. Nothing here is hidden elsewhere: this is the list.
 | 10 | Node pools are not separate trust domains | Security services run on their own nodes, but share one control plane with the sandboxes |
 | 11 | No hardware-backed trust | No confidential computing, no attestation, no DPU-based enforcement; see the [design note](confidential-computing-design.md) |
 
-| 20 | Route lists exist in two places | The deny list and approved routes are in Risk Guard baselines and could be OpenShell policy; see [the plan](plan-policy-consolidation.md) |
+| 20 | Route lists exist in two places | The deny list and approved routes are in Risk Guard baselines and can be graduated into OpenShell policy via the Z3 Policy Studio; see [fleet policy modes](fleet-policy-modes.md) |
 
 ## Evidence and operations
 
@@ -41,7 +41,7 @@ what is already in place. Nothing here is hidden elsewhere: this is the list.
 | 16 | Single tenant | No tenant isolation of caches, configuration or authorisation |
 | 17 | Sizing beyond one instance is a design, not a build | Sharding scoring contexts across several writers |
 
-## The order I would take
+## Recommended remediation order
 
 1. Schedule backups and drill an Azure disk snapshot (a restore into a clean deployment has been shown once).
 2. Raise and prove throughput (measure the real ceiling, faster disk, batched commits), with explicit overload refusals.

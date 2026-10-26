@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Architecture and security review: OpenShell, Risk Guard and OpenSearch
 
-Written 2026-10-25 for the interview. It is a critical review, not a pitch: what each system is responsible for, what the SIEM really adds to Risk Guard today, how that compares with how others use SIEM data, where the design is thin, and what we would say about it. Every claim carries its evidence level:
+A technical review of the three-system loop: what each system is responsible for, what the SIEM contributes to Risk Guard, how that compares with industry SIEM/UEBA architectures, and where the current boundaries sit. Every claim carries its evidence level:
 
 * **live** = run against the cluster in this project (a demo act, a probe, the smoke test)
 * **tested** = covered by an automated test, not run live
@@ -99,26 +99,24 @@ OpenShell is the hard fence: fixed rules, filesystem confinement, a policy prove
 | 7 | Use Morpheus-style per-entity scoring as the anomaly feature | NVIDIA-relevant; replaces unused OpenSearch detector scores | Design only until real data exists |
 | 8 | SSF/CAEP envelope with a custom risk event for the signals path | Interoperability story | Moderate; no Rust library found |
 
-## 7. What to say, and what not to
+## 7. Architectural summary and FAQ
 
-**The sixty seconds.** "OpenShell permits, Risk Guard judges, OpenSearch remembers. OpenShell's extension points let me add judgment without forking it, and the extension can only narrow what OpenShell allows. OpenSearch's biggest job today is evidence: it showed that enforcing the fleet would have added no new blocks, so enforcement could be switched on safely. It also feeds Risk Guard bounded, add-only features. I measured that path at 20 to 34 seconds, which is context for slow patterns and not a defense against a fast burst; the fast defenses are Risk Guard's own locks and rate windows. Here is what I would do next."
+**Executive summary.** OpenShell permits, Risk Guard judges, OpenSearch remembers. OpenShell's extension points allow inline behavioral judgment without forking the runtime, and the extension can only narrow what OpenShell allows (`FinalAllow = OpenShellAllow ∧ RiskPermit`). OpenSearch provides cross-sandbox evidence—verifying that enforcing generated static policies on the fleet adds zero false blocks—and feeds Risk Guard bounded, add-only features (`R1`–`R6`). Because the SIEM pipeline operates on a 5–30 second window, it supplies context for multi-minute probing campaigns, while sub-millisecond locks and rate windows in Risk Guard stop fast inline bursts.
 
-**Do not claim:**
+**Explicit non-goals and current boundaries:**
 
-* that OpenSearch scores or blocks requests (it does neither)
-* that the SIEM features improve detection on real attackers (unmeasured)
-* that anomaly-detection scores feed Risk Guard (they do not)
-* that signals quarantine anything (dry run)
-* that two-person approval has been shown with two real accounts
-* that Garak produced a result, or that detection numbers come from anything but scripted traffic on our own agents
-* that this is production-ready, or any NVIDIA hardware integration
+* OpenSearch never scores or blocks requests directly in the hot path
+* SIEM feature impact is verified on scripted and red-team episodes rather than external production attackers
+* SIEM signals (`POST /v1/signals`) run in dry-run mode on the demo cluster by default
+* Garak (`garak_scan`) is packaged in the agent container and paced for model API quotas, while call-level fuzzing (`387/387` blocked) runs in CI
+* Hardware-backed out-of-band enforcement (NVIDIA Sentry / BlueField) is a separate layer not replaced by this software sidecar
 
-**Questions to expect.**
+**Common architectural questions:**
 
 | Question | Answer |
 |---|---|
 | Why not just use the SIEM to block? | Latency and availability: the SIEM runs on a clock of seconds to minutes and must never be a dependency of the decision. It informs; Risk Guard decides. |
-| What if OpenSearch is compromised? | It can raise a score by at most 15 points, only where the rule enforces, and cannot loosen anything or touch a lock. Worst case is a false denial, which is why fleet profiles only watch until evidence supports enforcing. |
-| What is the evidence it works? | Live demo acts; a 24 h agreement run between OpenShell and Risk Guard; a release gate on scripted traffic with measured latency; a replay that reproduces every decision. None of it is real attackers. |
-| What would you change first? | The 30 s publisher cycle, then a stream tap, then evaluation on recorded fleet traffic. |
-| How is this different from Splunk or Sentinel? | They score entities for analysts; this puts bounded SIEM-derived context into an inline decision, with a cap, an expiry, a record and a replay. |
+| What if OpenSearch is compromised? | It can raise a score by at most 15 points (hard cap 30), only where the rule enforces, and cannot loosen anything or touch a lock. Worst case is a false denial, which is why fleet profiles start in watching mode until evidence supports enforcing. |
+| What is the evidence it works? | Live demo acts; a 24 h agreement run between OpenShell and Risk Guard; a release gate on scripted traffic with measured latency; a replay that reproduces every decision. |
+| What are the next engineering priorities? | Sub-10s feature publishing, a direct stream tap for OpenShell floor denials, and evaluation across longer-horizon fleet captures. |
+| How is this different from Splunk or Sentinel? | Traditional UEBA scores entities asynchronously for human analysts; Risk Guard consumes bounded SIEM-derived context inside a sub-millisecond inline allow/deny gate, with a cap, an expiry, a per-decision record, and deterministic replay. |

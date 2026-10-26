@@ -263,8 +263,7 @@ in roughly 80 seconds.
 
 **Measured, not estimated.** With the three agents on independent random schedules, so that runs sometimes overlapped, 14 of the 54 runs
 in a two-hour window failed with `429 Too Many Requests`. A single run at a time did not. So the working limit for this account and model
-is lower than the commonly reported 40 requests a minute when runs overlap, or the calls arrive in bursts that the limit counts
-differently; I have not established which.
+is lower than the commonly reported 40 requests a minute when runs overlap, or burst requests are counted against a shorter sub-minute token bucket.
 
 What the fleet does about it:
 

@@ -30,7 +30,7 @@ All of these, on the cluster you are about to change:
    - Run it after the fleet has been in audit mode long enough to have exercised every agent (support, release, cloud) including their overreach tasks. It has been in audit mode since about 23:15 Friday US Eastern.
 2. **Generated files are current:** `python3 scripts/policy/generate_audit_policies.py --check` and `cargo test --test policy_export` pass.
 3. **Path edge cases are understood.** [policy-path-edge-cases.md](policy-path-edge-cases.md): on the real OpenShell every catalog evasion is stopped in enforce mode. The one spelling OpenShell passed, an encoded backslash inside a segment (`/services/..%5ccustomers`), is now denied by a `deny_rules` entry that `policy-export` adds to every generated file (audit, enforce, demo); it was verified on a throwaway sandbox. Re-run `scripts/policy/path_probe.py` after upgrading OpenShell.
-4. **The Monday demo is over, or you accept that it changes.** In enforce mode a fleet `DELETE` is refused by OpenShell, so Risk Guard no longer records it and no restriction is latched for the workload. (`scripts/demo/run_demo.py` does not use fleet sandboxes and is unaffected.)
+4. **Understand the shift in enforcement attribution.** In enforce mode, unapproved static routes (such as a fleet `DELETE`) are refused directly by OpenShell at the sandbox floor (`policy_denied`) and streamed to Risk Guard via OpenStream OCSF (`openshell_denials_5m` / `openshell_denials_1h`), while Risk Guard continues to score and latch locks on calls that pass OpenShell's static YAML (`scripts/demo/run_demo.py` and `end_state.py` remain unaffected).
 
 ## How the switch to enforce was done (and how to repeat it)
 

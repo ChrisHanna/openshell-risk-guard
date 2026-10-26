@@ -78,7 +78,7 @@ Risk Guard's own refusals are also logged by the supervisor as HTTP Activity Den
 
 - **Anomaly detectors need history.** They need roughly 128 one-minute intervals of data (about two hours of steady traffic) before they produce results, and they do poorly on very sparse data. This demo mostly has bursts when you run a scenario, so expect "initializing" first, and noisy or empty results after. It becomes useful when agents run for hours or days, not in a five-minute demo. Treat them as a feature to show, not as proof of detection quality.
 - **The alert has no destination yet.** It records an alert in the **Alerting** page but sends nothing (no Slack or email channel is configured), by design for a demo.
-- **Reports:** the definition exists and the schedule is set. Generating the PDF needs a headless browser inside the Dashboards pod, and I have not confirmed it renders here. Use **Reporting, Create** and press "Generate" once to check before relying on it.
+- **Reports:** the definition exists and the schedule is set. Generating the PDF requires a headless browser inside the Dashboards pod; use **Reporting, Create** and press "Generate" once to verify PDF rendering on the target cluster before relying on scheduled exports.
 - **The viewer account** (read-only) can open the dashboard and searches, but cannot edit or delete them. The detectors, alerting and reporting pages are for the admin account.
 - **Not a verdict.** A spike here means "look", not "attack".
 

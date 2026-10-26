@@ -94,13 +94,13 @@ and integers, and the field `status_detail` is analysed as text, so exact-match 
 
 ### Public access for the demo (`24-expose-siem.ps1`)
 
-For the interview the Dashboards can be published on the internet: nginx terminating HTTPS with a Let's Encrypt certificate (the same pattern as the Risk Guard console),
+For external review, OpenSearch Dashboards can be published over HTTPS: nginx terminating TLS with a Let's Encrypt certificate (the same pattern as the Risk Guard console),
 a rate-limited sign-in (six attempts a minute per address after a small burst), and two accounts. The hostname is not recorded in this repository.
 
 | Account | What it can do | Checked from outside |
 |---|---|---|
 | `admin` | everything | logs in |
-| `viewer` (for interviewers) | read the `ocsf-*` indices and use Discover and dashboards | logs in; reading works; writing an index, reading the security API and listing other indices are refused; a wrong password gets 401 |
+| `viewer` (read-only reviewer) | read the `ocsf-*` indices and use Discover and dashboards | logs in; reading works; writing an index, reading the security API and listing other indices are refused; a wrong password gets 401 |
 
 Both passwords are generated into Secrets and never printed or committed. **This is a deliberate demo exposure, accepted by the owner of this subscription:**
 
