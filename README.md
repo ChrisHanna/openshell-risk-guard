@@ -42,27 +42,21 @@ Start with [the story](docs/the-story.md) (the loop, why each piece exists, and 
 
 ## See it work
 
-The operator console, captured from a live run against a real OpenShell gateway and sandbox
-(the upstream is a harmless local fixture).
+The **OpenShell × Risk Guard Studio** console (`/` and `/admin`, with the classic view at `/classic`), captured live from the AKS cluster (`aks-openshell-demo`). Every view explicitly separates **System 1 (`OpenShell Policy Enforcement` — static Landlock & L7 YAML floor)** from **System 2 (`Risk Guard Adaptive & Policy Proposer` — behavioral scoring, cross-sandbox locks, OpenStream SIEM correlation, and Z3 policy graduation back to OpenShell)**.
 
-![Fleet overview: workloads, active restrictions and blocked actions](docs/images/console-overview.png)
+![Command Center: two-system architecture pipeline, fleet posture donut, latency distribution, priority triage queue, and consolidated workload directory](docs/images/console-overview.png)
 
-**Activity** follows one workload across its sandboxes to each destination. The risky `DELETE` is
-stopped inline while the allowed `GET`s pass.
+**Agent Workflow Map** traces requests across all five stages (`1. Agent Workload` $\rightarrow$ `2. Sandbox Pod (SPIFFE)` $\rightarrow$ `3. System 1: OpenShell Policy` $\rightarrow$ `4. System 2: Risk Guard Gate` $\rightarrow$ `5. Destination Route & Host:Port`), surfacing the workload's Entra/canonical ID, its pod `spiffe://risk-guard.demo/...` X.509-SVID URI, and an aligned `System 1` / `System 2` / `OpenStream SIEM` status strip.
 
-![Activity map: one workload, three sandboxes, a blocked DELETE and passing GETs](docs/images/console-activity.png)
+![Agent Workflow Map: 5-stage pipeline showing System 1 OpenShell vs System 2 Risk Guard, SPIFFE identity, and blocked vs allowed routes](docs/images/console-activity.png)
 
-**Detections** explain every score: the signals behind it, the thresholds, and the persisted
-cross-sandbox lock that carried the restriction to a new sandbox. An operator can clear a lock with an
-audited reason.
+**Recorded Calls & Two-System Inspector** attribute every event to **System 1 (`OpenShell` floor blocks streamed via OpenStream OCSF)** or **System 2 (`Risk Guard` inline score, cross-sandbox lock, and per-signal waterfall)**, with on-demand packet replay (`▶ Pulse`).
 
-![Detections: score 100, signal breakdown and active restriction with audited recovery](docs/images/console-detections.png)
+![Recorded Calls and Two-System Decision Breakdown: OpenStream floor refusals alongside Risk Guard 100/100 locked calls and signal waterfall](docs/images/console-detections.png)
 
-**Adaptive** learns each workload's normal behavior automatically in shadow mode. It never blocks
-until an operator reviews and promotes a model. How it is measured, what it catches on scripted
-traffic and what that does and does not show: [docs/adaptive-v2.md](docs/adaptive-v2.md).
+**Risk Guard $\rightarrow$ OpenShell Policy Studio** closes the Day-1 to Day-N loop: it takes the routes Risk Guard caught and blocked dynamically, synthesizes a tighter OpenShell YAML policy, verifies non-expansion with the **OpenShell Z3 SMT Prover** in ~1–11 ms (`POST /api/studio/verify`), replays recorded calls to show how blocks shift from System 2 to System 1 (`Stopped at System 1: 0 today → 40 after update`), and submits the policy for **2-Person Approval**. See [docs/adaptive-v2.md](docs/adaptive-v2.md).
 
-![Adaptive: learning automatically, shadow model, deterministic guardrails only](docs/images/console-adaptive.png)
+![Risk Guard to OpenShell Policy Studio: 3-step Z3 policy graduation pipeline, 3-stage interactive request tester, and recorded call replay](docs/images/console-adaptive.png)
 
 ## At a glance
 

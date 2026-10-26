@@ -30,11 +30,11 @@ OpenShell is the hard fence: fixed rules, filesystem confinement, a policy prove
 |---|---|---|---|
 | **Earn trust to enforce** (audit, then enforce) | The agreement tool compares what OpenShell would refuse with what Risk Guard refused over 24 h | **live**: about 107 to 118 of about 109 to 120 would-blocks matched, 0 that only OpenShell would add; the fleet then moved to enforce | The promotion gate still says HOLD; the window is one day |
 | **Evidence and audit** | Every decision and denial is exported as OCSF and searchable | **live**: smoke test finds every call of the demo in the SIEM | Not append-only; a short window is unexported (gap 5) |
-| **Per-call score** | `siem_context` rule R1 to R4, at most 15 points, add-only | **live** mechanism (demo act F: denials counted, handed over, score rose); enforcing in the end-state profile only | Fleet profiles only watch; "would have changed" is 0; **value is unmeasured on real traffic** |
+| **Per-call score** | `siem_context` rules R1 to R6 (`openshell_denials_5m`, `refusal_ratio_15m_permille`, `new_routes_1h`, `fleet_workloads_with_denials_5m`, `anomaly_grade_15m_permille`, and `R6 probing × novel access`), capped at 15 points (max 30), add-only, served from an in-memory cache (`SiemFeatureCache`) | **live** mechanism (demo act F: denials counted, handed over, score rose); enforcing in the end-state profile | Fleet profiles watch by default until promoted; **value is unmeasured on real external traffic** |
 | **Learning** | The same counts reach the adaptive learner as bounded context | **tested** (mapping and learner rules); wired 2026-10-24 | No live model has used them yet; the one evaluation is synthetic with context correlated to attacks by construction: it proves the mechanism, not a benefit |
 | **Containment** | Alert monitors can ask Risk Guard to quarantine, tighten-only | built, **dry-run**: recorded, nothing happens | Not enforcing; only one monitor sends signals |
-| **Suggest what to allow** | `suggest_baselines.py` proposes hosts and rate limits from the SIEM; route suggestions come from Risk Guard's own history | **read**/**tested** | Offline script; a person proposes |
-| **Anomaly scores** | OpenSearch anomaly detectors exist | **live** in the SIEM | **Not used by Risk Guard**; synthetic data only; results trail real time by about 85 s |
+| **Suggest what to allow** | `suggest_baselines.py` proposes hosts and rate limits from the SIEM; route suggestions come from Risk Guard's own history; the Policy Studio (`POST /api/studio/verify`) synthesizes and Z3-verifies tightened OpenShell policies | **live**/**tested** | A person proposes and a second person approves |
+| **Anomaly scores** | OpenSearch RCF anomaly detectors (`anomaly_grade_15m_permille`) feed Rule R5 (+3 at >=400, +6 at >=700) and Rule R6 (+6 when combined with novel access) | **live**/**tested** | Synthetic data on cluster; RCF detector results trail real time by about 60–85 s |
 | **Notice a bypassed supervisor** | Tunnel gate flags a sandbox that goes quiet; a monitor watches | **tested**, shadow | Defeated by an attacker who keeps sending harmless requests (gap 7) |
 
 **How fast the SIEM path is** (measured, **live**, two samples): an OpenShell denial is searchable in OpenSearch after 5 to 8 s, and Risk Guard scores a call with the resulting feature after 20 to 34 s, mostly the publisher's 30 s cycle. That suits probing spread over minutes and not a fast burst; fast bursts are Risk Guard's own job (rate windows, locks).
@@ -59,8 +59,8 @@ OpenShell is the hard fence: fixed rules, filesystem confinement, a policy prove
 * **Fails closed everywhere** (**live**/**tested**): sidecar unreachable, slow or erroring means blocked; restarts cost an 80 to 110 s outage rather than a bypass.
 * **Extension can only narrow** (**read**): the contract is `FinalAllow = OpenShellAllow AND RiskPermit`; Risk Guard cannot widen OpenShell. It reads no body, headers or query (a test sends a secret and proves it is ignored).
 * **Monotonic state** (**tested**): locks persist across sidecar restarts and across sandboxes for the same workload, and are never cleared automatically.
-* **Loosening needs two people** (**tested** in the store; the Approvals page exists, a completed two-account approval has not been shown).
-* **Policy changes are prover-checked** (**tested**): candidates must be proved no wider than the current policy, and a proof that times out is refused, not passed.
+* **Loosening needs two people** (**live**/**tested**: two Entra administrator accounts—primary admin + `learningnemo-approver@christopherghannagmail.onmicrosoft.com`—are configured on the console's 2-Person Approvals Desk).
+* **Policy changes are prover-checked** (**live**/**tested**): candidates must be proved no wider than the current policy by OpenShell's Z3 solver (~1–11 ms in the Policy Studio), and a proof that times out is refused, not passed.
 * **Replayable decisions** (**tested**): each decision stores the exact SIEM features it used.
 * **Measured before enforced** (**live**): the OpenShell fleet moved from audit to enforce on agreement evidence.
 

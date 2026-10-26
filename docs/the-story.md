@@ -53,11 +53,9 @@ Short version of who does what: [who blocks, who recommends](who-does-what.md).
 
 ## What is real today, and what is not
 
-Running on the AKS demo cluster: both gates, OCSF events and summaries in OpenSearch, the dashboards, signals through the forwarder (in dry-run), backup and restore (2.4 s and 56 s), two-person approval by CLI, the promotion gate (currently HOLD), the fuzzer (0 of 387 through) and one adaptive red-team run (17 requests, none through).
+Running on the AKS demo cluster: both gates, OCSF events and summaries in OpenSearch, the dashboards, signals through the forwarder (in dry-run), backup and restore (2.4 s and 56 s), two-person approval by CLI and in the console (`2-Person Approvals` desk with two Entra administrator accounts), the default **Two-System Studio Console** (`/` and `/admin`, with the classic view at `/classic`), the live **Z3 Policy Graduation Studio** (`POST /api/studio/verify`, ~1–11 ms Z3 containment proofs), the promotion gate (currently HOLD), the fuzzer (0 of 387 through) and one adaptive red-team run (17 requests, none through).
 
-Also running (once deployed): an Approvals page in the console for two-person decisions and suggested baseline changes, three watch-only monitors, a "one call, both layers" search, and baseline suggestions drawn from SIEM history (a person signs any change).
-
-Not yet: enforcement broadly switched on, Garak results, scheduled backups, a UI for approvals, signed images, hardware-backed trust. The full list is in [production gaps](production-gaps.md); the technical walk-through is in [how it works](how-it-works.md).
+Not yet: enforcement of SIEM-triggered quarantine in production (currently dry-run), Garak failure-rate results (rate-limited on shared model key), scheduled backups, signed images, hardware-backed trust. The full list is in [production gaps](production-gaps.md); the technical walk-through is in [how it works](how-it-works.md).
 
 ## Where things live in the repository
 
@@ -66,9 +64,9 @@ Not yet: enforcement broadly switched on, Garak results, scheduled backups, a UI
 | `src/detector/`, `src/normalizer/`, `src/store/` | Scoring, request canonicalisation, the SQLite state | Judge |
 | `src/middleware_service.rs`, `src/interceptor_service.rs`, `src/ext_authz.rs` | The gRPC middleware, policy interceptor and tunnel gate | Judge (the two gates) |
 | `src/ocsf.rs` | OCSF events and per-minute summaries | Remember |
-| `src/signals.rs`, `src/signal_forwarder.rs` | Signals listener (token or mTLS+SPIFFE) and the forwarder | React |
+| `src/signals.rs`, `src/signal_forwarder.rs`, `src/feature_publisher.rs` | Signals/features listener (mTLS+SPIFFE) and OpenStream feature publisher | React |
 | `src/store/changes.rs`, `src/backup.rs` | Two-person approval, backup and restore | Change safely |
-| `src/operator_controls.rs`, `src/dashboard.rs`, `src/*_ui.html` | Operator console and API | Operate |
+| `src/operator_controls.rs`, `src/operator_dashboard.rs`, `src/operator_studio.html`, `src/operator_ui.html` | Default Two-System Studio console (`/`), backup classic console (`/classic`), and Z3 verification API | Operate |
 | `src/hardening/`, `src/adaptive*.rs`, `src/replay.rs` | Prover-checked tighter policies, learning, decision replay | Improve |
 | `deploy/aks/` | Manifests and profiles for the AKS deployment | Deploy |
 | `deploy/aks/siem/` | Collector, forwarder, NetworkPolicies | Remember, React |
