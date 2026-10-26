@@ -1140,6 +1140,7 @@ pub async fn execute_cli(cli: Cli) -> Result<String> {
                 audience.clone(),
             )
             .with_required_agent_identity(!allow_unattributed)
+            .with_fail_open_on_unavailable(true)
             .with_latency_recorder(latency);
             let middleware_service = match &ocsf {
                 Some(emitter) => middleware_service.with_ocsf(Arc::clone(emitter)),

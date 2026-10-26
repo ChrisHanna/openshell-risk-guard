@@ -120,6 +120,10 @@ pub struct RiskGuardMiddlewareService {
     pub expected_audience: String,
     pub eval_timeout: Duration,
     pub require_agent_identity: bool,
+    /// When true, transient sidecar unavailability (timeout, admission queue full, or SQLite lock busy) returns
+    /// `Decision::Allow` (`degraded_fail_open_openshell_permitted`) because the request already passed OpenShell's
+    /// deny-by-default static policy.
+    pub fail_open_on_unavailable: bool,
     /// Where each request's server-side decision time is recorded. `None` records nothing (tests).
     pub latency: Option<Arc<crate::latency::LatencyRecorder>>,
     /// Where refusals are sent as OCSF events. `None` sends nothing.
@@ -131,6 +135,7 @@ impl fmt::Debug for RiskGuardMiddlewareService {
         f.debug_struct("RiskGuardMiddlewareService")
             .field("expected_audience", &self.expected_audience)
             .field("eval_timeout", &self.eval_timeout)
+            .field("fail_open_on_unavailable", &self.fail_open_on_unavailable)
             .field("available_permits", &self.admission.available_permits())
             .finish_non_exhaustive()
     }
@@ -156,9 +161,18 @@ impl RiskGuardMiddlewareService {
             expected_audience: expected_audience.into(),
             eval_timeout: Duration::from_millis(DEFAULT_EVAL_TIMEOUT_MS),
             require_agent_identity: false,
+            fail_open_on_unavailable: false,
             latency: None,
             ocsf: None,
         }
+    }
+
+    /// When enabled, transient store timeouts or admission saturation return `Decision::Allow`
+    /// (`degraded_fail_open_openshell_permitted`) instead of a gRPC error, falling back to OpenShell's deny-by-default floor.
+    #[must_use]
+    pub const fn with_fail_open_on_unavailable(mut self, enabled: bool) -> Self {
+        self.fail_open_on_unavailable = enabled;
+        self
     }
 
     /// Send each refusal to the SIEM as an OCSF event (see `crate::ocsf`).
@@ -236,6 +250,45 @@ fn now_unix_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+fn build_degraded_fail_open_result(reason_detail: &str) -> HttpRequestResult {
+    HttpRequestResult {
+        decision: Decision::Allow as i32,
+        reason: format!(
+            "reason_code=degraded_fail_open_openshell_permitted detail={reason_detail}"
+        ),
+        body: Vec::new(),
+        has_body: false,
+        header_mutations: Vec::new(),
+        findings: Vec::new(),
+        metadata: HashMap::from([
+            ("degraded_fail_open".to_string(), "true".to_string()),
+            ("fallback_layer".to_string(), "openshell_deny_by_default".to_string()),
+        ]),
+        reason_code: String::new(),
+    }
+}
+
+impl RiskGuardMiddlewareService {
+    fn fail_open_response(
+        &self,
+        sandbox_id: &str,
+        route_host: &str,
+        route_method: &str,
+        route_template: &str,
+        detail: &str,
+    ) -> Response<HttpRequestResult> {
+        tracing::warn!(
+            sandbox_id = %sandbox_id,
+            detail = %detail,
+            "risk-guard cannot answer; continuing under OpenShell deny-by-default policy"
+        );
+        if let Some(ocsf) = &self.ocsf {
+            ocsf.record_decision(sandbox_id, false, 0, route_host, route_method, route_template);
+        }
+        Response::new(build_degraded_fail_open_result(detail))
+    }
 }
 
 fn map_risk_guard_error(err: RiskGuardError) -> Status {
@@ -377,9 +430,12 @@ impl SupervisorMiddleware for RiskGuardMiddlewareService {
         &self,
         request: Request<HttpRequestEvaluation>,
     ) -> std::result::Result<Response<HttpRequestResult>, Status> {
-        let _permit = Arc::clone(&self.admission)
-            .try_acquire_owned()
-            .map_err(|_| Status::resource_exhausted("risk-guard admission queue exhausted"))?;
+        let permit = Arc::clone(&self.admission).try_acquire_owned();
+        if permit.is_err() && !self.fail_open_on_unavailable {
+            return Err(Status::resource_exhausted(
+                "risk-guard admission queue exhausted",
+            ));
+        }
 
         let eval_req = request.get_ref();
         if eval_req.phase != SupervisorMiddlewarePhase::PreCredentials as i32 {
@@ -424,6 +480,17 @@ impl SupervisorMiddleware for RiskGuardMiddlewareService {
             .target
             .as_ref()
             .ok_or_else(|| Status::invalid_argument("request target is required"))?;
+
+        if permit.is_err() && self.fail_open_on_unavailable {
+            return Ok(self.fail_open_response(
+                &ctx.sandbox_id,
+                &target.host,
+                &target.method,
+                target.path.split('?').next().unwrap_or("/"),
+                "admission_queue_full",
+            ));
+        }
+        let _permit = permit.ok();
 
         let port = u16::try_from(target.port).map_err(|_| {
             Status::invalid_argument(format!("invalid target port: {}", target.port))
@@ -500,11 +567,47 @@ impl SupervisorMiddleware for RiskGuardMiddlewareService {
 
         let eval = match eval_result {
             Ok(Ok(Ok(eval))) => eval,
-            Ok(Ok(Err(err))) => return Err(map_risk_guard_error(err)),
+            Ok(Ok(Err(err))) => {
+                if self.fail_open_on_unavailable
+                    && matches!(
+                        err,
+                        RiskGuardError::Storage(_)
+                            | RiskGuardError::AdmissionExhausted(_)
+                            | RiskGuardError::Internal(_)
+                    )
+                {
+                    return Ok(self.fail_open_response(
+                        &ctx.sandbox_id,
+                        &route_host,
+                        &route_method,
+                        &route_template,
+                        "store_unavailable",
+                    ));
+                }
+                return Err(map_risk_guard_error(err));
+            }
             Ok(Err(_join_err)) => {
+                if self.fail_open_on_unavailable {
+                    return Ok(self.fail_open_response(
+                        &ctx.sandbox_id,
+                        &route_host,
+                        &route_method,
+                        &route_template,
+                        "worker_join_error",
+                    ));
+                }
                 return Err(Status::unavailable(REASON_RISK_STATE_UNAVAILABLE));
             }
             Err(_elapsed) => {
+                if self.fail_open_on_unavailable {
+                    return Ok(self.fail_open_response(
+                        &ctx.sandbox_id,
+                        &route_host,
+                        &route_method,
+                        &route_template,
+                        "eval_timeout",
+                    ));
+                }
                 return Err(Status::unavailable(REASON_RISK_STATE_UNAVAILABLE));
             }
         };
