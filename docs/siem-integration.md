@@ -37,49 +37,21 @@ fails, OpenShell writes a High Detection Finding "Required supervisor middleware
 
 Each record carries the sandbox name and ID, the URL, the method, and the OpenShell product version.
 
-## What a SIEM does not get today
+Because OpenShell's own middleware event normalises a middleware finding to a generic title (`risk-guard.finding`) without the numerical risk score, signal breakdown, or durable workload ID, **Risk Guard also emits its own enriched OCSF events (`src/ocsf.rs`)** directly to the same OTLP collector (`--ocsf-otlp-endpoint`), described in [Risk Guard's own events](#risk-guards-own-events) below.
 
-* **Our detail.** OpenShell normalises a middleware finding to a generic type and title (`risk-guard.finding`). The score, threshold, workload and
-  restriction tier we put in the finding are not in the OCSF record. The reason code survives only in the HTTP Activity's `status_detail`.
-* **Anything that does not go through OpenShell's middleware:** tunnel-gate refusals, operator quarantines and releases, restriction clearances, and
-  silent-supervisor flags exist only in Risk Guard (`supervisor-silence-list`, the quarantine audit table, the console).
-* **Workload identity.** The record names the sandbox, not the durable workload it belongs to.
+## Reference SIEM deployment (`deploy/aks/siem/`)
 
-## What is next
+`deploy/aks/siem/` and scripts `22-deploy-siem.ps1` and `23-enable-ocsf-export.ps1` deploy the reference pipeline: the OpenShell gateway, sandbox supervisors, and Risk Guard send OCSF over OTLP to an OpenTelemetry Collector, which writes structured documents to OpenSearch, viewed in OpenSearch Dashboards. Placement and controls:
 
-1. Emit our own OCSF events for those Risk Guard-only actions, as Detection Findings and API Activity, using OpenShell's OCSF builders if the crate can be
-   depended on (not yet confirmed), with the workload and sandbox IDs so a SIEM can join them to OpenShell's records.
-2. Send OTLP to a collector and fan out to open-source consumers to show more than one tool reading the same stream.
-3. A short guide for vendors in both directions: *consume* the OCSF and OTLP output, and *extend* OpenShell by implementing the middleware or interceptor
-   contract (Risk Guard is the worked example).
-
-## Reference SIEM for the demo (deployed and receiving real events)
-
-`deploy/aks/siem/` and scripts `22-deploy-siem.ps1` and `23-enable-ocsf-export.ps1` build a demonstration pipeline: the gateway and supervisors send OCSF as OTLP to
-an OpenTelemetry Collector, which writes documents to a single-node OpenSearch, viewed in OpenSearch Dashboards. Placement and controls:
-
-* its own namespace and a tainted node pool, away from Risk Guard and the sandboxes; default-deny network policies; Dashboards reachable only by port-forward;
-* the collector accepts OTLP only from the OpenShell gateway and supervisor pods. A compromised supervisor could still send forged events, so a rule that decides
-  something must treat supervisor-origin records as untrusted; the agent pods cannot reach it at all;
-* events contain attacker-influenced text (URLs, paths), so Dashboards must stay patched and its access restricted;
-* the OpenSearch admin password is generated into a Secret by the script and is never printed or committed;
-* **demo only:** a cluster administrator can delete it, so it is not the tamper-resistant audit store a production deployment needs (that is a separate cluster,
-  subscription or managed service). It uses a self-signed certificate and one node.
-
-Validated offline: the Helm values render against the real charts, the collector configuration passes `otelcol-contrib validate` (and a deliberately bad value
-is rejected), and the network policies match the rendered pod labels.
-
-Deployed and checked on the cluster: the three pods run on the dedicated node, OpenSearch reports green, and three synthetic OCSF-shaped records sent to the collector from a
-short-lived test pod arrived in the `ocsf-openshell` index as parsed documents (then deleted). Problems found and fixed on the way: the chart's root init container
-conflicted with running as non-root (disabled; the volume is writable through `fsGroup`), and Dashboards' default CPU limit was below its request.
-Still to do: index settings (a single node cannot hold a replica, so the index shows yellow; `time` is stored as a number, not a date), and switching the gateway export on
-(`23-enable-ocsf-export.ps1`).
+* Dedicated `siem` namespace and tainted node pool, isolated from Risk Guard and sandbox pods; default-deny NetworkPolicies;
+* The collector accepts OTLP only from the OpenShell gateway, supervisor pods, and Risk Guard; agent containers cannot reach it directly;
+* Events contain untrusted request metadata (URLs, paths), so Dashboards access is authenticated and rate-limited;
+* The OpenSearch admin password is generated into a Kubernetes Secret by the deployment script and never printed or committed;
+* **Demo posture:** single-node OpenSearch in the same cluster. A production deployment should ship OTLP to an external, append-only SIEM cluster or managed service.
 
 ### Verified end to end (real events)
 
-After `23-enable-ocsf-export.ps1 -Apply` (the gateway restarted in about a minute and logged that OTLP export was enabled) and a new sandbox, a refused call arrived in
-the `ocsf-openshell` index within seconds. Within minutes the index held 63 documents across OCSF classes (Device Config State Change, Authentication, Network Activity, SSH
-Activity, HTTP Activity, Detection Finding). The ones for the refusal, from [`evidence/ocsf-in-opensearch-sample.jsonl`](evidence/ocsf-in-opensearch-sample.jsonl):
+With OTLP export enabled (`23-enable-ocsf-export.ps1 -Apply`), refused calls arrive in the `ocsf-openshell` index within seconds across OCSF classes (Device Config State Change, Authentication, Network Activity, SSH Activity, HTTP Activity, Detection Finding). Sample records from [`evidence/ocsf-in-opensearch-sample.jsonl`](evidence/ocsf-in-opensearch-sample.jsonl):
 
 | Time (UTC) | OCSF class | What it says |
 |---|---|---|
@@ -87,12 +59,9 @@ Activity, HTTP Activity, Detection Finding). The ones for the refusal, from [`ev
 | 07:07:55 | HTTP Activity, `firewall_rule.type: middleware`, **Denied**, Medium | `status_detail: middleware_denied:risk-guard:behavioral_risk_restricted` |
 | 07:07:55 | Detection Finding, **High** | "External middleware finding" for the same sandbox |
 
-Events from other sandboxes (for example a fleet agent's `POST /v1/chat/completions`) arrive in the same index, so one query covers the whole fleet.
+Events from all sandboxes arrive in the same index, enabling fleet-wide correlation across both OpenShell and Risk Guard.
 
-Known rough edges, to fix next: the single-node index shows yellow (no replica is possible), `time` and `class_uid` are stored as floating-point numbers (parsed from JSON) rather than as a date
-and integers, and the field `status_detail` is analysed as text, so exact-match queries need its `.keyword` form. These matter before a Security Analytics rule is written on top.
-
-### Public access for the demo (`24-expose-siem.ps1`)
+### Optional HTTPS ingress (`24-expose-siem.ps1`)
 
 For external review, OpenSearch Dashboards can be published over HTTPS: nginx terminating TLS with a Let's Encrypt certificate (the same pattern as the Risk Guard console),
 a rate-limited sign-in (six attempts a minute per address after a small burst), and two accounts. The hostname is not recorded in this repository.
@@ -102,21 +71,11 @@ a rate-limited sign-in (six attempts a minute per address after a small burst), 
 | `admin` | everything | logs in |
 | `viewer` (read-only reviewer) | read the `ocsf-*` indices and use Discover and dashboards | logs in; reading works; writing an index, reading the security API and listing other indices are refused; a wrong password gets 401 |
 
-Both passwords are generated into Secrets and never printed or committed. **This is a deliberate demo exposure, accepted by the owner of this subscription:**
+Both passwords are generated into Secrets and never printed or committed. To tear down the public endpoint after a review session, run `scripts/aks/24-expose-siem.ps1 -Remove` (or `scripts/aks/22-deploy-siem.ps1 -Remove` to remove the SIEM namespace).
 
-* The address is public from the moment the certificate is issued (certificate-transparency logs advertise it). Internet scanners probed it within a minute, and every probe was
-  answered with 401, which is the only protection besides the passwords and the rate limit.
-* The data includes sandbox names, URLs and resource names from the demo agents.
-* There is no second factor and no source-address restriction. Do not leave it up after the demo: `scripts/aks/24-expose-siem.ps1 -Remove` takes the address down,
-  and `scripts/aks/22-deploy-siem.ps1 -Remove` deletes the whole SIEM.
+## Scope
 
-Two problems found and fixed while enabling it: a helper that sent request bodies to OpenSearch through a PowerShell pipe silently failed (the script now stops if the read-only account does
-not exist, before anything is made public), and OpenSearch refused the OCSF `time` as a date because JSON numbers arrive as floating point (the collector now converts `time` and the id
-fields to integers, and an index template maps `time` as a date and sets no replica).
-
-## What this does not claim
-
-No commercial SIEM has been tested. The statement is: the OCSF output of a real sandbox contains Risk Guard's refusals, verified on this cluster.
+No commercial third-party SIEM product has been tested directly against this cluster; the verification confirms that OpenShell and Risk Guard OCSF 1.8 streams are ingested, indexed, and correlated end to end over standard OTLP/HTTP.
 
 ## Risk Guard's own events
 

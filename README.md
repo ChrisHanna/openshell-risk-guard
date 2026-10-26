@@ -206,22 +206,26 @@ cargo run -- hardening-report \
   --out /tmp/hardening-recommendation.json
 ```
 
-## Documentation
+## Documentation([Full Index](docs/README.md))
 
-| Read | For |
-|---|---|
-| [Demo runbook](docs/demo-runbook.md) | Ten minutes in order: what to open, what to run, what to say, the questions to expect, and the rough edges to avoid. `scripts/demo/preflight.py` checks the deployment first |
-| [Who blocks, who recommends](docs/who-does-what.md) | One page: what can stop a call, what only advises, who decides what loosens, and the flow of one call |
-| [The story](docs/the-story.md) | How OpenShell, Risk Guard and OpenSearch fit together, why each is there, and where things live in the repository |
-| [How it works](docs/how-it-works.md) | The whole system on one page: decision path, state, identity, SIEM events and dashboards, signals back from the SIEM, two-person approval, promotion gate, red-team tests, deployment, and current limits |
-| [Getting started](docs/getting-started.md) | Four ways to run it, from ten minutes with sample data to a live Azure deployment; prerequisites and troubleshooting |
-| [Operating Risk Guard](docs/operations.md) | TLS and secrets, bootstrap order, protecting a new API, recovering from a false positive, metrics, rollout |
-| [Security model](docs/security-model.md) | How the sidecar sits next to OpenShell, workload ID continuity, trust boundaries, measured release gates |
-| [Where Risk Guard fits](docs/positioning.md) | What this project is for, why OpenShell plus NVIDIA Sentry is the recommended approach for threat-level protection, and what Risk Guard adds beside it |
-| [Running on AKS](docs/aks.md) | Deploy OpenShell and Risk Guard on Azure Kubernetes Service with scripts: Kata VM sandboxes, Key Vault credentials, Entra agent identities, a protected public console, and what a real cluster showed |
-| [Demo and local deployment](docs/demo.md) | Running the local demo stack and its traffic generator |
-| [Requirements](docs/requirements.md), [Design](docs/design.md), [Anomaly detection](docs/anomaly-detection.md) | Specifications and the scoring model |
-| [Architecture and security review](docs/architecture-review.md) | A critical review of how the three systems fit, what the SIEM really adds, and the gaps |
+| Category | Document | Summary |
+|---|---|---|
+| **Overview & Architecture** | [The story](docs/the-story.md) | How OpenShell, Risk Guard, and OpenSearch partner as one loop, and where components live in the repository |
+| | [How it works](docs/how-it-works.md) | End-to-end technical walkthrough: decision path, SQLite state, SPIFFE identity, SIEM loop, two-person governance, and red-team gates |
+| | [Who blocks, who recommends](docs/who-does-what.md) | What stops a call inline, what advises asynchronously, and who approves loosening changes |
+| | [Architecture & security review](docs/architecture-review.md) | Responsibilities across the three systems, split-speed SIEM comparison, threat model, and boundaries |
+| | [Positioning](docs/positioning.md) | How Risk Guard complements OpenShell and planned out-of-band hardware enforcement (NVIDIA Sentry) |
+| **Specifications & Scoring** | [Architecture](docs/architecture.md) · [Design](docs/design.md) · [Requirements](docs/requirements.md) | Component contracts, gRPC extension points, and state machine specifications |
+| | [Anomaly detection](docs/anomaly-detection.md) · [Adaptive v2](docs/adaptive-v2.md) | Behavioral scoring model, shadow learning, and Z3 policy graduation |
+| | [Workload identity](docs/workload-identity.md) · [Security model](docs/security-model.md) | Durable workload continuity, SPIRE/SPIFFE SVIDs, and Envoy `ext_authz` tunnel gate |
+| **SIEM & Telemetry Loop** | [SIEM integration](docs/siem-integration.md) · [SIEM guide](docs/siem-guide.md) | OCSF event schema, OpenTelemetry collector pipeline, and OpenSearch dashboards |
+| | [SIEM features publisher](docs/siem-features-publisher.md) · [SIEM signals](docs/siem-signals.md) | Closed-vocabulary risk features (`POST /features`) and tighten-only quarantine signals (`POST /v1/signals`) |
+| **Operations & Deployment** | [Getting started](docs/getting-started.md) · [Running on AKS](docs/aks.md) | Local quickstart, Docker setup, and full AKS deployment (`scripts/aks/01`–`26`) |
+| | [Operating Risk Guard](docs/operations.md) · [Two-person approval](docs/two-person.md) | TLS/JWT setup, guardrail tuning, two-person governance (`learningnemo-approver`), and [backup/recovery](docs/recovery.md) |
+| | [Fleet policy modes](docs/fleet-policy-modes.md) · [Promotion gate](docs/promotion-gate.md) | Graduating static routes into OpenShell YAML (`audit` $\rightarrow$ `enforce`) |
+| **Verification & Demos** | [Demo runbook](docs/demo-runbook.md) · [Partner demo](docs/partner-demo.md) · [End-state demo](docs/end-state-demo.md) | Step-by-step live walkthroughs and scripted verification acts |
+| | [Red team](docs/red-team.md) · [Red-team agent & Garak](docs/red-team-agent.md) · [Path edge cases](docs/policy-path-edge-cases.md) | Attack catalog, 387-variant path fuzzer, adaptive LLM attacker, and Garak integration |
+| | [Detection results](docs/detection-results.md) · [Benchmark](docs/benchmark.md) · [Production gaps](docs/production-gaps.md) | Measured latency/throughput, replay verification ([replay.md](docs/replay.md)), and production roadmap |
 
 ## Building
 
