@@ -24,6 +24,17 @@ uninspected local tool performed a harmful action.
 "Best in class" requires independent, representative comparisons. Until then,
 describe this as an explainable detector with published evaluation results and stated limits.
 
+### Real-time payment-fraud inspirations (`p50 ≤ 10 ms`, `p99 ≤ 250 ms` inline SLA)
+
+Because an AI agent cannot wait seconds on a SIEM query before every tool call, Risk Guard's scoring architecture directly adapts patterns from **real-time payment card fraud engines** (FICO Falcon, Stripe Radar, Visa Advanced Authorization):
+
+1. **Pre-Auth Gate (`PRE_CREDENTIALS`)**: Evaluates requests *after* OpenShell's deny-by-default static YAML passes, *before* credentials are injected into the outbound call.
+2. **Split-Speed Fast Path + Asynchronous Feature Store (`SiemFeatureCache`)**: Inline evaluation never queries OpenSearch; out-of-band OpenStream aggregations (`R1`–`R6`, including OpenSearch Random Cut Forest `anomaly_grade_15m_permille`) are pushed over SPIFFE mTLS into an in-memory `RwLock<SiemFeatureCache>` and read in nanoseconds.
+3. **Non-Linear Interaction Terms ($N_r \cdot I$ & Low-and-Slow $B_{\text{slow}}$)**: Combines *Unfamiliar Resource* $\times$ *High-Impact Action* ($N_r \cdot I = +15$) and *Low 1m Velocity* $\times$ *High 15m Fan-Out* ($B_{\text{slow}} = +15$) so single benign novelties pass while dangerous combinations cross the $\ge 70$ block line.
+4. **Empirical Bayes Cold-Start Shrinkage (`src/adaptive/v2.rs`)**: Shrinks a new workload's sparse observations toward its task profile and fleet prior (`PRIOR_REQUEST_STRENGTH = 200`, `PRIOR_WINDOW_STRENGTH = 600`) until sufficient workload history is observed.
+5. **Two-Tier Step-Down Cooldown vs. Hard Lock**: Pure read bursts ($I=0$) trigger a 5-minute Tier-2 cooldown (`cooldown_until_ms`), whereas destructive violations ($I=1$) or 3 cooldown strikes latch a Tier-1 permanent cross-sandbox lock (`strict_epoch`).
+6. **Champion/Challenger Shadow Mode & Adverse-Action Replay**: New rules and learned models run in `shadow` mode behind a promotion gate, and every decision records its full `SignalContribution` waterfall and SIEM feature snapshot for bit-for-bit audit replay.
+
 ## 2. Threat and benign behavior model
 
 ### Supported misuse hypotheses
