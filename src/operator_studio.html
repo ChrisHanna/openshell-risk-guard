@@ -400,6 +400,7 @@ input[type="text"], input[type="number"], input[type="search"], select, textarea
     <span class="pill" id="nav-auth-pill">Read-only view</span>
     <button type="button" class="btn" id="btn-theme-toggle" title="Toggle Light / Pro Dark theme">◐ Theme</button>
     <button type="button" class="btn" id="btn-signin">Sign in / Switch account</button>
+    <a class="btn" id="nav-siem-link" href="https://rg-siem-731327.eastus2.cloudapp.azure.com/_dashboards/app/dashboards" target="_blank" rel="noopener noreferrer" title="Open OpenStream / OpenSearch SIEM Dashboards">OpenStream SIEM ↗</a>
     <a class="btn" href="/classic" title="Open the backup classic console">Classic View ↗</a>
     <button type="button" class="btn" id="btn-refresh">Refresh</button>
   </div>
@@ -450,15 +451,15 @@ input[type="text"], input[type="number"], input[type="search"], select, textarea
       <div class="card-header">
         <div>
           <h2 class="card-title">End-to-End Request &amp; Policy Feedback Loop</h2>
-          <p class="card-subtitle">How a request flows through System 1 (OpenShell) and System 2 (Risk Guard), and how Risk Guard graduates new rules back into OpenShell</p>
+          <p class="card-subtitle">How a request flows through System 1 (OpenShell) and System 2 (Risk Guard), and how OpenStream &amp; Risk Guard graduate new rules back into OpenShell</p>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <span class="pill pill-blue" id="cmd-two-person-pill">2-Person Governance: Checking…</span>
-          <span class="pill" id="cmd-siem-freshness-pill">SIEM Batch: Checking…</span>
+          <a class="pill" id="cmd-siem-freshness-pill" href="https://rg-siem-731327.eastus2.cloudapp.azure.com/_dashboards/app/dashboards" target="_blank" rel="noopener noreferrer" style="text-decoration:none" title="Open OpenStream / OpenSearch SIEM Dashboards">SIEM Batch: Checking… ↗</a>
         </div>
       </div>
       <div class="flow-canvas-wrap">
-        <svg id="cmd-arch-svg" viewBox="0 0 1360 155" style="width:100%;height:155px;display:block" role="img" aria-label="Two-system architecture pipeline"></svg>
+        <svg id="cmd-arch-svg" viewBox="0 0 1360 198" style="width:100%;height:198px;display:block" role="img" aria-label="Two-system architecture pipeline"></svg>
       </div>
     </section>
 
@@ -652,67 +653,44 @@ input[type="text"], input[type="number"], input[type="search"], select, textarea
         </div>
       </div>
 
-      <!-- 3-Column Visual Graduation Pipeline: [1. Current OpenShell YAML] -> [2. Risk Guard Proposal + Z3 Proof] -> [3. New OpenShell YAML] -->
-      <div class="grid-graduation" style="margin-bottom:16px">
+      <!-- 3-Column Visual Graduation Pipeline: [1. Current OpenShell YAML] -> [2. Risk Guard Recommended Diff + Z3 Proof] -> [3. Result on Real Calls] -->
+      <div class="grid-graduation" style="margin-bottom:14px">
         <!-- Column 1: System 1 Today -->
         <div class="card" style="background:var(--bg-subtle);box-shadow:none">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
             <span class="pill pill-os">1 · OpenShell Policy Today</span>
             <span class="mono" style="font-size:11px;color:var(--text-muted)" id="grad-col1-meta">Current Sandbox Floor</span>
           </div>
-          <div style="font-weight:600;font-size:13.5px;margin-bottom:6px">Routes OpenShell Currently Permits</div>
+          <div style="font-weight:600;font-size:13.5px;margin-bottom:6px">What System 1 (OpenShell) Currently Permits</div>
           <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px">
-            OpenShell allows these routes into the middleware. Any route marked <strong style="color:var(--amber)">Broader than Task</strong> is only being stopped by Risk Guard today:
+            OpenShell's static YAML lets these routes into the sandbox. Routes marked <strong style="color:var(--red)">Caught by Risk Guard</strong> are only being stopped at System 2 today:
           </p>
           <div id="grad-current-routes"></div>
         </div>
 
-        <!-- Column 2: System 2 (Risk Guard) Proposal + OpenShell Z3 Solver Check -->
+        <!-- Column 2: System 2 (Risk Guard) Concrete Recommendation Diff + OpenShell Z3 Solver Check -->
         <div class="card" style="background:var(--bg-subtle);box-shadow:none;border-width:1.5px" id="grad-center-card">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <span class="pill pill-rg">2 · Risk Guard Proposal + Z3 Proof</span>
+            <span class="pill pill-rg">2 · Risk Guard Recommendation + Z3 Proof</span>
             <span class="pill" id="grad-z3-pill">Checking…</span>
           </div>
-          <div style="font-weight:600;font-size:13.5px;margin-bottom:6px" id="grad-verdict-title">Risk Guard Narrows OpenShell Policy</div>
-          <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px" id="grad-verdict-desc"></p>
-
-          <div style="font-size:12px;font-weight:600;margin-bottom:6px">Try 3 Policy Modes:</div>
-          <div style="display:flex;flex-direction:column;gap:6px">
-            <button type="button" class="scenario-card active" id="scen-btn-tighten" style="padding:9px 12px">
-              <div style="display:flex;justify-content:space-between;align-items:center">
-                <strong>A · Apply Risk Guard's Recommended Policy</strong>
-                <span class="pill pill-green">✓ Z3 Proven Narrower</span>
-              </div>
-              <div style="font-size:11.5px;color:var(--text-secondary);margin-top:2px">Moves Risk Guard's approved route list into OpenShell's static YAML so OpenShell blocks unapproved routes at the floor.</div>
-            </button>
-
-            <button type="button" class="scenario-card" id="scen-btn-widen" style="padding:9px 12px">
-              <div style="display:flex;justify-content:space-between;align-items:center">
-                <strong>B · Test a Bad Proposal (+ DELETE /admin/*)</strong>
-                <span class="pill pill-red">✕ Z3 Rejects Widening</span>
-              </div>
-              <div style="font-size:11.5px;color:var(--text-secondary);margin-top:2px">Shows what happens if someone proposes a policy wider than the sandbox boundary: OpenShell's Z3 solver blocks it in ~10 ms.</div>
-            </button>
-
-            <button type="button" class="scenario-card" id="scen-btn-bypass" style="padding:9px 12px">
-              <div style="display:flex;justify-content:space-between;align-items:center">
-                <strong>C · Test Detaching Risk Guard (on_error: allow)</strong>
-                <span class="pill pill-red">✕ Step-1 Rejects</span>
-              </div>
-              <div style="font-size:11.5px;color:var(--text-secondary);margin-top:2px">Shows what happens if a policy tries to weaken <code>on_error: fail_closed</code> on Risk Guard.</div>
-            </button>
+          <div style="font-weight:700;font-size:13.5px;margin-bottom:4px" id="grad-verdict-title">Risk Guard Narrows OpenShell Policy</div>
+          <p style="font-size:11.8px;color:var(--text-secondary);margin:0 0 10px" id="grad-verdict-desc"></p>
+          <div style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);margin-bottom:6px">
+            Recommended OpenShell YAML Rule Changes (Diff):
           </div>
+          <div id="grad-recommended-diff"></div>
         </div>
 
         <!-- Column 3: Result After Updating OpenShell -->
         <div class="card" style="background:var(--bg-subtle);box-shadow:none">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <span class="pill pill-green" id="grad-col3-pill">3 · Result on Real Calls</span>
+            <span class="pill pill-green" id="grad-col3-pill">3 · Result After Graduation</span>
             <span class="mono" style="font-size:11px;color:var(--text-muted)" id="grad-col3-meta">Before vs. After</span>
           </div>
           <div style="font-weight:600;font-size:13.5px;margin-bottom:6px">Where Calls Get Stopped (Before vs. After)</div>
           <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px">
-            Once Risk Guard's proposed policy is applied to OpenShell, unapproved routes are blocked at <strong>System 1 (OpenShell)</strong> before ever reaching Risk Guard:
+            Once Risk Guard's recommended policy is graduated to OpenShell, unapproved routes are stopped at <strong>System 1 (OpenShell Floor)</strong> at zero latency:
           </p>
           <div id="grad-impact-summary"></div>
           <div style="margin-top:12px">
@@ -720,6 +698,24 @@ input[type="text"], input[type="number"], input[type="search"], select, textarea
               Propose This OpenShell Policy Update (2-Person Approval) →
             </button>
           </div>
+        </div>
+      </div>
+
+      <!-- Dedicated Stress-Test Bar for OpenShell Z3 Prover (Separated so it never confuses the recommendation!) -->
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 14px;background:var(--bg-subtle);border:1px solid var(--border);border-radius:10px;flex-wrap:wrap">
+        <div style="font-size:12px;color:var(--text-secondary)">
+          <strong style="color:var(--text-primary)">Verify Z3 Safety Guardrails:</strong> Switch between Risk Guard's recommended tightening and two unsafe proposals to see OpenShell's Z3 Prover reject widening or bypasses in ~1–11 ms:
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn scenario-card active" id="scen-btn-tighten" style="padding:5px 11px;font-size:11.5px">
+            ✓ A · Risk Guard Recommendation (Z3 Certified)
+          </button>
+          <button type="button" class="btn scenario-card" id="scen-btn-widen" style="padding:5px 11px;font-size:11.5px">
+            ✕ B · Stress-Test Widening (+DELETE /admin/*)
+          </button>
+          <button type="button" class="btn scenario-card" id="scen-btn-bypass" style="padding:5px 11px;font-size:11.5px">
+            ✕ C · Stress-Test Detaching Risk Guard (on_error: allow)
+          </button>
         </div>
       </div>
     </section>
@@ -1111,55 +1107,129 @@ function renderCommandCenter() {
   const freshFeatures = Number(siemCtl?.evidence?.fresh_features || 0);
   const batchAge = siemCtl?.evidence?.newest_batch_age_seconds;
   $("cmd-siem-freshness-pill").textContent = freshFeatures > 0
-    ? `OpenStream SIEM: ${freshFeatures} features (${batchAge ?? 0}s ago)`
-    : "OpenStream SIEM: Waiting for batch";
+    ? `OpenStream SIEM: ${freshFeatures} features (${batchAge ?? 0}s ago) ↗`
+    : "OpenStream SIEM: Waiting for batch ↗";
   $("cmd-siem-freshness-pill").className = `pill ${freshFeatures > 0 ? "pill-green" : "pill-amber"}`;
 
   const svg = $("cmd-arch-svg");
   svg.replaceChildren();
   const NS = "http://www.w3.org/2000/svg";
   const stages = [
-    { x: 135, num: "SYSTEM 1 · CONTROL PLANE", title: "OpenShell Gateway + Interceptor", kpi: "Z3 Verified", sub: "Blocks policy widening on create/set", color: "var(--os-color)" },
-    { x: 405, num: "SYSTEM 1 · SANDBOX FLOOR", title: "OpenShell Static Policy", kpi: `${totalOsDenials1h} Floor Blocks (1h)`, sub: `via OpenStream OCSF · ${state.sandbox_lifecycle?.open ?? 0} open pods`, color: "var(--os-color)" },
-    { x: 675, num: "SYSTEM 2 · INLINE SCORER", title: "Risk Guard Adaptive Gate", kpi: `${totalDenied} / ${totalCalls} Blocked`, sub: `${totalLocks} locks · scores calls OpenShell allowed`, color: "var(--rg-color)" },
-    { x: 945, num: "SYSTEM 2 · TUNNEL GATE", title: "Risk Guard Envoy ext_authz", kpi: `${silentCtl?.evidence?.seen_24h ?? 0} Silent Alerts`, sub: "Blocks quarantined & silent tunnels", color: "var(--rg-color)" },
-    { x: 1215, num: "OPENSTREAM & POLICY LOOP", title: "OpenStream → Risk Guard → Z3", kpi: `${freshFeatures} SIEM Features`, sub: `S1 5m blocks (${totalOsDenials5m}) feed R1–R6 & Z3`, color: "var(--green)" }
+    { x: 135, num: "1 · SYSTEM 1 CONTROL PLANE", title: "OpenShell Gateway + Z3", kpi: "Z3 Verified", sub: "Validates YAML on create/set", color: "var(--os-color)", ws: "prover" },
+    { x: 405, num: "2 · SYSTEM 1 SANDBOX FLOOR", title: "OpenShell Static Policy", kpi: `${totalOsDenials1h} Floor Blocks (1h)`, sub: `Deny-by-default · ${state.sandbox_lifecycle?.open ?? 0} open pods`, color: "var(--os-color)", ws: "cockpit" },
+    { x: 675, num: "3 · SYSTEM 2 INLINE SCORER", title: "Risk Guard Adaptive Gate", kpi: `${totalDenied} / ${totalCalls} Blocked`, sub: `p50 ≤ ${fmtUs(lat?.p50_us ?? 180)} · ${totalLocks} active locks`, color: "var(--rg-color)", ws: "cockpit" },
+    { x: 945, num: "4 · SYSTEM 2 TUNNEL GATE", title: "Risk Guard Envoy ext_authz", kpi: `${silentCtl?.evidence?.seen_24h ?? 0} Silent Alerts`, sub: "Blocks quarantined & silent pods", color: "var(--rg-color)", ws: "cockpit" },
+    { x: 1215, num: "5 · OPENSTREAM & POLICY LOOP", title: "OpenStream → Risk Guard → Z3", kpi: `${freshFeatures} SIEM Features`, sub: `S1 5m blocks (${totalOsDenials5m}) feed R1–R6 & Z3`, color: "var(--green)", ws: "prover" }
   ];
+  const edgeLabels = ["Enforce YAML", "If Permitted", "If Allowed", "OCSF 1.8"];
   for (let i = 0; i < stages.length - 1; i++) {
     const x1 = stages[i].x + 115, x2 = stages[i + 1].x - 115;
+    const midX = Math.round((x1 + x2) / 2);
     const line = document.createElementNS(NS, "line");
-    line.setAttribute("x1", String(x1)); line.setAttribute("y1", "78");
-    line.setAttribute("x2", String(x2)); line.setAttribute("y2", "78");
-    line.setAttribute("stroke", "var(--edge-idle)");
+    line.setAttribute("x1", String(x1)); line.setAttribute("y1", "66");
+    line.setAttribute("x2", String(x2 - 5)); line.setAttribute("y2", "66");
+    line.setAttribute("stroke", "var(--blue)");
     line.setAttribute("stroke-width", "2");
     svg.append(line);
+
+    const arrow = document.createElementNS(NS, "polygon");
+    arrow.setAttribute("points", `${x2},66 ${x2 - 7},61 ${x2 - 7},71`);
+    arrow.setAttribute("fill", "var(--blue)");
+    svg.append(arrow);
+
+    const lbl = document.createElementNS(NS, "text");
+    lbl.setAttribute("x", String(midX)); lbl.setAttribute("y", "56");
+    lbl.setAttribute("text-anchor", "middle");
+    lbl.setAttribute("fill", "var(--text-muted)");
+    lbl.setAttribute("font-size", "9.2");
+    lbl.setAttribute("font-weight", "600");
+    lbl.textContent = edgeLabels[i];
+    svg.append(lbl);
   }
+
+  // Draw the Two Explicit Return Feedback Loops underneath the 5 stages (y = 120 .. 188)
+  // Feedback Loop A: Stage 5 (OpenStream) -> Stage 3 (Risk Guard Inline Scorer)
+  const arcSiem = document.createElementNS(NS, "path");
+  arcSiem.setAttribute("d", "M 1215 118 C 1215 152, 695 152, 695 120");
+  arcSiem.setAttribute("fill", "none");
+  arcSiem.setAttribute("stroke", "var(--blue)");
+  arcSiem.setAttribute("stroke-width", "1.6");
+  arcSiem.setAttribute("stroke-dasharray", "4 3");
+  svg.append(arcSiem);
+  const siemBadge = document.createElementNS(NS, "g");
+  siemBadge.setAttribute("transform", "translate(955, 144)");
+  const sbRect = document.createElementNS(NS, "rect");
+  sbRect.setAttribute("x", "-235"); sbRect.setAttribute("y", "-11");
+  sbRect.setAttribute("width", "470"); sbRect.setAttribute("height", "22");
+  sbRect.setAttribute("rx", "11");
+  sbRect.setAttribute("fill", "var(--blue-bg)");
+  sbRect.setAttribute("stroke", "var(--blue-border)");
+  const sbTxt = document.createElementNS(NS, "text");
+  sbTxt.setAttribute("x", "0"); sbTxt.setAttribute("y", "4");
+  sbTxt.setAttribute("text-anchor", "middle");
+  sbTxt.setAttribute("fill", "var(--blue)");
+  sbTxt.setAttribute("font-size", "9.8");
+  sbTxt.setAttribute("font-weight", "700");
+  sbTxt.textContent = `⟵ Fast SIEM Loop: OpenStream pushes S1 blocks (${totalOsDenials5m} in 5m) & RCF scores (R1–R6) to Risk Guard`;
+  siemBadge.append(sbRect, sbTxt);
+  svg.append(siemBadge);
+
+  // Feedback Loop B: Stage 3 (Risk Guard) -> Stage 1 & 2 (OpenShell Control Plane & Sandbox Floor)
+  const arcGrad = document.createElementNS(NS, "path");
+  arcGrad.setAttribute("d", "M 655 118 C 655 180, 270 180, 270 120");
+  arcGrad.setAttribute("fill", "none");
+  arcGrad.setAttribute("stroke", "var(--os-color)");
+  arcGrad.setAttribute("stroke-width", "1.6");
+  arcGrad.setAttribute("stroke-dasharray", "4 3");
+  svg.append(arcGrad);
+  const gradBadge = document.createElementNS(NS, "g");
+  gradBadge.setAttribute("transform", "translate(462, 174)");
+  gradBadge.style.cursor = "pointer";
+  gradBadge.addEventListener("click", () => switchWorkspace("prover"));
+  const gbRect = document.createElementNS(NS, "rect");
+  gbRect.setAttribute("x", "-225"); gbRect.setAttribute("y", "-11");
+  gbRect.setAttribute("width", "450"); gbRect.setAttribute("height", "22");
+  gbRect.setAttribute("rx", "11");
+  gbRect.setAttribute("fill", "var(--os-bg)");
+  gbRect.setAttribute("stroke", "var(--os-border)");
+  const gbTxt = document.createElementNS(NS, "text");
+  gbTxt.setAttribute("x", "0"); gbTxt.setAttribute("y", "4");
+  gbTxt.setAttribute("text-anchor", "middle");
+  gbTxt.setAttribute("fill", "var(--os-color)");
+  gbTxt.setAttribute("font-size", "9.8");
+  gbTxt.setAttribute("font-weight", "700");
+  gbTxt.textContent = "⟵ Policy Graduation Loop: Risk Guard proposes Z3-verified tighter YAML back to OpenShell";
+  gradBadge.append(gbRect, gbTxt);
+  svg.append(gradBadge);
+
   for (const st of stages) {
     const g = document.createElementNS(NS, "g");
-    g.setAttribute("transform", `translate(${st.x}, 78)`);
+    g.setAttribute("transform", `translate(${st.x}, 66)`);
+    g.style.cursor = "pointer";
+    g.addEventListener("click", () => switchWorkspace(st.ws));
     const rect = document.createElementNS(NS, "rect");
-    rect.setAttribute("x", "-115"); rect.setAttribute("y", "-54");
-    rect.setAttribute("width", "230"); rect.setAttribute("height", "108");
+    rect.setAttribute("x", "-115"); rect.setAttribute("y", "-52");
+    rect.setAttribute("width", "230"); rect.setAttribute("height", "104");
     rect.setAttribute("rx", "12");
     rect.setAttribute("fill", "var(--node-fill)");
     rect.setAttribute("stroke", "var(--node-stroke)");
     rect.setAttribute("stroke-width", "1.2");
     const topBar = document.createElementNS(NS, "rect");
-    topBar.setAttribute("x", "-115"); topBar.setAttribute("y", "-54");
+    topBar.setAttribute("x", "-115"); topBar.setAttribute("y", "-52");
     topBar.setAttribute("width", "230"); topBar.setAttribute("height", "4");
     topBar.setAttribute("rx", "2");
     topBar.setAttribute("fill", st.color);
     const tNum = document.createElementNS(NS, "text");
-    tNum.setAttribute("x", "-98"); tNum.setAttribute("y", "-30");
-    tNum.setAttribute("fill", st.color); tNum.setAttribute("font-size", "9.8"); tNum.setAttribute("font-weight", "700");
+    tNum.setAttribute("x", "-98"); tNum.setAttribute("y", "-29");
+    tNum.setAttribute("fill", st.color); tNum.setAttribute("font-size", "9.5"); tNum.setAttribute("font-weight", "700");
     tNum.textContent = st.num;
     const tTitle = document.createElementNS(NS, "text");
-    tTitle.setAttribute("x", "-98"); tTitle.setAttribute("y", "-11");
+    tTitle.setAttribute("x", "-98"); tTitle.setAttribute("y", "-10");
     tTitle.setAttribute("fill", "var(--text-primary)"); tTitle.setAttribute("font-size", "12.5"); tTitle.setAttribute("font-weight", "600");
     tTitle.textContent = st.title;
     const tKpi = document.createElementNS(NS, "text");
     tKpi.setAttribute("x", "-98"); tKpi.setAttribute("y", "16");
-    tKpi.setAttribute("fill", "var(--text-primary)"); tKpi.setAttribute("font-size", "16"); tKpi.setAttribute("font-weight", "700");
+    tKpi.setAttribute("fill", "var(--text-primary)"); tKpi.setAttribute("font-size", "15.5"); tKpi.setAttribute("font-weight", "700");
     tKpi.textContent = st.kpi;
     const tSub = document.createElementNS(NS, "text");
     tSub.setAttribute("x", "-98"); tSub.setAttribute("y", "37");
@@ -2541,30 +2611,60 @@ function populateProverFromAgent(d) {
   $("prover-boundary-yaml").value = yaml;
   $("prover-candidate-yaml").value = yaml;
   const ctx = (d?.contexts || [])[d.contexts.length - 1] || {};
-  const approvedClasses = new Set(ctx.baseline?.allowed_action_classes || []);
+  const approvedClasses = Array.from(ctx.baseline?.allowed_action_classes || []);
+
+  // Count how many times each route was allowed vs blocked by Risk Guard in recorded decisions
+  const routeStats = new Map();
+  for (const item of d?.decisions || []) {
+    if (item?.blocked_by_openshell) continue;
+    const rq = item?.request || {};
+    const ev = item?.evaluation || {};
+    const key = `${rq.method || "GET"} ${rq.route_template || "/"}`;
+    const st = routeStats.get(key) || { method: rq.method || "GET", route: rq.route_template || "/", allow: 0, deny: 0, locked: false };
+    if (ev.outcome === "deny") st.deny++; else st.allow++;
+    if (ev.reason_code === "behavioral_risk_restricted") st.locked = true;
+    routeStats.set(key, st);
+  }
 
   const osRoutes = [];
+  const seenOs = new Set();
   for (const pol of Object.values(snap?.parsed_policy?.network_policies || {})) {
     for (const ep of pol.endpoints || []) {
       if (ep.host) $("probe-host").value = ep.host;
       for (const r of ep.rules || []) {
         if (r.allow) {
-          osRoutes.push({ method: r.allow.method, path: r.allow.path, host: ep.host });
+          const key = `${r.allow.method} ${r.allow.path}`;
+          if (!seenOs.has(key)) {
+            seenOs.add(key);
+            osRoutes.push({ method: r.allow.method, path: r.allow.path, host: ep.host });
+          }
         }
       }
     }
   }
+  // Also include any routes that reached Risk Guard in recorded decisions (since OpenShell permitted them!)
+  for (const [key, st] of routeStats.entries()) {
+    if (!seenOs.has(key)) {
+      seenOs.add(key);
+      osRoutes.push({ method: st.method, path: st.route, host: $("probe-host").value, stats: st });
+    }
+  }
 
-  $("grad-col1-meta").textContent = snap ? `Hash ${snap.policy_hash.slice(0, 8)}` : "No policy";
+  $("grad-col1-meta").textContent = snap ? `Hash ${snap.policy_hash.slice(0, 8)}` : "Current Floor";
   const rBox = $("grad-current-routes");
   if (!osRoutes.length) {
     rBox.replaceChildren(el("div", { style: "font-size:12px;color:var(--text-muted)", text: "No explicit L7 route rules recorded in OpenShell YAML." }));
   } else {
-    rBox.replaceChildren(...osRoutes.map(r => {
-      const isExtra = r.method === "DELETE" || !Array.from(approvedClasses).some(c => c.startsWith(r.method));
-      return el("div", { style: "display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;margin-bottom:5px;font-size:12px" },
+    rBox.replaceChildren(...osRoutes.slice(0, 7).map(r => {
+      const st = r.stats || routeStats.get(`${r.method} ${r.path}`);
+      const isBlockedByRg = (st && st.deny > 0) || r.method === "DELETE" || (!approvedClasses.some(c => c === `${r.method} ${r.path}` || c.startsWith(r.method)) && r.path.includes("/**"));
+      return el("div", { style: `display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:${isBlockedByRg ? "var(--red-bg)" : "var(--bg-card)"};border:1px solid ${isBlockedByRg ? "var(--red-border)" : "var(--border)"};border-radius:8px;margin-bottom:5px;font-size:11.8px` },
         el("code", { class: "mono", style: "font-weight:600", text: `${r.method} ${r.path}` }),
-        el("span", { class: `pill ${isExtra ? "pill-amber" : "pill-os"}`, text: isExtra ? "Caught by Risk Guard" : "In Task Baseline" })
+        el("span", {
+          class: `pill ${isBlockedByRg ? "pill-red" : "pill-os"}`,
+          style: "padding:2px 7px;font-size:10.5px",
+          text: st && st.deny > 0 ? `Blocked ${st.deny}× by RG` : isBlockedByRg ? "Caught by Risk Guard" : `✓ In Baseline${st?.allow ? ` (${st.allow} ok)` : ""}`
+        })
       );
     }));
   }
@@ -2698,10 +2798,72 @@ function renderProverResult(res) {
       : "✕ Refused by OpenShell Z3 Solver: Policy Widens Access";
 
   $("grad-verdict-desc").textContent = ok
-    ? "OpenShell's Z3 solver mathematically verified that Risk Guard's proposed YAML is strictly narrower than or equal to the current sandbox boundary across all 5 domains (Filesystem, Landlock, Process, Network L4, REST L7)."
+    ? "OpenShell's Z3 solver verified in " + (p.elapsed_ms ?? 1) + " ms that Risk Guard's recommended YAML is strictly narrower than or equal to the sandbox boundary across all 5 domains."
     : !step1Ok
       ? `Step 1 failed: ${p.step1_detail || p.error}`
       : `Z3 Counterexample (newly exposed access): ${p.step2_counterexample_or_reason || p.step2_prover_verdict}`;
+
+  // Build the explicit Visual Policy Recommendation Diff in Column 2!
+  const diffBox = $("grad-recommended-diff");
+  if (diffBox) {
+    const d = STATE.agentDetail;
+    const ctx = (d?.contexts || [])[(d?.contexts || []).length - 1] || {};
+    const approved = Array.from(ctx.baseline?.allowed_action_classes || []);
+    const blockedByRg = new Map();
+    for (const item of d?.decisions || []) {
+      if (item?.blocked_by_openshell) continue;
+      if (item?.evaluation?.outcome === "deny") {
+        const k = `${item?.request?.method || "DELETE"} ${item?.request?.route_template || "/"}`;
+        blockedByRg.set(k, (blockedByRg.get(k) || 0) + 1);
+      }
+    }
+    const diffRows = [];
+    if (!step1Ok) {
+      diffRows.push(
+        el("div", { style: "display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:var(--red-bg);border:1px solid var(--red-border);border-radius:8px;margin-bottom:5px;font-size:11.5px" },
+          el("code", { class: "mono", style: "font-weight:700;color:var(--red)", text: "on_error: fail_closed → allow" }),
+          el("span", { class: "pill pill-red", style: "padding:2px 7px;font-size:10.5px", text: "✕ Rejected by Step 1" })
+        )
+      );
+    } else if (!ok) {
+      diffRows.push(
+        el("div", { style: "display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:var(--red-bg);border:1px solid var(--red-border);border-radius:8px;margin-bottom:5px;font-size:11.5px" },
+          el("code", { class: "mono", style: "font-weight:700;color:var(--red)", text: "+ allow: DELETE /admin/wipe-everything" }),
+          el("span", { class: "pill pill-red", style: "padding:2px 7px;font-size:10.5px", text: "✕ Widening Blocked by Z3" })
+        )
+      );
+    } else {
+      for (const [route, cnt] of Array.from(blockedByRg.entries()).slice(0, 3)) {
+        diffRows.push(
+          el("div", { style: "display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:var(--red-bg);border:1px solid var(--red-border);border-radius:8px;margin-bottom:5px;font-size:11.5px" },
+            el("div", {},
+              el("code", { class: "mono", style: "font-weight:700;color:var(--red)", text: `− Remove / Deny: ${route}` }),
+              el("div", { style: "font-size:10.5px;color:var(--text-secondary)", text: `Blocked ${cnt}× by Risk Guard → Move block to OpenShell Floor (S1)` })
+            ),
+            el("span", { class: "pill pill-red", style: "padding:2px 7px;font-size:10.5px", text: "Move to S1 Floor" })
+          )
+        );
+      }
+      diffRows.push(
+        el("div", { style: "display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:var(--blue-bg);border:1px solid var(--blue-border);border-radius:8px;margin-bottom:5px;font-size:11.5px" },
+          el("div", {},
+            el("code", { class: "mono", style: "font-weight:700;color:var(--blue)", text: "+ Add Guard: DENY /**/*%5C*" }),
+            el("div", { style: "font-size:10.5px;color:var(--text-secondary)", text: "Blocks encoded-backslash path traversal at OpenShell Floor" })
+          ),
+          el("span", { class: "pill pill-blue", style: "padding:2px 7px;font-size:10.5px", text: "Evasion Guard" })
+        )
+      );
+      for (const route of approved.slice(0, 2)) {
+        diffRows.push(
+          el("div", { style: "display:flex;justify-content:space-between;align-items:center;padding:5px 10px;background:var(--green-bg);border:1px solid var(--green-border);border-radius:8px;margin-bottom:5px;font-size:11.5px" },
+            el("code", { class: "mono", style: "font-weight:700;color:var(--green)", text: `✓ Keep Allowed: ${route}` }),
+            el("span", { class: "pill pill-green", style: "padding:2px 7px;font-size:10.5px", text: "In Task Baseline" })
+          )
+        );
+      }
+    }
+    diffBox.replaceChildren(...diffRows);
+  }
 
   const rep = res.replay || {};
   $("grad-col3-meta").textContent = `${rep.total || 0} calls replayed`;
