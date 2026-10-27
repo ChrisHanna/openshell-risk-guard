@@ -459,7 +459,7 @@ input[type="text"], input[type="number"], input[type="search"], select, textarea
         </div>
       </div>
       <div class="flow-canvas-wrap">
-        <svg id="cmd-arch-svg" viewBox="0 0 1360 198" style="width:100%;height:198px;display:block" role="img" aria-label="Two-system architecture pipeline"></svg>
+        <svg id="cmd-arch-svg" viewBox="0 0 1360 228" style="width:100%;height:228px;display:block" role="img" aria-label="Control Plane GatewayInterceptor vs Data Plane SupervisorMiddleware and OpenStream feedback loop"></svg>
       </div>
     </section>
 
@@ -1114,53 +1114,136 @@ function renderCommandCenter() {
   const svg = $("cmd-arch-svg");
   svg.replaceChildren();
   const NS = "http://www.w3.org/2000/svg";
+
+  // Zone 1: CONTROL PLANE (GatewayInterceptor — Create / Policy Set)
+  const cpZone = document.createElementNS(NS, "rect");
+  cpZone.setAttribute("x", "14"); cpZone.setAttribute("y", "10");
+  cpZone.setAttribute("width", "268"); cpZone.setAttribute("height", "152");
+  cpZone.setAttribute("rx", "14");
+  cpZone.setAttribute("fill", "var(--os-bg)");
+  cpZone.setAttribute("stroke", "var(--os-border)");
+  cpZone.setAttribute("stroke-dasharray", "5 4");
+  svg.append(cpZone);
+  const cpTitle = document.createElementNS(NS, "text");
+  cpTitle.setAttribute("x", "28"); cpTitle.setAttribute("y", "27");
+  cpTitle.setAttribute("fill", "var(--os-color)");
+  cpTitle.setAttribute("font-size", "10"); cpTitle.setAttribute("font-weight", "700");
+  cpTitle.textContent = "CONTROL PLANE · CREATE & POLICY SET";
+  svg.append(cpTitle);
+
+  // Zone 2: DATA PLANE (Per-Request Enforcement: Sandbox Floor -> SupervisorMiddleware & Tunnel Gate -> OpenStream)
+  const dpZone = document.createElementNS(NS, "rect");
+  dpZone.setAttribute("x", "312"); dpZone.setAttribute("y", "10");
+  dpZone.setAttribute("width", "1034"); dpZone.setAttribute("height", "152");
+  dpZone.setAttribute("rx", "14");
+  dpZone.setAttribute("fill", "var(--bg-subtle)");
+  dpZone.setAttribute("stroke", "var(--border-strong)");
+  dpZone.setAttribute("stroke-dasharray", "5 4");
+  svg.append(dpZone);
+  const dpTitle = document.createElementNS(NS, "text");
+  dpTitle.setAttribute("x", "328"); dpTitle.setAttribute("y", "27");
+  dpTitle.setAttribute("fill", "var(--rg-color)");
+  dpTitle.setAttribute("font-size", "10"); dpTitle.setAttribute("font-weight", "700");
+  dpTitle.textContent = "DATA PLANE · PER-REQUEST RUNTIME PIPELINE (OPENSHELL FLOOR → SUPERVISOR MIDDLEWARE & TUNNEL GATE → OPENSTREAM)";
+  svg.append(dpTitle);
+
   const stages = [
-    { x: 135, num: "1 · SYSTEM 1 CONTROL PLANE", title: "OpenShell Gateway + Z3", kpi: "Z3 Verified", sub: "Validates YAML on create/set", color: "var(--os-color)", ws: "prover" },
-    { x: 405, num: "2 · SYSTEM 1 SANDBOX FLOOR", title: "OpenShell Static Policy", kpi: `${totalOsDenials1h} Floor Blocks (1h)`, sub: `Deny-by-default · ${state.sandbox_lifecycle?.open ?? 0} open pods`, color: "var(--os-color)", ws: "cockpit" },
-    { x: 675, num: "3 · SYSTEM 2 INLINE SCORER", title: "Risk Guard Adaptive Gate", kpi: `${totalDenied} / ${totalCalls} Blocked`, sub: `p50 ≤ ${fmtUs(lat?.p50_us ?? 180)} · ${totalLocks} active locks`, color: "var(--rg-color)", ws: "cockpit" },
-    { x: 945, num: "4 · SYSTEM 2 TUNNEL GATE", title: "Risk Guard Envoy ext_authz", kpi: `${silentCtl?.evidence?.seen_24h ?? 0} Silent Alerts`, sub: "Blocks quarantined & silent pods", color: "var(--rg-color)", ws: "cockpit" },
-    { x: 1215, num: "5 · OPENSTREAM & POLICY LOOP", title: "OpenStream → Risk Guard → Z3", kpi: `${freshFeatures} SIEM Features`, sub: `S1 5m blocks (${totalOsDenials5m}) feed R1–R6 & Z3`, color: "var(--green)", ws: "prover" }
+    { x: 148, w: 236, num: "GATEWAY INTERCEPTOR (:50061)", title: "Validate & Post-Commit", kpi: "Z3 + Epoch Bind", sub: "Checks fail_closed & Z3 on create/set", color: "var(--os-color)", ws: "prover" },
+    { x: 438, w: 222, num: "1 · SYSTEM 1 SANDBOX FLOOR", title: "OpenShell Static Policy", kpi: `${totalOsDenials1h} Floor Blocks (1h)`, sub: `Deny-by-default · ${state.sandbox_lifecycle?.open ?? 0} open pods`, color: "var(--os-color)", ws: "cockpit" },
+    { x: 698, w: 232, num: "2A · SUPERVISOR MIDDLEWARE", title: "Risk Guard L7 Scorer (:50061)", kpi: `${totalDenied} / ${totalCalls} Blocked`, sub: `PRE_CREDENTIALS · p50 ≤ ${fmtUs(lat?.p50_us ?? 180)} · ${totalLocks}🔒`, color: "var(--rg-color)", ws: "cockpit" },
+    { x: 960, w: 222, num: "2B · ENVOY TUNNEL GATE", title: "Risk Guard ext_authz (:50062)", kpi: `${silentCtl?.evidence?.seen_24h ?? 0} Silent Alerts`, sub: "HTTPS CONNECT · Quarantine & silent", color: "var(--rg-color)", ws: "cockpit" },
+    { x: 1218, w: 224, num: "3 · OPENSTREAM SIEM (:50063)", title: "OCSF + Feature Publisher", kpi: `${freshFeatures} SIEM Features`, sub: `S1 5m blocks (${totalOsDenials5m}) + RCF ML`, color: "var(--green)", ws: "prover" }
   ];
-  const edgeLabels = ["Enforce YAML", "If Permitted", "If Allowed", "OCSF 1.8"];
+  const edgeLabels = ["Provisions YAML", "If Permitted", "Tunnel Check", "OCSF 1.8"];
   for (let i = 0; i < stages.length - 1; i++) {
-    const x1 = stages[i].x + 115, x2 = stages[i + 1].x - 115;
+    const x1 = stages[i].x + stages[i].w / 2;
+    const x2 = stages[i + 1].x - stages[i + 1].w / 2;
     const midX = Math.round((x1 + x2) / 2);
     const line = document.createElementNS(NS, "line");
-    line.setAttribute("x1", String(x1)); line.setAttribute("y1", "66");
-    line.setAttribute("x2", String(x2 - 5)); line.setAttribute("y2", "66");
-    line.setAttribute("stroke", "var(--blue)");
+    line.setAttribute("x1", String(x1)); line.setAttribute("y1", "92");
+    line.setAttribute("x2", String(x2 - 5)); line.setAttribute("y2", "92");
+    line.setAttribute("stroke", i === 0 ? "var(--os-color)" : "var(--blue)");
     line.setAttribute("stroke-width", "2");
+    if (i === 0) line.setAttribute("stroke-dasharray", "4 3");
     svg.append(line);
 
     const arrow = document.createElementNS(NS, "polygon");
-    arrow.setAttribute("points", `${x2},66 ${x2 - 7},61 ${x2 - 7},71`);
-    arrow.setAttribute("fill", "var(--blue)");
+    arrow.setAttribute("points", `${x2},92 ${x2 - 7},87 ${x2 - 7},97`);
+    arrow.setAttribute("fill", i === 0 ? "var(--os-color)" : "var(--blue)");
     svg.append(arrow);
 
     const lbl = document.createElementNS(NS, "text");
-    lbl.setAttribute("x", String(midX)); lbl.setAttribute("y", "56");
+    lbl.setAttribute("x", String(midX)); lbl.setAttribute("y", "82");
     lbl.setAttribute("text-anchor", "middle");
     lbl.setAttribute("fill", "var(--text-muted)");
-    lbl.setAttribute("font-size", "9.2");
-    lbl.setAttribute("font-weight", "600");
+    lbl.setAttribute("font-size", "8.8");
+    lbl.setAttribute("font-weight", "700");
     lbl.textContent = edgeLabels[i];
     svg.append(lbl);
   }
 
-  // Draw the Two Explicit Return Feedback Loops underneath the 5 stages (y = 120 .. 188)
-  // Feedback Loop A: Stage 5 (OpenStream) -> Stage 3 (Risk Guard Inline Scorer)
+  // Return Loop A (Data-Plane Fast SIEM Loop): Stage 5 (OpenStream) -> Stage 3 (SupervisorMiddleware)
   const arcSiem = document.createElementNS(NS, "path");
-  arcSiem.setAttribute("d", "M 1215 118 C 1215 152, 695 152, 695 120");
+  arcSiem.setAttribute("d", "M 1218 144 C 1218 182, 715 182, 715 144");
   arcSiem.setAttribute("fill", "none");
   arcSiem.setAttribute("stroke", "var(--blue)");
   arcSiem.setAttribute("stroke-width", "1.6");
   arcSiem.setAttribute("stroke-dasharray", "4 3");
   svg.append(arcSiem);
+
+  // Return Loop B (Control-Plane Policy Graduation Loop): Stage 3 (SupervisorMiddleware) -> Stage 1 (GatewayInterceptor)
+  const arcGrad = document.createElementNS(NS, "path");
+  arcGrad.setAttribute("d", "M 680 144 C 680 212, 148 212, 148 144");
+  arcGrad.setAttribute("fill", "none");
+  arcGrad.setAttribute("stroke", "var(--os-color)");
+  arcGrad.setAttribute("stroke-width", "1.6");
+  arcGrad.setAttribute("stroke-dasharray", "4 3");
+  svg.append(arcGrad);
+
+  for (const st of stages) {
+    const g = document.createElementNS(NS, "g");
+    g.setAttribute("transform", `translate(${st.x}, 92)`);
+    g.style.cursor = "pointer";
+    g.addEventListener("click", () => switchWorkspace(st.ws));
+    const hw = st.w / 2;
+    const rect = document.createElementNS(NS, "rect");
+    rect.setAttribute("x", String(-hw)); rect.setAttribute("y", "-52");
+    rect.setAttribute("width", String(st.w)); rect.setAttribute("height", "104");
+    rect.setAttribute("rx", "12");
+    rect.setAttribute("fill", "var(--node-fill)");
+    rect.setAttribute("stroke", "var(--node-stroke)");
+    rect.setAttribute("stroke-width", "1.2");
+    const topBar = document.createElementNS(NS, "rect");
+    topBar.setAttribute("x", String(-hw)); topBar.setAttribute("y", "-52");
+    topBar.setAttribute("width", String(st.w)); topBar.setAttribute("height", "4");
+    topBar.setAttribute("rx", "2");
+    topBar.setAttribute("fill", st.color);
+    const tNum = document.createElementNS(NS, "text");
+    tNum.setAttribute("x", String(-hw + 14)); tNum.setAttribute("y", "-29");
+    tNum.setAttribute("fill", st.color); tNum.setAttribute("font-size", "9.3"); tNum.setAttribute("font-weight", "700");
+    tNum.textContent = st.num;
+    const tTitle = document.createElementNS(NS, "text");
+    tTitle.setAttribute("x", String(-hw + 14)); tTitle.setAttribute("y", "-10");
+    tTitle.setAttribute("fill", "var(--text-primary)"); tTitle.setAttribute("font-size", "12.2"); tTitle.setAttribute("font-weight", "600");
+    tTitle.textContent = st.title;
+    const tKpi = document.createElementNS(NS, "text");
+    tKpi.setAttribute("x", String(-hw + 14)); tKpi.setAttribute("y", "16");
+    tKpi.setAttribute("fill", "var(--text-primary)"); tKpi.setAttribute("font-size", "15"); tKpi.setAttribute("font-weight", "700");
+    tKpi.textContent = st.kpi;
+    const tSub = document.createElementNS(NS, "text");
+    tSub.setAttribute("x", String(-hw + 14)); tSub.setAttribute("y", "37");
+    tSub.setAttribute("fill", "var(--text-secondary)"); tSub.setAttribute("font-size", "10.6");
+    tSub.textContent = st.sub;
+    g.append(rect, topBar, tNum, tTitle, tKpi, tSub);
+    svg.append(g);
+  }
+
+  // Render Loop Badges on top of the arcs
   const siemBadge = document.createElementNS(NS, "g");
-  siemBadge.setAttribute("transform", "translate(955, 144)");
+  siemBadge.setAttribute("transform", "translate(966, 176)");
   const sbRect = document.createElementNS(NS, "rect");
-  sbRect.setAttribute("x", "-235"); sbRect.setAttribute("y", "-11");
-  sbRect.setAttribute("width", "470"); sbRect.setAttribute("height", "22");
+  sbRect.setAttribute("x", "-250"); sbRect.setAttribute("y", "-11");
+  sbRect.setAttribute("width", "500"); sbRect.setAttribute("height", "22");
   sbRect.setAttribute("rx", "11");
   sbRect.setAttribute("fill", "var(--blue-bg)");
   sbRect.setAttribute("stroke", "var(--blue-border)");
@@ -1168,27 +1251,19 @@ function renderCommandCenter() {
   sbTxt.setAttribute("x", "0"); sbTxt.setAttribute("y", "4");
   sbTxt.setAttribute("text-anchor", "middle");
   sbTxt.setAttribute("fill", "var(--blue)");
-  sbTxt.setAttribute("font-size", "9.8");
+  sbTxt.setAttribute("font-size", "9.6");
   sbTxt.setAttribute("font-weight", "700");
-  sbTxt.textContent = `⟵ Fast SIEM Loop: OpenStream pushes S1 blocks (${totalOsDenials5m} in 5m) & RCF scores (R1–R6) to Risk Guard`;
+  sbTxt.textContent = `⟵ Data-Plane SIEM Loop (:50063): Pushes S1 blocks (${totalOsDenials5m} in 5m) & RCF scores (R1–R6) to SupervisorMiddleware`;
   siemBadge.append(sbRect, sbTxt);
   svg.append(siemBadge);
 
-  // Feedback Loop B: Stage 3 (Risk Guard) -> Stage 1 & 2 (OpenShell Control Plane & Sandbox Floor)
-  const arcGrad = document.createElementNS(NS, "path");
-  arcGrad.setAttribute("d", "M 655 118 C 655 180, 270 180, 270 120");
-  arcGrad.setAttribute("fill", "none");
-  arcGrad.setAttribute("stroke", "var(--os-color)");
-  arcGrad.setAttribute("stroke-width", "1.6");
-  arcGrad.setAttribute("stroke-dasharray", "4 3");
-  svg.append(arcGrad);
   const gradBadge = document.createElementNS(NS, "g");
-  gradBadge.setAttribute("transform", "translate(462, 174)");
+  gradBadge.setAttribute("transform", "translate(414, 206)");
   gradBadge.style.cursor = "pointer";
   gradBadge.addEventListener("click", () => switchWorkspace("prover"));
   const gbRect = document.createElementNS(NS, "rect");
-  gbRect.setAttribute("x", "-225"); gbRect.setAttribute("y", "-11");
-  gbRect.setAttribute("width", "450"); gbRect.setAttribute("height", "22");
+  gbRect.setAttribute("x", "-265"); gbRect.setAttribute("y", "-11");
+  gbRect.setAttribute("width", "530"); gbRect.setAttribute("height", "22");
   gbRect.setAttribute("rx", "11");
   gbRect.setAttribute("fill", "var(--os-bg)");
   gbRect.setAttribute("stroke", "var(--os-border)");
@@ -1196,48 +1271,11 @@ function renderCommandCenter() {
   gbTxt.setAttribute("x", "0"); gbTxt.setAttribute("y", "4");
   gbTxt.setAttribute("text-anchor", "middle");
   gbTxt.setAttribute("fill", "var(--os-color)");
-  gbTxt.setAttribute("font-size", "9.8");
+  gbTxt.setAttribute("font-size", "9.6");
   gbTxt.setAttribute("font-weight", "700");
-  gbTxt.textContent = "⟵ Policy Graduation Loop: Risk Guard proposes Z3-verified tighter YAML back to OpenShell";
+  gbTxt.textContent = "⟵ Control-Plane Policy Loop: Risk Guard proposes tighter YAML → GatewayInterceptor + Z3 Prover → OpenShell Floor";
   gradBadge.append(gbRect, gbTxt);
   svg.append(gradBadge);
-
-  for (const st of stages) {
-    const g = document.createElementNS(NS, "g");
-    g.setAttribute("transform", `translate(${st.x}, 66)`);
-    g.style.cursor = "pointer";
-    g.addEventListener("click", () => switchWorkspace(st.ws));
-    const rect = document.createElementNS(NS, "rect");
-    rect.setAttribute("x", "-115"); rect.setAttribute("y", "-52");
-    rect.setAttribute("width", "230"); rect.setAttribute("height", "104");
-    rect.setAttribute("rx", "12");
-    rect.setAttribute("fill", "var(--node-fill)");
-    rect.setAttribute("stroke", "var(--node-stroke)");
-    rect.setAttribute("stroke-width", "1.2");
-    const topBar = document.createElementNS(NS, "rect");
-    topBar.setAttribute("x", "-115"); topBar.setAttribute("y", "-52");
-    topBar.setAttribute("width", "230"); topBar.setAttribute("height", "4");
-    topBar.setAttribute("rx", "2");
-    topBar.setAttribute("fill", st.color);
-    const tNum = document.createElementNS(NS, "text");
-    tNum.setAttribute("x", "-98"); tNum.setAttribute("y", "-29");
-    tNum.setAttribute("fill", st.color); tNum.setAttribute("font-size", "9.5"); tNum.setAttribute("font-weight", "700");
-    tNum.textContent = st.num;
-    const tTitle = document.createElementNS(NS, "text");
-    tTitle.setAttribute("x", "-98"); tTitle.setAttribute("y", "-10");
-    tTitle.setAttribute("fill", "var(--text-primary)"); tTitle.setAttribute("font-size", "12.5"); tTitle.setAttribute("font-weight", "600");
-    tTitle.textContent = st.title;
-    const tKpi = document.createElementNS(NS, "text");
-    tKpi.setAttribute("x", "-98"); tKpi.setAttribute("y", "16");
-    tKpi.setAttribute("fill", "var(--text-primary)"); tKpi.setAttribute("font-size", "15.5"); tKpi.setAttribute("font-weight", "700");
-    tKpi.textContent = st.kpi;
-    const tSub = document.createElementNS(NS, "text");
-    tSub.setAttribute("x", "-98"); tSub.setAttribute("y", "37");
-    tSub.setAttribute("fill", "var(--text-secondary)"); tSub.setAttribute("font-size", "11");
-    tSub.textContent = st.sub;
-    g.append(rect, topBar, tNum, tTitle, tKpi, tSub);
-    svg.append(g);
-  }
 
   $("chart-total-workloads").textContent = String(agents.length);
   const donut = $("chart-posture-donut");
