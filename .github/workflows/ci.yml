@@ -54,7 +54,7 @@ jobs:
         run: RED_TEAM_REPORT="$PWD/red-team-report.json" cargo test --locked --test red_team_gate -- --nocapture
       - name: Keep the red-team report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: red-team-report
           path: red-team-report.json
